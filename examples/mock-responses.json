@@ -1,0 +1,297 @@
+{
+  "_comment": "Canned game responses for Gantry's MockGameClient. Used when mockMode: true in gantry.json.",
+  "_docs": "https://github.com/geleynse/gantry/blob/main/docs/mock-mode.md",
+  "_usage": "MockGameClient matches incoming tool calls to responses by action name. The 'default' key is returned when no specific match exists. Extend this file to cover more actions or add alternate response states.",
+
+  "login": {
+    "_comment": "Returned for login() calls. session_id is ignored by proxy — included for structure.",
+    "status": "ok",
+    "session_id": "mock-session-001",
+    "username": "mock-agent",
+    "credits": 5000,
+    "location": "nexus_core",
+    "home_system": "nexus_core",
+    "session_handoff": {
+      "location": "nexus_core",
+      "credits": 5000,
+      "fuel": 80,
+      "cargo": [],
+      "cargo_used": 0,
+      "cargo_capacity": 50
+    }
+  },
+
+  "logout": {
+    "_comment": "Returned for logout() calls.",
+    "status": "ok",
+    "message": "Session ended."
+  },
+
+  "get_status": {
+    "_comment": "Full status snapshot. Real agents should use get_credits/get_fuel/get_location instead.",
+    "status": "ok",
+    "location": "nexus_core",
+    "docked_at_base": "nexus_station",
+    "credits": 5000,
+    "fuel": 80,
+    "fuel_capacity": 100,
+    "hull": 100,
+    "shield": 100,
+    "cargo": [],
+    "cargo_used": 0,
+    "cargo_capacity": 50
+  },
+
+  "get_credits": {
+    "status": "ok",
+    "credits": 5000
+  },
+
+  "get_fuel": {
+    "status": "ok",
+    "fuel": 80,
+    "fuel_capacity": 100
+  },
+
+  "get_location": {
+    "status": "ok",
+    "location": "nexus_core",
+    "docked_at_base": "nexus_station",
+    "poi": "nexus_station"
+  },
+
+  "get_cargo": {
+    "status": "ok",
+    "cargo": [],
+    "cargo_used": 0,
+    "cargo_capacity": 50
+  },
+
+  "get_cargo_summary": {
+    "status": "ok",
+    "cargo_used": 0,
+    "cargo_capacity": 50,
+    "items": []
+  },
+
+  "get_system": {
+    "_comment": "Returns mock system data for nexus_core.",
+    "status": "ok",
+    "system": {
+      "id": "nexus_core",
+      "name": "Nexus Core",
+      "faction": "solarian",
+      "description": "A bustling hub system at the heart of Solarian space.",
+      "pois": [
+        {
+          "id": "nexus_station",
+          "name": "Nexus Station",
+          "type": "station",
+          "description": "Central trading hub and refueling point."
+        },
+        {
+          "id": "nexus_belt_alpha",
+          "name": "Alpha Belt",
+          "type": "harvester_belt",
+          "description": "Iron-rich asteroid field. Good for new miners."
+        }
+      ]
+    }
+  },
+
+  "travel_to": {
+    "_comment": "Returns completed travel. docked_at_base populated when arriving at a station.",
+    "status": "completed",
+    "location": "nexus_core",
+    "poi": "nexus_belt_alpha",
+    "docked_at_base": null,
+    "fuel": 72,
+    "tick": 1
+  },
+
+  "travel_to_station": {
+    "_comment": "Override for travel to station POIs. MockGameClient uses this when id contains 'station'.",
+    "status": "completed",
+    "location": "nexus_core",
+    "poi": "nexus_station",
+    "docked_at_base": "nexus_station",
+    "fuel": 65,
+    "tick": 2
+  },
+
+  "mine": {
+    "_comment": "Single mine call. Real agents use batch_mine instead.",
+    "status": "ok",
+    "ore_extracted": 3,
+    "item_id": "iron_ore",
+    "xp_gained": 10,
+    "cargo_after": {
+      "cargo_used": 3,
+      "cargo_capacity": 50
+    }
+  },
+
+  "batch_mine": {
+    "_comment": "Bulk mine call (20 mines). Returns aggregate results. Stops early if cargo full.",
+    "status": "completed",
+    "mines_completed": 20,
+    "ore_extracted": 45,
+    "item_id": "iron_ore",
+    "xp_gained": 180,
+    "stopped_reason": "count_reached",
+    "cargo_after": {
+      "cargo_used": 45,
+      "cargo_capacity": 50
+    }
+  },
+
+  "scan": {
+    "_comment": "System scan results. Returns a mix of NPC targets.",
+    "status": "ok",
+    "targets": [
+      {
+        "id": "npc-pirate-001",
+        "name": "Rogue Drifter",
+        "type": "npc",
+        "hull": 100,
+        "threat": "low",
+        "distance": "outer"
+      },
+      {
+        "id": "npc-trader-001",
+        "name": "Merchant Vessel",
+        "type": "npc_friendly",
+        "hull": 100,
+        "threat": "none",
+        "distance": "mid"
+      }
+    ]
+  },
+
+  "analyze_market": {
+    "_comment": "Market analysis at current station. Returns trading recommendations.",
+    "status": "ok",
+    "recommendations": [
+      {
+        "item_id": "iron_ore",
+        "action": "sell",
+        "reason": "Strong buy demand at this station. Best price nearby.",
+        "estimated_value": 12,
+        "quantity_demanded": 100
+      },
+      {
+        "item_id": "steel_plate",
+        "action": "sell",
+        "reason": "High demand. Craft iron_ore first for 3x value.",
+        "estimated_value": 45,
+        "quantity_demanded": 50
+      }
+    ],
+    "station_id": "nexus_station",
+    "market_skill_level": 1
+  },
+
+  "multi_sell": {
+    "_comment": "Bulk sell call. Returns credits earned per item.",
+    "status": "completed",
+    "sold": [
+      {
+        "item_id": "iron_ore",
+        "quantity": 45,
+        "price_per_unit": 12,
+        "total_credits": 540
+      }
+    ],
+    "credits_after": 5540,
+    "tick": 3
+  },
+
+  "refuel": {
+    "_comment": "Refuel at docked station.",
+    "status": "ok",
+    "fuel_before": 65,
+    "fuel_after": 100,
+    "credits_spent": 70,
+    "credits_after": 5470
+  },
+
+  "craft": {
+    "_comment": "Crafting call. Returns the crafted item added to cargo.",
+    "status": "ok",
+    "recipe_id": "refine_steel",
+    "quantity_crafted": 15,
+    "item_id": "steel_plate",
+    "cargo_after": {
+      "cargo_used": 15,
+      "cargo_capacity": 50
+    }
+  },
+
+  "get_missions": {
+    "_comment": "Available missions at current station.",
+    "status": "ok",
+    "missions": [
+      {
+        "id": "mission-supply-001",
+        "name": "Supply Run: Iron Ore",
+        "description": "Deliver 20 units of iron_ore to Kepler Station.",
+        "type": "delivery",
+        "reward_credits": 800,
+        "reward_xp": 50,
+        "expires_in_ticks": 100
+      },
+      {
+        "id": "mission-explore-001",
+        "name": "Chart the Outer Belt",
+        "description": "Visit the Kepler Outer Belt and return with a survey.",
+        "type": "exploration",
+        "reward_credits": 1200,
+        "reward_xp": 100,
+        "expires_in_ticks": 200
+      }
+    ]
+  },
+
+  "captains_log_list": {
+    "_comment": "Returns the last 3 captain's log entries.",
+    "status": "ok",
+    "entries": [
+      {
+        "id": "log-001",
+        "entry": "LOC: nexus_core\nCR: 4200\nDID: Mined 40 iron_ore and sold at nexus_station\nNEXT: Try kepler_hub for better ore prices",
+        "created_at": "2026-02-25T10:00:00Z"
+      }
+    ]
+  },
+
+  "read_doc": {
+    "_comment": "Reads a stored agent doc (strategy, discoveries, market-intel). Returns empty for new agents.",
+    "status": "ok",
+    "title": "strategy",
+    "content": ""
+  },
+
+  "write_diary": {
+    "_comment": "Appends a diary entry. Always succeeds in mock mode.",
+    "status": "ok",
+    "id": "diary-mock-001"
+  },
+
+  "write_doc": {
+    "_comment": "Writes/appends a doc. Always succeeds in mock mode.",
+    "status": "ok"
+  },
+
+  "captains_log_add": {
+    "_comment": "Adds a captain's log entry. Always succeeds in mock mode.",
+    "status": "ok",
+    "id": "log-mock-002"
+  },
+
+  "default": {
+    "_comment": "Fallback response for any action not listed above. Prevents agent errors on uncovered tools.",
+    "status": "ok",
+    "message": "Mock response: action completed successfully.",
+    "_note": "Add specific responses above for any tools your agent uses frequently. The default keeps sessions running without errors."
+  }
+}

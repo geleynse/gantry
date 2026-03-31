@@ -1,0 +1,40 @@
+name: Docker Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: meta
+        env:
+          TAG_REF: ${{ github.ref }}
+        run: |
+          VERSION=${TAG_REF#refs/tags/v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/geleynse/gantry:${{ steps.meta.outputs.version }}
+            ghcr.io/geleynse/gantry:latest

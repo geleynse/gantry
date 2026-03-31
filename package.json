@@ -1,0 +1,19 @@
+{
+  "name": "gantry",
+  "version": "1.0.0",
+  "description": "MCP proxy server and fleet web dashboard for Claude Code agent fleets",
+  "license": "MIT",
+  "private": true,
+  "workspaces": [
+    "server"
+  ],
+  "scripts": {
+    "build": "bun run --cwd server build",
+    "build:server": "bun run --cwd server build:server",
+    "test": "bun run --cwd server test",
+    "start": "bun run --cwd server start"
+  },
+  "devDependencies": {
+    "redent": "3.0.0"
+  }
+}

@@ -1,0 +1,4 @@
+[test]
+# Frontend __tests__ directories are excluded by the explicit paths in the
+# "test" npm script. Vitest runs frontend tests separately via "test:frontend".
+timeout = 10000

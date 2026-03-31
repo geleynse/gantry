@@ -1,0 +1,148 @@
+@import "tailwindcss";
+
+/*
+ * SMUI Theme — Nord palette, JetBrains Mono, sharp edges
+ * Based on the SpaceMolt Universe Interface design spec
+ */
+
+@theme {
+  /* Nord Polar Night */
+  --color-nord-0: #2e3440;
+  --color-nord-1: #3b4252;
+  --color-nord-2: #434c5e;
+  --color-nord-3: #4c566a;
+
+  /* Nord Snow Storm */
+  --color-nord-4: #d8dee9;
+  --color-nord-5: #e5e9f0;
+  --color-nord-6: #eceff4;
+
+  /* Nord Frost */
+  --color-nord-7: #8fbcbb;
+  --color-nord-8: #88c0d0;
+  --color-nord-9: #81a1c1;
+  --color-nord-10: #5e81ac;
+
+  /* Nord Aurora */
+  --color-nord-11: #bf616a;
+  --color-nord-12: #d08770;
+  --color-nord-13: #ebcb8b;
+  --color-nord-14: #a3be8c;
+  --color-nord-15: #b48ead;
+
+  /* Semantic colors — darkened backgrounds for better text contrast */
+  --color-background: #1a1e26;
+  --color-foreground: #d8dee9;
+  --color-card: #242933;
+  --color-card-foreground: #d8dee9;
+  --color-popover: #242933;
+  --color-popover-foreground: #d8dee9;
+  --color-primary: #88c0d0;
+  --color-primary-foreground: #1a1e26;
+  --color-secondary: #2a303c;
+  --color-secondary-foreground: #d8dee9;
+  --color-muted: #2e3440;
+  --color-muted-foreground: #9aa5ba;
+  --color-accent: #88c0d0;
+  --color-accent-foreground: #1a1e26;
+  --color-destructive: #bf616a;
+  --color-destructive-foreground: #eceff4;
+  --color-border: #434c5e;
+  --color-input: #3b4252;
+  --color-ring: #88c0d0;
+
+  /* Depth surfaces */
+  --color-surface: #1e2229;
+  --color-card-hover: #2a303c;
+
+  /* Empire colors */
+  --color-solarian: #5e81ac;
+  --color-crimson: #bf616a;
+  --color-nebula: #b48ead;
+  --color-outerrim: #d08770;
+  --color-voidborn: #8fbcbb;
+  --color-neutral: #4c566a;
+
+  /* Status colors */
+  --color-success: #a3be8c;
+  --color-warning: #ebcb8b;
+  --color-error: #bf616a;
+  --color-info: #88c0d0;
+
+  /* Sharp edges — zero border radius */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+
+  /* Spacing */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 56px;
+  --topbar-height: 48px;
+}
+
+/* Mobile sidebar slide-in animation */
+@keyframes slideInFromLeft {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeInOverlay {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.sidebar-mobile-drawer {
+  animation: slideInFromLeft 200ms ease-out forwards;
+}
+
+.sidebar-mobile-overlay {
+  animation: fadeInOverlay 200ms ease-out forwards;
+}
+
+/* Overseer status bar compact mode for mobile */
+.overseer-bar-compact .overseer-detail {
+  display: none;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--color-background);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-nord-9);
+  }
+}

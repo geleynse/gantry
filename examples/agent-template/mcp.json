@@ -1,0 +1,12 @@
+{
+  "_comment": "MCP server config for Claude Code agents. Place this at the root of your Claude Code project or set via CLAUDE_MCP_CONFIG env var.",
+  "_docs": "https://github.com/geleynse/gantry/blob/main/docs/mcp-setup.md",
+  "mcpServers": {
+    "spacemolt": {
+      "_comment": "The key 'spacemolt' becomes the MCP server namespace. Tools will be named spacemolt(), spacemolt_social(), etc.",
+      "type": "http",
+      "url": "http://localhost:3100/mcp/v2",
+      "_url_comment": "Points to the Gantry v2 endpoint. Change the host/port if Gantry is running remotely or on a non-default port (PORT env var, default 3100)."
+    }
+  }
+}

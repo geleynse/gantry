@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.next/
+
+# Environment and secrets
+.env
+.env.*
+*.env
+fleet-credentials.json
+fleet-credentials.enc.json
+gantry.*.json
+.gantry-secret
+fleet-agents/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
+# Schema cache (auto-generated)
+data/schema-cache.json
+
+# Bun lockfile (keep bun.lock, ignore package-lock.json)
+package-lock.json
+
+# TypeScript cache
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Keep example files and docs
+!examples/
+!docs/

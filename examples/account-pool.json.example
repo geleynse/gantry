@@ -1,0 +1,80 @@
+{
+  "_comment": "Account pool configuration for Gantry. Enables centralized credential management instead of per-agent credentials.",
+  "_docs": "https://github.com/geleynse/gantry/blob/main/docs/account-pool.md",
+  "_usage": "Set 'accountPool' in gantry.json to the path of this file. Gantry will auto-assign available accounts to agents at startup.",
+
+  "accounts": [
+    {
+      "_comment": "Account 1 — currently assigned to an active agent",
+      "id": "account-001",
+      "username": "fleet-pilot-alpha",
+      "password": "REPLACE_WITH_ACTUAL_PASSWORD",
+      "_password_comment": "Never commit real passwords. Use environment variable substitution or a secrets manager in production.",
+      "status": "assigned",
+      "_status_comment": "Status values: 'available' (ready to assign), 'assigned' (in use by an agent), 'disabled' (excluded from pool).",
+      "assignedTo": "my-explorer",
+      "_assignedTo_comment": "Agent name from gantry.json. Null when status is 'available'.",
+      "assignedAt": "2026-02-25T10:00:00Z",
+      "faction": "solarian",
+      "_faction_comment": "Optional. Gantry can match agents to accounts by faction if agent config includes 'faction'.",
+      "notes": "Primary mining account. 50k credits, Tier 2 ship."
+    },
+    {
+      "_comment": "Account 2 — currently assigned",
+      "id": "account-002",
+      "username": "fleet-pilot-bravo",
+      "password": "REPLACE_WITH_ACTUAL_PASSWORD",
+      "status": "assigned",
+      "assignedTo": "my-trader",
+      "assignedAt": "2026-02-25T10:00:20Z",
+      "faction": "crimson",
+      "notes": "Trade specialist account. Strong market-intel docs."
+    },
+    {
+      "_comment": "Account 3 — available, no agent assigned yet",
+      "id": "account-003",
+      "username": "fleet-pilot-charlie",
+      "password": "REPLACE_WITH_ACTUAL_PASSWORD",
+      "status": "available",
+      "assignedTo": null,
+      "assignedAt": null,
+      "faction": "nebula",
+      "notes": "Spare account. Use for new agents or when scaling up fleet."
+    },
+    {
+      "_comment": "Account 4 — disabled, excluded from rotation",
+      "id": "account-004",
+      "username": "fleet-pilot-delta",
+      "password": "REPLACE_WITH_ACTUAL_PASSWORD",
+      "status": "disabled",
+      "_disabled_reason": "Account banned from PvP zone after combat incident. Re-enable after cooldown.",
+      "assignedTo": null,
+      "assignedAt": null,
+      "faction": "outerrim",
+      "notes": "Disabled 2026-02-24. Re-enable after 48hr cooldown."
+    },
+    {
+      "_comment": "Account 5 — available, used for testing or overflow",
+      "id": "account-005",
+      "username": "fleet-pilot-echo",
+      "password": "REPLACE_WITH_ACTUAL_PASSWORD",
+      "status": "available",
+      "assignedTo": null,
+      "assignedAt": null,
+      "faction": "solarian",
+      "notes": "Overflow account. Assign when adding a 3rd active agent."
+    }
+  ],
+
+  "config": {
+    "_comment": "Account pool behavior settings",
+    "autoAssign": true,
+    "_autoAssign_comment": "When true, Gantry assigns 'available' accounts to agents without explicit credentials at startup.",
+    "matchFaction": true,
+    "_matchFaction_comment": "When true, Gantry prefers assigning accounts whose faction matches the agent's faction in gantry.json.",
+    "releaseOnShutdown": true,
+    "_releaseOnShutdown_comment": "When true, agent assignments are cleared on clean shutdown. Accounts return to 'available'. Useful if agent names change between runs.",
+    "maxAssignmentsPerAccount": 1,
+    "_maxAssignmentsPerAccount_comment": "Safety guard — prevents one account from being assigned to multiple agents simultaneously."
+  }
+}

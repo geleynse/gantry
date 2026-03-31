@@ -1,0 +1,22 @@
+services:
+  gantry:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gantry:local
+    ports:
+      - "${GANTRY_PORT:-3100}:3100"
+    volumes:
+      - ${FLEET_DIR:-./_data}:/data
+    environment:
+      - FLEET_DIR=/data
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - TRUST_PROXY=${TRUST_PROXY:-0}
+      - GANTRY_SECRET=${GANTRY_SECRET:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

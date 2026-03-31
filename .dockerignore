@@ -1,0 +1,11 @@
+**/node_modules
+.git
+.worktrees
+*.md
+**/*.test.ts
+**/__tests__
+**/dist
+**/.next
+.eslintrc*
+.prettierrc*
+coverage

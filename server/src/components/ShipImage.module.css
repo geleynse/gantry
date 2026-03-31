@@ -1,0 +1,44 @@
+/* ShipImage component styling */
+
+.container {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  border-radius: 0.25rem;
+  background-color: var(--color-secondary, #1a1f2e);
+}
+
+.roundedMd {
+  border-radius: 0.5rem;
+}
+
+.roundedLg {
+  border-radius: 0.75rem;
+}
+
+.roundedFull {
+  border-radius: 9999px;
+}
+
+.image {
+  display: block;
+  transition: opacity 200ms ease-in-out;
+}
+
+.container:focus-visible {
+  outline: 2px solid var(--color-primary, #3b82f6);
+  outline-offset: 2px;
+}
+
+.interactive {
+  cursor: pointer;
+}
+
+.interactive:hover {
+  opacity: 0.9;
+  transition: opacity 200ms ease-in-out;
+}
+
+.error {
+  background-color: transparent;
+}

@@ -1,0 +1,119 @@
+{
+  "_comment": "Gantry configuration file. Copy to your fleet directory as 'gantry.json' and customize.",
+  "_docs": "https://github.com/geleynse/gantry/blob/main/docs/configuration.md",
+
+  "mcpGameUrl": "https://game.spacemolt.com/mcp",
+  "_mcpGameUrl_comment": "The MCP endpoint for the Space Molt game server. Do not change unless running a custom server.",
+
+  "fleetName": "My Fleet",
+  "_fleetName_comment": "Display name shown in the web dashboard. Any string.",
+
+  "agents": [
+    {
+      "_comment": "Agent 1 — an explorer/scout role",
+
+      "name": "my-explorer",
+      "_name_comment": "Unique identifier. Lowercase, hyphens ok. Must match the agent's in-game username.",
+
+      "backend": "claude",
+      "_backend_comment": "LLM provider. 'claude' for Anthropic Claude, 'codex' for OpenAI Codex.",
+
+      "model": "sonnet",
+      "_model_comment": "Model shorthand. 'sonnet' = claude-sonnet-4-x (latest). 'opus' = claude-opus-4-x.",
+
+      "faction": "solarian",
+      "_faction_comment": "In-game faction. One of: solarian, crimson, nebula, outerrim. Affects starting area and trade bonuses.",
+
+      "role": "Explorer/Scout",
+      "_role_comment": "Human-readable role label. Shown in dashboard. No gameplay effect — use in system prompt for behavior.",
+
+      "mcpVersion": "v2",
+      "_mcpVersion_comment": "MCP API version. Always use 'v2' for new agents — v1 is legacy.",
+
+      "mcpPreset": "full",
+      "_mcpPreset_comment": "Tool subset exposed to this agent. 'basic' = core actions only, 'standard' = +social/market, 'full' = everything.",
+
+      "toolResultFormat": "yaml",
+      "_toolResultFormat_comment": "Format for tool responses sent to the agent. 'yaml' reduces token usage. Use 'json' for non-Claude backends (Codex, etc.).",
+
+      "homeSystem": "nexus_core",
+      "_homeSystem_comment": "Agent's home base system ID. Injected into login response. Agent uses this for selling ore and restocking."
+    },
+    {
+      "_comment": "Agent 2 — a trader/miner role",
+      "name": "my-trader",
+      "backend": "claude",
+      "model": "sonnet",
+      "faction": "crimson",
+      "role": "Trader/Mining",
+      "mcpVersion": "v2",
+      "mcpPreset": "full",
+      "toolResultFormat": "yaml",
+      "homeSystem": "sol_station"
+    },
+    {
+      "_comment": "Agent 3 — optional: a non-Claude backend (OpenAI Codex). Note: toolResultFormat must be 'json' for Codex.",
+      "name": "my-codex-agent",
+      "backend": "codex",
+      "faction": "nebula",
+      "role": "Trader/Mining",
+      "proxy": "general",
+      "_proxy_comment": "Optional. SOCKS5 proxy alias. Requires proxy/proxy-{alias}.conf file in your fleet directory.",
+      "mcpVersion": "v2",
+      "mcpPreset": "full",
+      "homeSystem": "kepler_station"
+    }
+  ],
+
+  "turnInterval": 90,
+  "_turnInterval_comment": "Seconds between agent turns. Minimum 60 recommended (API rate limits). Typical range: 60-120.",
+
+  "staggerDelay": 20,
+  "_staggerDelay_comment": "Seconds between starting each agent in sequence. Prevents API connection spikes. Typical range: 10-30.",
+
+  "agentDeniedTools": {
+    "_comment": "Block specific tools per agent. Key '*' applies to ALL agents. Value is the error message the agent receives.",
+
+    "*": {
+      "_comment": "These are blocked for all agents — they have better compound alternatives.",
+      "mine": "Use batch_mine(count=20) instead. mine() does one mine; batch_mine does 20 with auto-stop on cargo full.",
+      "sell": "Use multi_sell(items=[{item_id:..., quantity:...}]) instead. sell() returns pending and wastes turns.",
+      "get_status": "Use get_credits(), get_fuel(), get_location(), or get_cargo_summary() instead."
+    },
+
+    "my-explorer": {
+      "_comment": "Explorer-specific: no mining (they should be scouting, not extracting).",
+      "batch_mine": "You are a scout. Jump to new systems instead of mining."
+    }
+  },
+
+  "callLimits": {
+    "_comment": "Max calls per session per tool, across all agents. Prevents runaway loops. Remove a key to lift the limit.",
+    "get_location": 3,
+    "scan": 5,
+    "get_events": 3,
+    "scan_and_attack": 8,
+    "get_guide": 2,
+    "get_system": 8
+  },
+
+  "auth": {
+    "_comment": "Optional. Controls who can access the web dashboard. If omitted, defaults to loopback (only localhost gets admin).",
+    "adapter": "layered",
+    "_adapter_comment": "Auth strategy. Options: 'none' (no auth), 'token' (Bearer token), 'cloudflare-access' (CF JWT), 'layered' (local IP first, then CF).",
+    "config": {
+      "localNetworkRanges": ["192.168.0.0/16", "127.0.0.1/32"],
+      "_localNetworkRanges_comment": "IP ranges treated as trusted admin (layered adapter only). Adjust for your LAN.",
+      "cloudflareTeamDomain": "your-team.cloudflareaccess.com",
+      "_cloudflareTeamDomain_comment": "Your Cloudflare Access team domain. Only required for 'cloudflare-access' and 'layered' adapters.",
+      "cloudflareAudience": "your-audience-tag-here",
+      "_cloudflareAudience_comment": "The AUD claim from your Cloudflare Access application. Found in Zero Trust dashboard."
+    }
+  },
+
+  "mockMode": false,
+  "_mockMode_comment": "When true, uses MockGameClient instead of the live game server. Reads canned responses from mock-responses.json. Safe for prompt testing without burning API credits.",
+
+  "accountPool": null,
+  "_accountPool_comment": "Optional path to account-pool.json. When set, Gantry auto-assigns accounts to agents instead of reading per-agent credentials. See examples/account-pool.json.example."
+}
