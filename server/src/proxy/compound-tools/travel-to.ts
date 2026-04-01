@@ -165,9 +165,14 @@ export async function travelTo(
 
   if (doDock) {
     const tDockStart = Date.now();
-    // dock uses a short 10s timeout — a timeout means the game isn't ready,
-    // not a transient error worth retrying (avoids 60s+ hangs on 3x30s retries).
-    const dockResp = await client.execute("dock", undefined, { timeoutMs: 10_000, noRetry: true });
+    // dock uses a 30s timeout — game server can be slow under load.
+    let dockResp: Awaited<ReturnType<typeof client.execute>>;
+    try {
+      dockResp = await client.execute("dock", undefined, { timeoutMs: 30_000, noRetry: true });
+    } catch (err) {
+      log.warn("dock timed out", { agent: agentName, destination, elapsed_ms: Date.now() - tDockStart });
+      dockResp = { error: `dock timed out after 30s — game server may be slow. Try again.` };
+    }
     steps.push({ action: "dock", result: dockResp.result ?? dockResp.error });
     const tDock = Date.now();
     if (dockResp.error) {
@@ -206,7 +211,12 @@ export async function travelTo(
     log.warn("travel_to dock completed but docked_at_base is null — retrying", {
       agent: agentName, destination, poi: cPlayer?.current_poi, system: cPlayer?.current_system,
     });
-    const retryDock = await client.execute("dock", undefined, { timeoutMs: 10_000, noRetry: true });
+    let retryDock: Awaited<ReturnType<typeof client.execute>>;
+    try {
+      retryDock = await client.execute("dock", undefined, { timeoutMs: 30_000, noRetry: true });
+    } catch {
+      retryDock = { error: "dock retry timed out" };
+    }
     if (!retryDock.error) {
       await client.waitForTick();
       await client.waitForTick();

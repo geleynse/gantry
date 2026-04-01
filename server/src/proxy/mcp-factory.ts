@@ -203,8 +203,8 @@ export async function createMcpServer(config: GantryConfig) {
     }
   };
 
-  // Fire off async load (non-blocking)
-  loadV2Schemas().catch((err) => {
+  // Load v2 schemas before accepting connections to prevent MCP_TOOLS_MISSING on first agent turn
+  await loadV2Schemas().catch((err) => {
     log.warn("loadV2Schemas error", { error: err instanceof Error ? err.message : String(err) });
   });
 
