@@ -28,6 +28,7 @@ import { syncCaptainsLogsFromServer, persistCaptainsLogEntry } from "../services
 import { syncActionLog, persistActionLogEntries } from "../services/action-log-parser.js";
 import { markDockable, isDockable, getPoi } from "../services/galaxy-poi-registry.js";
 import { enrichWithThreatAssessment } from "./threat-assessment.js";
+import { normalizeSystemName } from "./compound-tools/utils.js";
 import { autoRecordLoreFromResult, buildLoreHint } from "../services/poi-lore.js";
 import { recordMarketResources } from "../services/resource-knowledge.js";
 
@@ -561,7 +562,7 @@ export async function handlePassthrough(
           const cacheSystem = (cacheAfterCheck?.data?.player as Record<string, unknown> | undefined)?.current_system as string | undefined;
           const locAfterSystem = (navResult.location_after as Record<string, unknown> | undefined)?.system as string | undefined;
           const effectiveCacheSystem = cacheSystem ?? locAfterSystem;
-          if (effectiveCacheSystem && effectiveCacheSystem !== gameSystem) {
+          if (effectiveCacheSystem && normalizeSystemName(effectiveCacheSystem) !== normalizeSystemName(gameSystem)) {
             log.warn("location_after_mismatch", {
               agent: agentName,
               tool: v1ToolName,

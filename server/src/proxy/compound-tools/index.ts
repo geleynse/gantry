@@ -18,6 +18,7 @@ export type {
 export {
   MAX_BATTLE_TICKS,
   BATTLE_INIT_MAX_TICKS,
+  normalizeSystemName,
   stripPendingFields,
   waitForNavCacheUpdate,
   waitForDockCacheUpdate,

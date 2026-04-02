@@ -8,7 +8,7 @@
 
 import { createLogger } from "../../lib/logger.js";
 import type { CompoundToolDeps, CompoundResult } from "./types.js";
-import { stripPendingFields, waitForNavCacheUpdate } from "./utils.js";
+import { stripPendingFields, waitForNavCacheUpdate, normalizeSystemName } from "./utils.js";
 import { getSessionShutdownManager } from "../session-shutdown.js";
 
 const log = createLogger("compound-tools");
@@ -66,7 +66,11 @@ export async function jumpRoute(
     jumpPlayer.current_poi.includes("station")
   ) {
     // Likely docked — try to refuel and undock
-    await client.execute("refuel", undefined, { timeoutMs: 10_000, noRetry: true });
+    try {
+      await client.execute("refuel", undefined, { timeoutMs: 30_000, noRetry: true });
+    } catch {
+      log.warn("jump_route: pre-jump refuel timed out, continuing", { agent: agentName });
+    }
     const undockResp = await client.execute("undock", undefined, { noRetry: true });
     if (
       undockResp.error &&
@@ -136,9 +140,19 @@ export async function jumpRoute(
       const fuel =
         typeof fuelShip?.fuel === "number" ? fuelShip.fuel : 999;
       if (fuel < fuelThreshold) {
-        const dockResp = await client.execute("dock", undefined, { timeoutMs: 10_000, noRetry: true });
+        let dockResp: Awaited<ReturnType<typeof client.execute>>;
+        try {
+          dockResp = await client.execute("dock", undefined, { timeoutMs: 30_000, noRetry: true });
+        } catch {
+          log.warn("jump_route: mid-route dock timed out, skipping refuel", { agent: agentName, jump_num: i });
+          dockResp = { error: "dock timed out" };
+        }
         if (!dockResp.error) {
-          await client.execute("refuel", undefined, { timeoutMs: 10_000, noRetry: true });
+          try {
+            await client.execute("refuel", undefined, { timeoutMs: 30_000, noRetry: true });
+          } catch {
+            log.warn("jump_route: mid-route refuel timed out", { agent: agentName, jump_num: i });
+          }
           await client.execute("undock");
         }
       }
@@ -272,7 +286,7 @@ export async function jumpRoute(
       if (gameSystem) {
         const cacheAfterJump = statusCache.get(agentName);
         const cacheSystem = (cacheAfterJump?.data?.player as Record<string, unknown> | undefined)?.current_system as string | undefined;
-        if (cacheSystem && cacheSystem !== gameSystem) {
+        if (cacheSystem && normalizeSystemName(cacheSystem) !== normalizeSystemName(gameSystem)) {
           log.warn("location_after_mismatch", {
             agent: agentName,
             tool: "jump",

@@ -8,6 +8,14 @@ import type { GameClientLike } from "./types.js";
 // Re-export from proxy-constants (single source of truth)
 export { stripPendingFields } from "../proxy-constants.js";
 
+/**
+ * Normalize a system name for comparison.
+ * The game returns display names ("Epsilon Eridani") while cache stores IDs ("epsilon_eridani").
+ */
+export function normalizeSystemName(name: string): string {
+  return name.toLowerCase().replace(/[\s\-']+/g, "_").replace(/_+/g, "_");
+}
+
 export const MAX_BATTLE_TICKS = 30;
 export const BATTLE_INIT_MAX_TICKS = 5;
 

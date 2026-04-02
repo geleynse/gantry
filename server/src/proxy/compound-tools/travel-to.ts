@@ -7,7 +7,7 @@
 
 import { createLogger } from "../../lib/logger.js";
 import type { CompoundToolDeps, CompoundResult } from "./types.js";
-import { stripPendingFields, waitForNavCacheUpdate } from "./utils.js";
+import { stripPendingFields, waitForNavCacheUpdate, normalizeSystemName } from "./utils.js";
 import { systemPoiCache, cacheSystemPois } from "../poi-resolver.js";
 
 const log = createLogger("compound-tools");
@@ -143,7 +143,7 @@ export async function travelTo(
     if (gameSystem) {
       const cacheAfterTravel = statusCache.get(agentName);
       const cacheSystem = (cacheAfterTravel?.data?.player as Record<string, unknown> | undefined)?.current_system as string | undefined;
-      if (cacheSystem && cacheSystem !== gameSystem) {
+      if (cacheSystem && normalizeSystemName(cacheSystem) !== normalizeSystemName(gameSystem)) {
         log.warn("location_after_mismatch", {
           agent: agentName,
           tool: "travel",
