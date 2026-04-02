@@ -112,6 +112,25 @@ export function handleCreateAlert(
     const id = db.createAlert(agentName, severity, category ?? null, message);
     sessionAlertCounts.set(key, count + 1);
     log.info(`[${agentName}] created alert id=${id} severity=${severity}`);
+
+    // Push notification for warning/error/critical alerts
+    if (severity !== "info") {
+      const webhookUrl = process.env.WATCHDOG_WEBHOOK_URL;
+      if (webhookUrl) {
+        fetch(webhookUrl, {
+          method: "POST",
+          headers: {
+            "Title": `Fleet Alert: ${agentName}`,
+            "Priority": severity === "critical" ? "urgent" : severity === "error" ? "high" : "default",
+            "Tags": severity === "critical" ? "rotating_light" : "warning",
+          },
+          body: `[${severity.toUpperCase()}] ${agentName}: ${message}`,
+        }).catch((err) => {
+          log.warn("alert webhook failed", { error: String(err) });
+        });
+      }
+    }
+
     return { status: "created", id, agent: agentName, severity };
   } catch {
     return { error: "failed to create alert" };
