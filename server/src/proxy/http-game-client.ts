@@ -46,6 +46,18 @@ interface McpJsonRpcResponse {
   error?: { code: number; message: string; data?: unknown };
 }
 
+/** Minimum gap between state-changing actions to avoid game server action queue locks.
+ *  Game ticks are ~10s — actions must resolve within a tick before the next fires. */
+const ACTION_THROTTLE_MS = 8_000;
+
+/** State-changing commands that need throttling (subset — just the high-frequency ones). */
+const THROTTLED_COMMANDS = new Set([
+  "mine", "travel", "jump", "dock", "undock", "refuel", "repair",
+  "sell", "buy", "deposit_items", "withdraw_items",
+  "craft", "attack", "loot_wreck", "salvage_wreck",
+  "install_mod", "uninstall_mod", "jettison",
+]);
+
 export class HttpGameClient implements GameTransport {
   private readonly mcpUrl: string;
   private readonly apiBaseUrl: string; // For /api/v1/session
@@ -63,6 +75,7 @@ export class HttpGameClient implements GameTransport {
   private serverMetrics: MetricsWindow | null;
   private loginTime = 0;
   private nextRequestId = 1;
+  private lastActionTime = 0;
 
   // Event wiring
   onEvent: ((event: GameEvent) => void) | null = null;
@@ -341,13 +354,30 @@ export class HttpGameClient implements GameTransport {
       return { error: { code: "not_authenticated", message: "Not authenticated. Call login first." } };
     }
 
+    // Throttle state-changing actions to prevent game server action queue locks.
+    // The game queues actions per-character; firing too fast causes "another action
+    // is already in progress" errors that persist across sessions.
+    if (THROTTLED_COMMANDS.has(command)) {
+      const elapsed = Date.now() - this.lastActionTime;
+      if (elapsed < ACTION_THROTTLE_MS) {
+        const wait = ACTION_THROTTLE_MS - elapsed;
+        this.log(`throttling ${command} for ${wait}ms (action spacing)`);
+        await new Promise((r) => setTimeout(r, wait));
+      }
+      this.lastActionTime = Date.now();
+    }
+
     for (let attempt = 0; attempt <= ACTION_PENDING_MAX_RETRIES; attempt++) {
       const resp = await this.mcpToolCall(command, payload ?? {}, opts?.timeoutMs);
 
-      // action_pending retry
-      if (resp.error?.code === "action_pending" && attempt < ACTION_PENDING_MAX_RETRIES) {
-        const waitSec = resp.error.wait_seconds != null ? resp.error.wait_seconds : ACTION_PENDING_DEFAULT_WAIT_S;
-        this.log(`action_pending for ${command}, waiting ${waitSec}s before retry ${attempt + 1}/${ACTION_PENDING_MAX_RETRIES}`);
+      // action_pending retry (also catch game_error with "action" in message — same root cause)
+      const isActionPending = resp.error?.code === "action_pending";
+      const isGameErrorActionLock = resp.error?.code === "game_error"
+        && typeof resp.error.message === "string"
+        && resp.error.message.toLowerCase().includes("action");
+      if ((isActionPending || isGameErrorActionLock) && attempt < ACTION_PENDING_MAX_RETRIES) {
+        const waitSec = resp.error!.wait_seconds != null ? resp.error!.wait_seconds : ACTION_PENDING_DEFAULT_WAIT_S;
+        this.log(`${resp.error!.code} for ${command}, waiting ${waitSec}s before retry ${attempt + 1}/${ACTION_PENDING_MAX_RETRIES}${isGameErrorActionLock ? " (game_error action lock)" : ""}`);
         await new Promise((r) => setTimeout(r, waitSec * 1000));
         continue;
       }
