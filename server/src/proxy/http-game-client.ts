@@ -382,6 +382,19 @@ export class HttpGameClient implements GameTransport {
         continue;
       }
 
+      // combat_interrupt — do NOT retry; combat takes priority over the interrupted action.
+      // Reset throttle so combat commands (scan_and_attack, flee) fire immediately.
+      if (resp.error?.code === "combat_interrupt") {
+        this.log(`combat_interrupt for ${command} — returning immediately, agent must handle combat first`);
+        this.lastActionTime = 0;
+        return {
+          error: {
+            code: "combat_interrupt",
+            message: "Combat interrupted your action. Handle combat first (scan_and_attack or flee), then retry your planned action.",
+          },
+        };
+      }
+
       // rate_limited retry
       if ((resp.error?.code === "rate_limited" || resp.error?.code === "cooldown") && attempt < RATE_LIMITED_MAX_RETRIES) {
         const waitSec = resp.error.retry_after || resp.error.wait_seconds || RATE_LIMITED_WAIT_S;
