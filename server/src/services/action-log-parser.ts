@@ -47,6 +47,9 @@ interface RawActionEntry {
   price?: number;
   total?: number;
   total_credits?: number;
+  total_cost?: number;
+  total_earned?: number;
+  total_price?: number;
   cost?: number;
   station?: string;
   station_id?: string;
@@ -79,8 +82,11 @@ function extractCreditsDelta(entry: RawActionEntry): number | undefined {
 
   // Positive revenue fields
   if (typeof entry.total_credits === "number") return entry.total_credits;
+  if (typeof entry.total_earned === "number") return entry.total_earned;
+  if (typeof entry.total_price === "number") return entry.total_price;
 
   // Cost fields (negative - money spent)
+  if (typeof entry.total_cost === "number") return -entry.total_cost;
   if (typeof entry.cost === "number") return -entry.cost;
 
   // price x quantity inference

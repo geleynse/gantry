@@ -81,7 +81,7 @@ function OverseerBanner() {
           <div>
             <span className="text-[10px] uppercase tracking-wider block">Cost Today</span>
             <span className="text-foreground">
-              {overseer?.costToday != null ? `$${overseer.costToday.toFixed(4)}` : "—"}
+              {overseer?.costToday != null ? `$${overseer.costToday.toFixed(2)}` : "—"}
             </span>
           </div>
         </div>
@@ -179,7 +179,7 @@ export default function DashboardPage() {
           {/* Total cost placeholder */}
           <div className="flex items-center gap-1.5">
             <span className="text-muted-foreground uppercase tracking-wider text-[10px]">
-              Session Cost
+              Active Session Cost
             </span>
             <span className="font-mono text-muted-foreground">$0.00</span>
           </div>
@@ -231,7 +231,7 @@ export default function DashboardPage() {
             title={compactView ? "Grid view" : "Compact view"}
           >
             {compactView ? <LayoutGrid className="w-3 h-3" /> : <List className="w-3 h-3" />}
-            {compactView ? "Grid" : "Compact"}
+            {compactView ? "Switch to Grid" : "Switch to Compact"}
           </button>
           {isAdmin && (
             <>

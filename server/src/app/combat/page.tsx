@@ -225,7 +225,7 @@ function OverviewTab({
                         (s.total_encounters - s.total_deaths) / s.total_encounters >= 0.5 ? "text-yellow-400" :
                         "text-red-400"
                       }`}>
-                        {s.total_encounters === 0 ? "—" : `${Math.round(((s.total_encounters - s.total_deaths) / s.total_encounters) * 100)}%`}
+                        {s.total_encounters === 0 ? "—" : `${Math.max(0, Math.round(((s.total_encounters - s.total_deaths) / s.total_encounters) * 100))}%`}
                       </td>
                     </tr>
                   ))

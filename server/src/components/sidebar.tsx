@@ -194,7 +194,7 @@ function SidebarContent({
               ? "bg-primary/10 text-primary font-medium border-l-2 border-l-primary"
               : "text-muted-foreground border-l-2 border-l-transparent"
           )}
-          title={collapsed ? item.label : undefined}
+          title={item.label}
         >
           <span className="relative shrink-0">
             <Icon className="w-4 h-4" />
@@ -303,7 +303,7 @@ function SidebarContent({
                     ? "bg-primary/10 text-primary font-medium border-l-2 border-l-primary"
                     : "text-muted-foreground border-l-2 border-l-transparent"
                 )}
-                title={collapsed ? "Review" : undefined}
+                title="Review"
               >
                 <ShieldCheck className="w-4 h-4 shrink-0" />
                 {!collapsed && (
@@ -332,7 +332,7 @@ function SidebarContent({
               "flex w-full items-center gap-3 px-2 py-1.5 text-sm transition-colors",
               "hover:bg-secondary hover:text-foreground text-muted-foreground"
             )}
-            title={collapsed ? "Agents" : undefined}
+            title="Agents"
           >
             <Users className="w-4 h-4 shrink-0" />
             {!collapsed && (

@@ -102,15 +102,15 @@ router.get('/systems', (req, res) => {
     total_damage: number;
   }>(`
     SELECT
-      system,
-      COUNT(*) AS encounter_count,
+      COALESCE(NULLIF(system, ''), 'Unknown') AS system,
+      COUNT(CASE WHEN event_type IN ('pirate_combat', 'pirate_warning') THEN 1 END) AS encounter_count,
       COUNT(CASE WHEN event_type = 'player_died' THEN 1 END) AS death_count,
       SUM(CASE WHEN event_type = 'pirate_combat' THEN COALESCE(damage, 0) ELSE 0 END) AS total_damage
     FROM combat_events
-    WHERE system IS NOT NULL AND system != ''
-      AND event_type IN ('pirate_combat', 'pirate_warning')
+    WHERE 1=1
       ${timeClause}
-    GROUP BY system
+    GROUP BY COALESCE(NULLIF(system, ''), 'Unknown')
+    HAVING COUNT(CASE WHEN event_type IN ('pirate_combat', 'pirate_warning') THEN 1 END) > 0
     ORDER BY encounter_count DESC
     LIMIT 10
   `);

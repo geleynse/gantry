@@ -160,7 +160,11 @@ export default function NotesPage() {
   // Fetch agent list from fleet config on mount
   useEffect(() => {
     apiFetch<{ agents: Array<{ name: string }> }>("/prompts/agents")
-      .then((res) => setAgentList(res.agents.map((a) => a.name)))
+      .then((res) => {
+        const names = res.agents.map((a) => a.name);
+        setAgentList(names);
+        setSelectedAgent((prev) => prev || (names[0] as AgentName) || prev);
+      })
       .catch(() => {/* silently ignore — sidebar stays empty */});
   }, []);
 

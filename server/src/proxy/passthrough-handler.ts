@@ -1011,7 +1011,7 @@ export async function handlePassthrough(
         actionType: v1ToolName,
         item: (data.item_name ?? data.item ?? data.good ?? payload?.id ?? payload?.item_id) as string | undefined,
         quantity: (data.quantity ?? data.amount ?? payload?.count) as number | undefined,
-        creditsDelta: (data.credits_delta ?? data.total_price ?? data.credits ?? data.total) as number | undefined,
+        creditsDelta: (data.credits_delta ?? data.total_price ?? data.total_credits ?? data.total_cost ?? data.credits ?? data.total) as number | undefined,
         station: (data.station ?? data.location) as string | undefined,
         system: (data.system) as string | undefined,
         rawData: JSON.stringify(result).slice(0, 500),

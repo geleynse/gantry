@@ -53,6 +53,7 @@ export interface AgentStatus {
   // Session tracking
   sessionStartedAt?: string | null;
   lastToolCallAt?: string | null;
+  lastToolName?: string | null;
   // Health details
   latencyMetrics?: LatencyMetrics;
   errorRate?: ErrorRateBreakdown;

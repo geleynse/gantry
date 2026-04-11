@@ -320,7 +320,11 @@ export function AgentCard({ agent, gameState, name, compact }: AgentCardProps) {
             Last Tool
           </span>
           <span className="font-mono text-foreground/80 shrink-0">
-            {agent.lastToolCallAt ? relativeTime(agent.lastToolCallAt) : <span className="text-muted-foreground/40 not-italic">N/A</span>}
+            {agent.lastToolName
+              ? <>{agent.lastToolName} <span className="text-muted-foreground/60">{relativeTime(agent.lastToolCallAt)}</span></>
+              : agent.lastToolCallAt
+                ? relativeTime(agent.lastToolCallAt)
+                : <span className="text-muted-foreground/40 not-italic">N/A</span>}
           </span>
         </div>
       </div>

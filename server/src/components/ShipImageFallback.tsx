@@ -121,10 +121,8 @@ export function ShipImageFallback({
 
   return (
     <div
-      className={cn("relative overflow-hidden rounded", className)}
+      className={cn("relative overflow-hidden rounded w-full h-full", className)}
       style={{
-        width: `${width}px`,
-        height: `${height}px`,
         background: `linear-gradient(135deg, ${color1}22, ${color2}22)`,
         ...style,
       }}
@@ -132,8 +130,8 @@ export function ShipImageFallback({
     >
       <svg
         viewBox="0 0 100 100"
-        width={width}
-        height={height}
+        width="100%"
+        height="100%"
         xmlns="http://www.w3.org/2000/svg"
         style={{ display: "block" }}
       >

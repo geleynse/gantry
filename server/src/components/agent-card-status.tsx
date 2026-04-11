@@ -84,41 +84,73 @@ export interface HealthScoreProps {
   agent: AgentStatus;
 }
 
+// Determine pill color class based on issue text content
+function getIssuePillClass(issue: string): string {
+  const lower = issue.toLowerCase();
+  if (lower.includes("auth") || lower.includes("credential") || lower.includes("forbidden") || lower.includes("unauthorized")) {
+    return "bg-red-900/50 text-red-300 border-red-700/60";
+  }
+  if (lower.includes("error") || lower.includes("fail") || lower.includes("crash") || lower.includes("dead")) {
+    return "bg-red-900/40 text-red-400 border-red-800/50";
+  }
+  if (lower.includes("slow") || lower.includes("timeout") || lower.includes("lag") || lower.includes("latency")) {
+    return "bg-yellow-900/40 text-yellow-300 border-yellow-700/50";
+  }
+  if (lower.includes("warn") || lower.includes("retry")) {
+    return "bg-orange-900/40 text-orange-300 border-orange-700/50";
+  }
+  return "bg-secondary/60 text-muted-foreground border-border/50";
+}
+
+const MAX_VISIBLE_ISSUES = 2;
+
 export function HealthScoreIndicator({ score, state, agent }: HealthScoreProps) {
   // Hide health when agent is not running — stale metrics are misleading
   if (score === null || state === 'stopped' || state === 'dead') return null;
 
-  const healthTooltip = agent.healthIssues && agent.healthIssues.length > 0
-    ? agent.healthIssues.join("; ")
-    : "Healthy";
-
-  const firstIssue = agent.healthIssues && agent.healthIssues.length > 0
-    ? agent.healthIssues[0]
-    : null;
+  const issues = agent.healthIssues ?? [];
+  const healthTooltip = issues.length > 0 ? issues.join("; ") : "Healthy";
+  const visibleIssues = issues.slice(0, MAX_VISIBLE_ISSUES);
+  const hiddenCount = issues.length - visibleIssues.length;
 
   return (
     <div
-      className="flex flex-col items-end mt-auto"
+      className="flex flex-col items-end mt-auto gap-1"
       title={healthTooltip}
     >
-      <span
-        className={cn(
-          "text-sm font-bold font-mono tabular-nums",
-          score > 60 ? "text-success" : score > 30 ? "text-warning" : "text-error"
-        )}
-      >
-        {score}%
-      </span>
-      <span className="text-[9px] uppercase tracking-wider text-muted-foreground leading-none">
-        health
-      </span>
-      {firstIssue && (
-        <span className={cn(
-          "text-[8px] leading-tight text-right mt-0.5 max-w-[96px] truncate",
-          score > 30 ? "text-warning/80" : "text-error/80"
-        )}>
-          {firstIssue}
+      <div className="flex flex-col items-end">
+        <span
+          className={cn(
+            "text-sm font-bold font-mono tabular-nums",
+            score > 60 ? "text-success" : score > 30 ? "text-warning" : "text-error"
+          )}
+        >
+          {score}%
         </span>
+        <span className="text-[9px] uppercase tracking-wider text-muted-foreground leading-none">
+          health
+        </span>
+      </div>
+      {visibleIssues.length > 0 && (
+        <div className="flex flex-col items-end gap-0.5">
+          {visibleIssues.map((issue, idx) => (
+            <span
+              key={idx}
+              className={cn(
+                "text-[9px] font-mono px-1.5 py-0.5 border leading-none whitespace-nowrap max-w-[112px] truncate",
+                getIssuePillClass(issue)
+              )}
+              title={issue}
+            >
+              {issue}
+            </span>
+          ))}
+          {hiddenCount > 0 && (
+            <span className="text-[9px] text-muted-foreground/60 font-mono leading-none">
+              +{hiddenCount} more
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

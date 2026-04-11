@@ -14,7 +14,7 @@ import {
   Legend,
 } from "recharts";
 import { apiFetch } from "@/lib/api";
-import { AGENT_COLORS } from "@/lib/utils";
+import { AGENT_COLORS, getAgentColor } from "@/lib/utils";
 import { formatTimeShort, formatFullTimestamp } from "@/lib/time";
 
 // ---------------------------------------------------------------------------
@@ -256,18 +256,22 @@ export function CostChart({ hours }: CostChartProps) {
             iconType="line"
             height={20}
           />
-          {Object.entries(AGENT_COLORS).map(([agent, color]) => (
-            <Line
-              key={agent}
-              type="monotone"
-              dataKey={agent}
-              stroke={color}
-              strokeWidth={1.5}
-              dot={false}
-              activeDot={{ r: 3, fill: color }}
-              connectNulls={true}
-            />
-          ))}
+          {/* Derive agent list from data keys (AGENT_COLORS is empty at runtime) */}
+          {Array.from(new Set(data.flatMap((pt) => Object.keys(pt).filter((k) => k !== "time" && k !== "fullTimestamp")))).map((agent) => {
+            const color = getAgentColor(agent);
+            return (
+              <Line
+                key={agent}
+                type="monotone"
+                dataKey={agent}
+                stroke={color}
+                strokeWidth={1.5}
+                dot={false}
+                activeDot={{ r: 3, fill: color }}
+                connectNulls={true}
+              />
+            );
+          })}
         </LineChart>
       </ResponsiveContainer>
     </div>

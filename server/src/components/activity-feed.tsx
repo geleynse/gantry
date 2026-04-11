@@ -7,6 +7,7 @@ import { AGENT_COLORS, AGENT_NAMES } from "@/lib/utils";
 import { useSSE } from "@/hooks/use-sse";
 import { apiFetch } from "@/lib/api";
 import { formatTime } from "@/lib/time";
+import { summarizeResult } from "@/lib/summarize-result";
 import { Pause, Play } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -277,13 +278,13 @@ function ActivityRow({
           {displayToolName}
         </span>
 
-        {/* Result summary inline */}
+        {/* Result summary inline — show human-readable digest, not raw JSON */}
         {event.result_summary && !expanded && (
           <span className={cn(
             "min-w-0 flex-1 truncate text-muted-foreground",
             event.status === "error" && "text-error/80",
           )}>
-            {event.result_summary}
+            {summarizeResult(event.result_summary)}
           </span>
         )}
 
@@ -437,7 +438,7 @@ export function ActivityFeed() {
     const originalTitle = document.title;
     document.title = "\u26a0 Error \u2014 GANTRY";
     const tid = setTimeout(() => { document.title = originalTitle; }, 3000);
-    return () => clearTimeout(tid);
+    return () => { clearTimeout(tid); document.title = originalTitle; };
   }, [sseData]);
 
   const toggleAgent = useCallback((name: string) => {

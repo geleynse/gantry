@@ -774,8 +774,15 @@ export function AgentDetailClient() {
         </div>
       </div>
 
-      {/* Tab navigation — horizontally scrollable on mobile */}
-      <div className="overflow-x-auto -mx-3 px-3 md:mx-0 md:px-0">
+      {/* Tab navigation — horizontally scrollable on mobile with fade edge indicators */}
+      <div
+        className="overflow-x-auto -mx-3 px-3 md:mx-0 md:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        style={{
+          WebkitOverflowScrolling: "touch",
+          maskImage: "linear-gradient(to right, transparent 0px, black 16px, black calc(100% - 16px), transparent 100%)",
+          WebkitMaskImage: "linear-gradient(to right, transparent 0px, black 16px, black calc(100% - 16px), transparent 100%)",
+        }}
+      >
         <div className="flex gap-0 border-b border-border min-w-max">
           {TABS.filter(t => !t.adminOnly || isAdmin).map((tab) => (
             <button

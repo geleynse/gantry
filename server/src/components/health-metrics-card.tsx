@@ -58,7 +58,7 @@ export function HealthMetricsCard({
           {latency && (
             <div className="space-y-1">
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold">
-                Latency (ms)
+                Latency (ms) <span className="normal-case font-normal tracking-normal">— includes tick wait</span>
               </div>
               <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
                 <div className="bg-background/50 p-1.5 rounded border border-border/50">

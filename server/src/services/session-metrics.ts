@@ -13,10 +13,19 @@ export function getSessionInfo(agentName: string): SessionInfo {
     agentName
   );
 
+  // Get the most recent real tool name (exclude internal pseudo-tools)
+  const toolResult = queryOne<{ tool_name: string | null }>(
+    `SELECT tool_name FROM proxy_tool_calls
+     WHERE agent = ? AND tool_name NOT LIKE '\\_\\_%' ESCAPE '\\' AND tool_name NOT LIKE 'ws:%'
+     ORDER BY created_at DESC LIMIT 1`,
+    agentName
+  );
+
   return {
     agent: agentName,
     sessionStartedAt: result?.session_started_at ?? null,
     lastToolCallAt: result?.last_tool_call_at ?? null,
+    lastToolName: toolResult?.tool_name ?? null,
   };
 }
 

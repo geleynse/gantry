@@ -40,8 +40,8 @@ function parseJsonSafe<T>(json: string | null | undefined, fallback: T): T {
 
 function formatCost(n: number | null | undefined): string {
   if (n == null) return "—";
-  if (n < 0.001) return "<$0.001";
-  return `$${n.toFixed(4)}`;
+  if (n < 0.01) return "<$0.01";
+  return `$${n.toFixed(2)}`;
 }
 
 function formatDuration(ms: number | null | undefined): string {
@@ -247,6 +247,9 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
   const [expanded, setExpanded] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
 
+  // A tick is pending if duration_ms hasn't been populated yet (still running)
+  const isPending = decision.duration_ms == null;
+
   const hasActions =
     decision.actions_json &&
     decision.actions_json !== "[]" &&
@@ -260,7 +263,8 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
     <div className={cn(
       "border border-border bg-card transition-colors",
       decision.status === "error" && "border-error/20",
-      decision.status === "success" && hasActions && "border-primary/10"
+      decision.status === "success" && hasActions && "border-primary/10",
+      isPending && "border-primary/30"
     )}>
       {/* Header row — always visible */}
       <button
@@ -280,8 +284,15 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
           tick #{decision.tick_number}
         </span>
 
-        {/* Status badge */}
-        <StatusBadge status={decision.status} />
+        {/* Status badge — show spinner when pending */}
+        {isPending ? (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider bg-primary/10 border border-primary/30 text-primary">
+            <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+            running
+          </span>
+        ) : (
+          <StatusBadge status={decision.status} />
+        )}
 
         {/* Triggered by */}
         <span className="flex-1 text-xs text-muted-foreground font-mono truncate">
@@ -296,11 +307,20 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
               {decision.model}
             </span>
           )}
-          <span className="flex items-center gap-1">
-            <Clock className="w-3 h-3" />
-            {formatDuration(decision.duration_ms)}
-          </span>
-          <span>{formatCost(decision.cost_estimate)}</span>
+          {isPending ? (
+            <span className="flex items-center gap-1 text-primary/70 animate-pulse">
+              <Clock className="w-3 h-3" />
+              in progress
+            </span>
+          ) : (
+            <>
+              <span className="flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                {formatDuration(decision.duration_ms)}
+              </span>
+              <span>{formatCost(decision.cost_estimate)}</span>
+            </>
+          )}
         </div>
 
         {/* Timestamp */}
@@ -331,11 +351,19 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
             </div>
             <div>
               <span className="text-muted-foreground/60">cost </span>
-              <span className="text-foreground">{formatCost(decision.cost_estimate)}</span>
+              {isPending ? (
+                <span className="text-primary/70 animate-pulse">pending</span>
+              ) : (
+                <span className="text-foreground">{formatCost(decision.cost_estimate)}</span>
+              )}
             </div>
             <div>
               <span className="text-muted-foreground/60">duration </span>
-              <span className="text-foreground">{formatDuration(decision.duration_ms)}</span>
+              {isPending ? (
+                <span className="text-primary/70 animate-pulse">pending</span>
+              ) : (
+                <span className="text-foreground">{formatDuration(decision.duration_ms)}</span>
+              )}
             </div>
             <div>
               <span className="text-muted-foreground/60">at </span>

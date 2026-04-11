@@ -61,7 +61,22 @@ function eventTypeColor(type: string): string {
 }
 
 function truncate(text: string, maxLen = 80): string {
-  return text.length > maxLen ? text.slice(0, maxLen) + "…" : text;
+  if (text.length <= maxLen) return text;
+  // Find last space at or before the limit
+  const lastSpace = text.lastIndexOf(" ", maxLen);
+  // If we found a space and the word after it looks like a number, include the full number
+  if (lastSpace > 0) {
+    const wordAfter = text.slice(lastSpace + 1).split(/\s/)[0];
+    if (/^-?\d[\d,._]*$/.test(wordAfter)) {
+      // The next token is a number — include it
+      const endOfNumber = lastSpace + 1 + wordAfter.length;
+      return text.slice(0, endOfNumber) + "…";
+    }
+    // Otherwise truncate at the word boundary
+    return text.slice(0, lastSpace) + "…";
+  }
+  // No space found — fall back to hard truncation
+  return text.slice(0, maxLen) + "…";
 }
 
 // ---------------------------------------------------------------------------

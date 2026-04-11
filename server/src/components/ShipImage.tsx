@@ -87,15 +87,19 @@ export function ShipImage({
       aria-label={alt || `Ship: ${shipClass.replace(/_/g, " ")}`}
     >
       {/* SVG silhouette — always rendered as base layer */}
-      <ShipImageFallback shipClass={shipClass} width={width} height={height} />
+      <div className="absolute inset-0">
+        <ShipImageFallback shipClass={shipClass} width={width} height={height} />
+      </div>
 
       {/* CDN image — overlays SVG if it loads successfully.
           When chromaKey is enabled, background is removed via canvas processing.
           Otherwise the raw CDN image is shown directly. */}
-      {!imgFailed && (
+      {!imgFailed && shipClass && (
         <img
           src={chromaKey ? (chromaUrl ?? imgUrl) : imgUrl}
           alt={alt || `${shipClass} ship`}
+          width={width}
+          height={height}
           className="absolute inset-0 w-full h-full object-cover"
           style={{ opacity: imgLoaded ? 1 : 0, transition: "opacity 300ms ease-in" }}
           loading={lazy ? "lazy" : "eager"}
