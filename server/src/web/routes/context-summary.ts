@@ -24,6 +24,7 @@ import { queryAll } from "../../services/database.js";
 import { getPendingOrders } from "../../services/comms-db.js";
 import { validateAgentName } from "../config.js";
 import { createLogger } from "../../lib/logger.js";
+import { summarizeToolResult } from "../../proxy/summarizers.js";
 import type { EventBuffer } from "../../proxy/event-buffer.js";
 
 const log = createLogger("context-summary");
@@ -86,18 +87,21 @@ export function createContextSummaryRouter(
     try {
       // --- Status cache ---
       const cached = statusCache.get(name);
-      const statusData = cached?.data ?? null;
+      const rawStatusData = cached?.data ?? null;
+      const statusData = rawStatusData
+        ? (summarizeToolResult("get_status", rawStatusData) as Record<string, unknown>)
+        : null;
 
-      // --- Location (extracted from status cache) ---
-      const player = (statusData?.player ?? {}) as Record<string, unknown>;
+      // --- Location (extracted from raw status cache, before summarization) ---
+      const player = (rawStatusData?.player ?? {}) as Record<string, unknown>;
       const location = {
         system: (player.current_system as string | undefined) ?? null,
         poi: (player.current_poi as string | undefined) ?? null,
         docked: typeof player.docked === "boolean" ? player.docked : Boolean(player.docked_at ?? player.docked),
       };
 
-      // --- Resources ---
-      const ship = (statusData?.ship ?? {}) as Record<string, unknown>;
+      // --- Resources (extracted from raw status cache, before summarization) ---
+      const ship = (rawStatusData?.ship ?? {}) as Record<string, unknown>;
       const resources = {
         credits: typeof player.credits === "number" ? player.credits : null,
         fuel: typeof ship.fuel === "number" ? ship.fuel : null,
