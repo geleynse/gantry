@@ -298,5 +298,34 @@ export function createDefaultInjections(): Injection[] {
         return null;
       },
     },
+
+    {
+      name: "shutdown-warning",
+      key: "_shutdown_warning",
+      priority: 80,
+      enabled: (ctx) => Boolean(ctx.sessionStore),
+      gather: (ctx, agent) => {
+        if (!ctx.shutdownWarningFired) return null;
+        // Only fire once per turn per agent
+        if (ctx.shutdownWarningFired.has(agent)) return null;
+
+        // Reverse-lookup: find the session ID for this agent
+        let sessionId: string | undefined;
+        for (const [sid, agentName] of ctx.sessionAgentMap.entries()) {
+          if (agentName === agent) { sessionId = sid; break; }
+        }
+        if (!sessionId) return null;
+
+        const turnStartedAt = ctx.sessionStore!.getTurnStartedAt(sessionId);
+        if (!turnStartedAt) return null;
+
+        const elapsedMs = Date.now() - new Date(turnStartedAt).getTime();
+        const thresholdMs = ctx.config.shutdownWarningMs ?? 1100 * 1000; // 1100s default
+        if (elapsedMs < thresholdMs) return null;
+
+        ctx.shutdownWarningFired.add(agent);
+        return "SHUTDOWN_SIGNAL: You have ~100 seconds remaining. Write captains_log_add and logout NOW.";
+      },
+    },
   ];
 }

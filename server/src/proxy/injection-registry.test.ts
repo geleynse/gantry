@@ -460,9 +460,9 @@ describe("default injection: directives", () => {
 // ---------------------------------------------------------------------------
 
 describe("createDefaultInjections", () => {
-  it("returns 11 injections in the correct priority order", () => {
+  it("returns 12 injections in the correct priority order", () => {
     const injections = createDefaultInjections();
-    expect(injections).toHaveLength(11);
+    expect(injections).toHaveLength(12);
 
     const names = injections.map((i) => i.name);
     expect(names).toEqual([
@@ -477,10 +477,11 @@ describe("createDefaultInjections", () => {
       "poi-lore",
       "directives",
       "stale-strategy",
+      "shutdown-warning",
     ]);
 
     const priorities = injections.map((i) => i.priority);
-    expect(priorities).toEqual([10, 11, 20, 30, 40, 45, 50, 60, 62, 70, 75]);
+    expect(priorities).toEqual([10, 11, 20, 30, 40, 45, 50, 60, 62, 70, 75, 80]);
   });
 
   it("location-context injection returns current system from statusCache", () => {
@@ -517,5 +518,117 @@ describe("createDefaultInjections", () => {
     // No statusCache
     const ctxNoCache = makeCtx({ statusCache: undefined });
     expect(locCtx.gather(ctxNoCache, "agent-a")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Default injection: shutdown-warning (priority 80)
+// ---------------------------------------------------------------------------
+
+function makeSessionStoreMock(turnStartedAt: string | null = null) {
+  return {
+    getTurnStartedAt: (_id: string) => turnStartedAt,
+    getSession: (_id: string) => null,
+  } as unknown as import("./session-store.js").SessionStore;
+}
+
+describe("default injection: shutdown-warning", () => {
+  it("injects _shutdown_warning when elapsed time exceeds threshold", () => {
+    const turnStartedAt = new Date(Date.now() - 1200 * 1000).toISOString(); // 1200s ago
+    const sessionAgentMap = new Map([["sess-1", "alpha"]]);
+    const ctx = makeCtx({
+      sessionAgentMap,
+      sessionStore: makeSessionStoreMock(turnStartedAt),
+      shutdownWarningFired: new Set<string>(),
+    });
+
+    const results = ctx.injectionRegistry.run(ctx, "alpha");
+
+    expect(results.has("_shutdown_warning")).toBe(true);
+    const msg = results.get("_shutdown_warning") as string;
+    expect(msg).toContain("SHUTDOWN_SIGNAL");
+    expect(msg).toContain("captains_log_add");
+  });
+
+  it("does not inject when elapsed time is below threshold", () => {
+    const turnStartedAt = new Date(Date.now() - 500 * 1000).toISOString(); // 500s ago
+    const sessionAgentMap = new Map([["sess-1", "alpha"]]);
+    const ctx = makeCtx({
+      sessionAgentMap,
+      sessionStore: makeSessionStoreMock(turnStartedAt),
+      shutdownWarningFired: new Set<string>(),
+    });
+
+    const results = ctx.injectionRegistry.run(ctx, "alpha");
+    expect(results.has("_shutdown_warning")).toBe(false);
+  });
+
+  it("fires only once per turn (idempotent across multiple tool calls)", () => {
+    const turnStartedAt = new Date(Date.now() - 1200 * 1000).toISOString();
+    const sessionAgentMap = new Map([["sess-1", "alpha"]]);
+    const ctx = makeCtx({
+      sessionAgentMap,
+      sessionStore: makeSessionStoreMock(turnStartedAt),
+      shutdownWarningFired: new Set<string>(),
+    });
+
+    const r1 = ctx.injectionRegistry.run(ctx, "alpha");
+    expect(r1.has("_shutdown_warning")).toBe(true);
+
+    // Second call — already fired, should not inject again
+    const r2 = ctx.injectionRegistry.run(ctx, "alpha");
+    expect(r2.has("_shutdown_warning")).toBe(false);
+  });
+
+  it("respects custom shutdownWarningMs from config", () => {
+    // Elapsed 600s, threshold set to 500s → should fire
+    const turnStartedAt = new Date(Date.now() - 600 * 1000).toISOString();
+    const sessionAgentMap = new Map([["sess-1", "alpha"]]);
+    const ctx = makeCtx({
+      config: makeConfig({ shutdownWarningMs: 500 * 1000 }),
+      sessionAgentMap,
+      sessionStore: makeSessionStoreMock(turnStartedAt),
+      shutdownWarningFired: new Set<string>(),
+    });
+
+    const results = ctx.injectionRegistry.run(ctx, "alpha");
+    expect(results.has("_shutdown_warning")).toBe(true);
+  });
+
+  it("does not inject when sessionStore is absent (disabled)", () => {
+    const sessionAgentMap = new Map([["sess-1", "alpha"]]);
+    const ctx = makeCtx({
+      sessionAgentMap,
+      // No sessionStore
+      shutdownWarningFired: new Set<string>(),
+    });
+
+    const results = ctx.injectionRegistry.run(ctx, "alpha");
+    expect(results.has("_shutdown_warning")).toBe(false);
+  });
+
+  it("does not inject when agent has no session in sessionAgentMap", () => {
+    const turnStartedAt = new Date(Date.now() - 1200 * 1000).toISOString();
+    const sessionAgentMap = new Map<string, string>(); // empty — no mapping for agent
+    const ctx = makeCtx({
+      sessionAgentMap,
+      sessionStore: makeSessionStoreMock(turnStartedAt),
+      shutdownWarningFired: new Set<string>(),
+    });
+
+    const results = ctx.injectionRegistry.run(ctx, "alpha");
+    expect(results.has("_shutdown_warning")).toBe(false);
+  });
+
+  it("does not inject when turn_started_at is null", () => {
+    const sessionAgentMap = new Map([["sess-1", "alpha"]]);
+    const ctx = makeCtx({
+      sessionAgentMap,
+      sessionStore: makeSessionStoreMock(null), // no turn start recorded
+      shutdownWarningFired: new Set<string>(),
+    });
+
+    const results = ctx.injectionRegistry.run(ctx, "alpha");
+    expect(results.has("_shutdown_warning")).toBe(false);
   });
 });

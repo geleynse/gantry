@@ -10,7 +10,7 @@ import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("session-store");
 
-const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes (agents create new sessions each turn via --no-session-persistence)
+const SESSION_TTL_MS = 25 * 60 * 1000; // 25 minutes — must exceed 1200s turn hard cap + reaper interval. Was 15min which caused mid-turn session expiry.
 
 export interface McpSessionRecord {
   id: string;

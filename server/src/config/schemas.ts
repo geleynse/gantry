@@ -144,6 +144,8 @@ export const FleetConfigSchema = z.object({
   maxIterationsPerSession: z.number().positive().optional(),
   maxTurnDurationMs: z.number().positive().optional(),
   idleTimeoutMs: z.number().positive().optional(),
+  /** Time (ms) after turn start to inject SHUTDOWN_SIGNAL. Default: 1100000 (1100s). */
+  shutdownWarningMs: z.number().positive().optional(),
   coordinator: CoordinatorConfigSchema.optional(),
   overseer: OverseerConfigSchema.optional(),
   survivability: SurvivabilityConfigSchema.optional(),

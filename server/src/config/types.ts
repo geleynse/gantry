@@ -82,6 +82,8 @@ export interface GantryConfig {
   maxTurnDurationMs?: number;
   /** Idle timeout in milliseconds (no activity). Default: 2 minutes. */
   idleTimeoutMs?: number;
+  /** Time (ms) after turn start to inject SHUTDOWN_SIGNAL. Default: 1100000 (1100s). */
+  shutdownWarningMs?: number;
   /** Supply-chain coordinator config */
   coordinator?: CoordinatorConfig;
   /** Overseer agent config: autonomous fleet monitoring and corrective actions */

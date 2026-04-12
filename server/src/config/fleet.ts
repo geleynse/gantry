@@ -109,6 +109,7 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
   const maxIterationsPerSession = fleetConfig.maxIterationsPerSession ?? 200;
   const maxTurnDurationMs = fleetConfig.maxTurnDurationMs ?? 10 * 60 * 1000; // 10 minutes
   const idleTimeoutMs = fleetConfig.idleTimeoutMs ?? 2 * 60 * 1000; // 2 minutes
+  const shutdownWarningMs = fleetConfig.shutdownWarningMs; // default applied in injection (1100000ms)
 
   // Normalize mockMode: boolean shorthand → MockModeConfig object
   let mockMode: MockModeConfig | undefined;
@@ -167,6 +168,7 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
     maxIterationsPerSession,
     maxTurnDurationMs,
     idleTimeoutMs,
+    shutdownWarningMs,
     coordinator,
     overseer,
     outbound,

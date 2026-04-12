@@ -202,6 +202,7 @@ export function createGantryServer(config: GantryConfig, shared?: SharedState) {
     // Use shared transit throttle from SharedState so it persists across agent turns/sessions.
     // Fall back to a new instance only in standalone mode (no shared state, e.g. tests).
     transitThrottle: shared?.proxy.transitThrottle ?? new TransitThrottle(),
+    shutdownWarningFired: new Set<string>(),
   };
 
   const transitStuckDetector = new TransitStuckDetector();
