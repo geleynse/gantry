@@ -243,6 +243,34 @@ describe("mapV2ToV1", () => {
     expect(v1Args.id).toBeUndefined();
   });
 
+  it("install_mod: remaps id to item_id", () => {
+    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt_ship", "install_mod", { id: "engine_t2" });
+    expect(v1ToolName).toBe("install_mod");
+    expect(v1Args.item_id).toBe("engine_t2");
+    expect(v1Args.id).toBeUndefined();
+  });
+
+  it("install_mod: remaps module_id to item_id", () => {
+    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt_ship", "install_mod", { module_id: "engine_t2" });
+    expect(v1ToolName).toBe("install_mod");
+    expect(v1Args.item_id).toBe("engine_t2");
+    expect(v1Args.module_id).toBeUndefined();
+  });
+
+  it("uninstall_mod: remaps id to item_id", () => {
+    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt_ship", "uninstall_mod", { id: "engine_t1" });
+    expect(v1ToolName).toBe("uninstall_mod");
+    expect(v1Args.item_id).toBe("engine_t1");
+    expect(v1Args.id).toBeUndefined();
+  });
+
+  it("uninstall_mod: remaps module_id to item_id", () => {
+    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt_ship", "uninstall_mod", { module_id: "engine_t1" });
+    expect(v1ToolName).toBe("uninstall_mod");
+    expect(v1Args.item_id).toBe("engine_t1");
+    expect(v1Args.module_id).toBeUndefined();
+  });
+
   it("maps spacemolt get_status correctly", () => {
     const { v1ToolName } = mapV2ToV1("spacemolt", "get_status", {});
     expect(v1ToolName).toBe("get_status");

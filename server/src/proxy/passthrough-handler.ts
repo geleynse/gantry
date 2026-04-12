@@ -716,6 +716,8 @@ export async function handlePassthrough(
       if (v1ToolName === "install_mod" && resultObj && typeof resultObj === "object") {
         const isError = "error" in (resultObj as any) || (resultObj as any).status === "error";
         if (!isError) {
+          const installedId = (payload?.item_id ?? payload?.module_id ?? payload?.id) as string | undefined;
+          log.info("[proxy] install_mod", { agent: agentName, module_id: installedId });
           try {
             const shipResp = await client.execute("get_ship", {});
             if (shipResp?.result) {
