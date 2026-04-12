@@ -115,9 +115,10 @@ export function getItemName(itemId: string | undefined, displayName?: string | n
   return fixRomanNumerals(formatted);
 }
 
-/** Detect if a string looks like a raw hex hash (8+ char hex) */
+/** Detect if a string looks like a raw hex hash (8+ char hex, includes 32-char UUIDs) */
 function isHexHash(str: string | null | undefined): boolean {
   if (!str) return false;
+  // Match any pure hex string of 8+ chars (includes 32-char UUIDs like 1aa16e807736f14db436567c737255a6)
   return /^[a-f0-9]{8,}$/i.test(str);
 }
 

@@ -33,12 +33,50 @@ function firstStringField(obj: Record<string, unknown>): string | null {
  * - Plain strings: truncate at word boundary near RESULT_INLINE_MAX
  * - JSON objects: extract a meaningful field or show key count
  * - JSON arrays: show array length
+ * - Special cases: get_missions, analyze_market with dedicated formatters
  */
-export function summarizeResult(raw: string): string {
+export function summarizeResult(raw: string, toolName?: string): string {
   const trimmed = raw.trim();
   const parsed = tryParseJson(trimmed);
 
   if (parsed !== null) {
+    // Special handling for get_missions
+    if (toolName === "get_missions" && Array.isArray(parsed)) {
+      if (parsed.length === 0) return "[0 missions]";
+      const topReward = parsed.reduce((max: number, m: any) => {
+        const reward = typeof m?.reward === "number" ? m.reward : 0;
+        return Math.max(max, reward);
+      }, 0);
+      const summary = `[${parsed.length} mission${parsed.length !== 1 ? "s" : ""}${topReward > 0 ? `, max ${topReward.toLocaleString()} cr` : ""}]`;
+      return summary.length <= RESULT_INLINE_MAX ? summary : `[${parsed.length} missions]`;
+    }
+
+    // Special handling for analyze_market
+    if (toolName === "analyze_market" && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, any>;
+      const items = obj.items || [];
+      if (Array.isArray(items) && items.length > 0) {
+        // Find best buy/sell spread
+        let bestSpread = 0;
+        let bestItem = "";
+        for (const item of items) {
+          if (item.buy_price != null && item.sell_price != null) {
+            const spread = item.sell_price - item.buy_price;
+            if (spread > bestSpread) {
+              bestSpread = spread;
+              bestItem = item.name || item.item || "?";
+            }
+          }
+        }
+        if (bestSpread > 0) {
+          const summary = `[${items.length} items, best spread: ${bestItem} +${bestSpread}]`;
+          return summary.length <= RESULT_INLINE_MAX ? summary : `[${items.length} items]`;
+        }
+        return `[${items.length} items]`;
+      }
+    }
+
+    // Standard JSON handling
     if (Array.isArray(parsed)) {
       return `[${parsed.length} item${parsed.length !== 1 ? "s" : ""}]`;
     }

@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Factory, RefreshCw, ChevronDown } from "lucide-react";
+import { Factory, RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, isApiError } from "@/lib/api";
 import { useAgentNames } from "@/hooks/use-agent-names";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +39,47 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "build", label: "Buildable" },
   { id: "faction", label: "Faction" },
 ];
+
+// ---------------------------------------------------------------------------
+// Error state handling
+// ---------------------------------------------------------------------------
+
+interface ErrorState {
+  kind: "not_found" | "network" | "unknown";
+  message: string;
+  rawError: string;
+}
+
+function classifyError(err: unknown, selectedAgent: string): ErrorState {
+  if (isApiError(err)) {
+    if (err.status === 404) {
+      return {
+        kind: "not_found",
+        message: `No facilities data yet for ${selectedAgent}—have the agent call \`list_facilities\` in-game first.`,
+        rawError: err.body,
+      };
+    }
+    if (err.status >= 500) {
+      return {
+        kind: "network",
+        message: "Facilities service unavailable. Try refresh.",
+        rawError: err.body,
+      };
+    }
+    return {
+      kind: "unknown",
+      message: `API error (${err.status}). Check details below.`,
+      rawError: err.body,
+    };
+  }
+
+  const msg = err instanceof Error ? err.message : String(err);
+  return {
+    kind: "unknown",
+    message: "Failed to load facilities. Check details below.",
+    rawError: msg,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Facility row
@@ -126,7 +167,7 @@ export default function FacilitiesPage() {
   const [activeTab, setActiveTab] = useState<TabId>("station");
   const [data, setData] = useState<FacilitiesResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ErrorState | null>(null);
 
   // Default to first agent once names load
   useEffect(() => {
@@ -144,7 +185,7 @@ export default function FacilitiesPage() {
       const res = await apiFetch<FacilitiesResponse>(`/api/facilities?${params}`);
       setData(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load facilities");
+      setError(classifyError(err, selectedAgent));
     } finally {
       setLoading(false);
     }
@@ -221,8 +262,23 @@ export default function FacilitiesPage() {
 
       {/* Content */}
       {error && (
-        <div className="bg-destructive/10 border border-destructive/30 text-destructive px-4 py-3 text-sm">
-          {error}
+        <div className="bg-destructive/10 border border-destructive/30 rounded px-4 py-3 space-y-2">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm text-destructive font-medium">{error.message}</p>
+            </div>
+          </div>
+          {error.rawError && (
+            <details className="text-[11px] text-muted-foreground/70">
+              <summary className="cursor-pointer hover:text-muted-foreground">
+                Debug info
+              </summary>
+              <div className="mt-2 p-2 bg-secondary/30 rounded font-mono text-[10px] overflow-auto max-h-32 whitespace-pre-wrap break-words">
+                {error.rawError}
+              </div>
+            </details>
+          )}
         </div>
       )}
 

@@ -289,3 +289,32 @@ describe('ShipLoadout', () => {
     expect(screen.queryByRole('button', { name: /Close lightbox/i })).not.toBeInTheDocument();
   });
 });
+
+  // ---------------------------------------------------------------------------
+  // Module UUID formatting
+  // ---------------------------------------------------------------------------
+
+  it('formats raw 32-char hex UUID module hashes as "Module (xxxx…)"', () => {
+    const gameState = createMockGameState({
+      ship: createMockShip({
+        modules: [
+          { slot_type: 'weapon', item_id: '1aa16e807736f14db436567c737255a6', item_name: '1aa16e807736f14db436567c737255a6' },
+        ],
+      }),
+    });
+    render(<ShipLoadout gameState={gameState} />);
+    expect(screen.getByText('Module (1aa1…)')).toBeInTheDocument();
+    expect(screen.queryByText('1aa16e807736f14db436567c737255a6')).not.toBeInTheDocument();
+  });
+
+  it('formats module with numeric item_id as hex UUID when item_name is also hex', () => {
+    const gameState = createMockGameState({
+      ship: createMockShip({
+        modules: [
+          { slot_type: 'defense', item_id: 'ab4007e5f47f61bc4a1fe05646f10528', item_name: 'ab4007e5f47f61bc4a1fe05646f10528' },
+        ],
+      }),
+    });
+    render(<ShipLoadout gameState={gameState} />);
+    expect(screen.getByText('Module (ab40…)')).toBeInTheDocument();
+  });

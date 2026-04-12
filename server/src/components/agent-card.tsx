@@ -279,20 +279,22 @@ export function AgentCard({ agent, gameState, name, compact }: AgentCardProps) {
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {agent.state === 'stopped' && gameState?.data_age_s !== undefined && (
-            <span
-              className="text-[9px] text-muted-foreground/60 font-mono border border-border/40 px-1 py-0.5"
-              title={gameState.last_seen ? `Last updated: ${new Date(gameState.last_seen).toLocaleString()}` : 'Stale data'}
-            >
-              {gameState.data_age_s < 3600
-                ? `${Math.round(gameState.data_age_s / 60)}m ago`
-                : `${Math.round(gameState.data_age_s / 3600)}h ago`}
-            </span>
-          )}
           {gameState && (
-            <span className="font-mono text-foreground">
-              {formatCredits(gameState.credits)}
-            </span>
+            <div className="flex items-center gap-1">
+              <span className="font-mono text-foreground">
+                {formatCredits(gameState.credits)}
+              </span>
+              {agent.state === 'stopped' && gameState.data_age_s !== undefined && (
+                <span
+                  className="text-[9px] text-muted-foreground/60 font-mono"
+                  title={gameState.last_seen ? `Last updated: ${new Date(gameState.last_seen).toLocaleString()}` : 'Stale data'}
+                >
+                  ({gameState.data_age_s < 3600
+                    ? `${Math.round(gameState.data_age_s / 60)}m ago`
+                    : `${Math.round(gameState.data_age_s / 3600)}h ago`})
+                </span>
+              )}
+            </div>
           )}
         </div>
       </div>

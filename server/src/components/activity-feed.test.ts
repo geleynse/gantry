@@ -230,3 +230,63 @@ describe('ActivityFeed — duration display condition (Bug 5)', () => {
     expect(shouldShowDuration(ev)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: Result summary formatting for activity feed
+
+// ---------------------------------------------------------------------------
+// Tests: Result summary formatting for activity feed
+// ---------------------------------------------------------------------------
+
+describe('ActivityFeed — result summary formatting (special tools)', () => {
+  it('summarizes get_missions with mission count and top reward', () => {
+    const { summarizeResult } = require('@/lib/summarize-result');
+    
+    const missionsResult = JSON.stringify([
+      { id: 1, reward: 1000 },
+      { id: 2, reward: 5000 },
+      { id: 3, reward: 2000 },
+    ]);
+    
+    const summary = summarizeResult(missionsResult, 'get_missions');
+    expect(summary).toContain('[3 missions');
+    expect(summary).toContain('max');  // Should have top reward formatted
+  });
+
+  it('handles get_missions with empty results', () => {
+    const { summarizeResult } = require('@/lib/summarize-result');
+    
+    const summary = summarizeResult('[]', 'get_missions');
+    expect(summary).toBe('[0 missions]');
+  });
+
+  it('summarizes analyze_market with item count and best spread', () => {
+    const { summarizeResult } = require('@/lib/summarize-result');
+    
+    const marketResult = JSON.stringify({
+      items: [
+        { name: 'iron_ore', buy_price: 100, sell_price: 120 },
+        { name: 'copper_ore', buy_price: 200, sell_price: 250 },
+      ],
+    });
+    
+    const summary = summarizeResult(marketResult, 'analyze_market');
+    expect(summary).toContain('[2 items');
+    expect(summary).toContain('copper_ore');
+    expect(summary).toContain('+50');
+  });
+
+  it('falls back to item count for analyze_market without price spreads', () => {
+    const { summarizeResult } = require('@/lib/summarize-result');
+    
+    const marketResult = JSON.stringify({
+      items: [
+        { name: 'iron_ore' },
+        { name: 'copper_ore' },
+      ],
+    });
+    
+    const summary = summarizeResult(marketResult, 'analyze_market');
+    expect(summary).toBe('[2 items]');
+  });
+});

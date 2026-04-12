@@ -284,7 +284,7 @@ function ActivityRow({
             "min-w-0 flex-1 truncate text-muted-foreground",
             event.status === "error" && "text-error/80",
           )}>
-            {summarizeResult(event.result_summary)}
+            {summarizeResult(event.result_summary, event.tool_name)}
           </span>
         )}
 

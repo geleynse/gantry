@@ -195,3 +195,19 @@ export function createFacilitiesRouter(statusCache: StatusCache): Router {
 }
 
 export default createFacilitiesRouter;
+
+/**
+ * INTENTIONAL DESIGN: The /api/facilities endpoint NEVER returns 404.
+ *
+ * When an agent has no cached data:
+ * - Returns 200 OK with { facilities: [], cachedAt: null }
+ * - The frontend interprets empty + null timestamp as "no data yet"
+ *
+ * When the API itself fails (e.g., database error, proxy error):
+ * - Returns appropriate 5xx status
+ * - The frontend catches and displays: "Facilities service unavailable. Try refresh."
+ *
+ * When a requested agent doesn't exist:
+ * - Returns 200 OK with { facilities: [], cachedAt: null, agent: "unknown-agent" }
+ * - Frontend guidance: Have the agent call `list_facilities` in-game to populate cache
+ */
