@@ -62,6 +62,10 @@ export interface PipelineContext {
   injectionRegistry: InjectionRegistry;
   // Optional transit throttle for rate-limiting location checks during hyperspace
   transitThrottle?: TransitThrottle;
+  // Tracks which agents have already received the shutdown warning this turn
+  shutdownWarningFired?: Set<string>;
+  // Optional: session manager for restart recovery (maps orphan sessions to agents)
+  sessions?: { listActive: () => string[]; getClient: (name: string) => { isAuthenticated: () => boolean } | undefined };
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +83,13 @@ export function getAgentForSession(
   if (!sessionId) return undefined;
   // Primary: in-memory map (fast path)
   const mapped = ctx.sessionAgentMap.get(sessionId);
-  if (mapped) return mapped;
+  if (mapped) {
+    // Touch DB session to keep rolling TTL alive — without this, the in-memory
+    // map short-circuits getSession() and the DB TTL never renews, causing the
+    // 60s cleanup interval to reap valid sessions after SESSION_TTL_MS.
+    ctx.sessionStore?.getSession(sessionId);
+    return mapped;
+  }
   // Fallback: persistent session store (handles transport reap / restart)
   const session = ctx.sessionStore?.getSession(sessionId);
   if (session?.agent) {
@@ -87,6 +97,22 @@ export function getAgentForSession(
     ctx.sessionAgentMap.set(sessionId, session.agent);
     log.info("recovered agent from session store", { agent: session.agent, session: sessionId.slice(0, 8) });
     return session.agent;
+  }
+  // Server-restart recovery: if exactly one authenticated game client has no
+  // current MCP session mapping, assume this orphaned session belongs to it.
+  if (ctx.sessions) {
+    const allAgents = ctx.sessions.listActive();
+    const mappedAgents = new Set(ctx.sessionAgentMap.values());
+    const unmapped = allAgents.filter(a => !mappedAgents.has(a) && ctx.sessions!.getClient(a)?.isAuthenticated());
+    if (unmapped.length === 1) {
+      const agent = unmapped[0];
+      ctx.sessionAgentMap.set(sessionId, agent);
+      ctx.sessionStore?.setSessionAgent?.(sessionId, agent);
+      log.info(`recovered session for ${agent} (server restart recovery)`, { session: sessionId.slice(0, 8) });
+      return agent;
+    } else if (unmapped.length > 1) {
+      log.warn("ambiguous restart recovery — multiple unmatched agents", { candidates: unmapped, session: sessionId.slice(0, 8) });
+    }
   }
   return undefined;
 }
