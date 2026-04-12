@@ -389,3 +389,200 @@ describe("travel-to (direct import)", () => {
     expect(steps.some((s) => s.action === "dock")).toBe(true);
   });
 });
+
+describe("travel-to fuzzy POI matching", () => {
+  beforeEach(() => {
+    createDatabase(":memory:");
+    systemPoiCache.clear();
+  });
+
+  afterEach(() => {
+    closeDb();
+    systemPoiCache.clear();
+  });
+
+  it("auto-resolves single substring match on invalid_poi error", async () => {
+    systemPoiCache.set("krynn", [
+      { id: "krynn_war_citadel_station", name: "War Citadel Station", type: "station" },
+      { id: "krynn_mining_belt", name: "Krynn Belt", type: "asteroid_belt" },
+    ]);
+    const travelArgs: Array<Record<string, unknown>> = [];
+    const cache = makeStatusCache("agent", {
+      player: {
+        current_system: "krynn",
+        current_poi: "krynn_mining_belt",
+        docked_at_base: null,
+      },
+    });
+    let callCount = 0;
+    const client = makeClient({
+      execute: async (tool, args) => {
+        if (tool === "travel") {
+          travelArgs.push(args ?? {});
+          callCount++;
+          if (callCount === 1) {
+            // First call fails with invalid_poi
+            return { error: { message: "invalid_poi: war_citadel" } };
+          }
+          // Second call succeeds
+          return { result: { ok: true } };
+        }
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await travelTo(deps, "war_citadel", identityResolver, false);
+
+    expect(result.status).toBe("completed");
+    expect(travelArgs).toHaveLength(2);
+    expect(travelArgs[1].target_poi).toBe("krynn_war_citadel_station");
+  });
+
+  it("returns ambiguous error when multiple POIs match", async () => {
+    systemPoiCache.set("krynn", [
+      { id: "krynn_citadel_alpha", name: "Citadel Alpha", type: "station" },
+      { id: "krynn_citadel_beta", name: "Citadel Beta", type: "station" },
+    ]);
+    const cache = makeStatusCache("agent", {
+      player: {
+        current_system: "krynn",
+        current_poi: "krynn_belt",
+        docked_at_base: null,
+      },
+    });
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "travel") {
+          return { error: { message: "invalid_poi: citadel" } };
+        }
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await travelTo(deps, "citadel", identityResolver, false);
+
+    expect(result.status).toBe("error");
+    expect(result.error).toBe("travel_failed");
+    expect(String(result.message)).toContain("krynn_citadel_alpha");
+    expect(String(result.message)).toContain("krynn_citadel_beta");
+  });
+
+  it("returns original error when no fuzzy match found", async () => {
+    systemPoiCache.set("krynn", [
+      { id: "krynn_mining_belt", name: "Krynn Belt", type: "asteroid_belt" },
+    ]);
+    const cache = makeStatusCache("agent", {
+      player: {
+        current_system: "krynn",
+        current_poi: "krynn_mining_belt",
+        docked_at_base: null,
+      },
+    });
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "travel") {
+          return { error: { message: "invalid_poi: nowhere" } };
+        }
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await travelTo(deps, "nowhere", identityResolver, false);
+
+    expect(result.status).toBe("error");
+    expect(result.error).toBe("travel_failed");
+    expect(String(result.message)).toContain("invalid_poi: nowhere");
+  });
+
+  it("fetches get_system when cache is empty before fuzzy matching", async () => {
+    systemPoiCache.clear();
+    const executedTools: string[] = [];
+    const cache = makeStatusCache("agent", {
+      player: {
+        current_system: "krynn",
+        current_poi: "krynn_belt",
+        docked_at_base: null,
+      },
+    });
+    let travelCallCount = 0;
+    const client = makeClient({
+      execute: async (tool, args) => {
+        executedTools.push(tool);
+        if (tool === "get_system") {
+          // Populate cache via cacheSystemPois
+          const { cacheSystemPois: cache2 } = await import("../poi-resolver.js");
+          cache2({
+            id: "krynn",
+            name: "Krynn",
+            pois: [{ id: "krynn_war_citadel_station", name: "War Citadel Station", type: "station" }],
+          });
+          return { result: { id: "krynn", name: "Krynn", pois: [{ id: "krynn_war_citadel_station", name: "War Citadel Station", type: "station" }] } };
+        }
+        if (tool === "travel") {
+          travelCallCount++;
+          if (travelCallCount === 1) return { error: { message: "invalid_poi: war_citadel" } };
+          return { result: { ok: true } };
+        }
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await travelTo(deps, "war_citadel", identityResolver, false);
+
+    expect(result.status).toBe("completed");
+    expect(executedTools).toContain("get_system");
+  });
+
+  it("does not fuzzy-match on non-poi errors (e.g. action_pending)", async () => {
+    const travelCallCount = { n: 0 };
+    const cache = makeStatusCache("agent", {
+      player: { current_system: "krynn", current_poi: "krynn_belt", docked_at_base: null },
+    });
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "travel") {
+          travelCallCount.n++;
+          return { error: { message: "action_pending" } };
+        }
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await travelTo(deps, "krynn_belt", identityResolver, false);
+
+    // Should fail without retrying via fuzzy
+    expect(result.status).toBe("error");
+    expect(travelCallCount.n).toBe(1);
+  });
+
+  it("handles 'Unknown destination' error message (case-insensitive)", async () => {
+    systemPoiCache.set("sol", [
+      { id: "sol_main_station", name: "Sol Main Station", type: "station" },
+    ]);
+    const cache = makeStatusCache("agent", {
+      player: { current_system: "sol", current_poi: "sol_belt", docked_at_base: null },
+    });
+    let travelCallCount = 0;
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "travel") {
+          travelCallCount++;
+          if (travelCallCount === 1) return { error: { message: "Unknown destination: main_station" } };
+          return { result: { ok: true } };
+        }
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await travelTo(deps, "main_station", identityResolver, false);
+
+    expect(result.status).toBe("completed");
+    expect(travelCallCount).toBe(2);
+  });
+});

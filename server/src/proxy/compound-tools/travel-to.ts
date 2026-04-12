@@ -9,8 +9,100 @@ import { createLogger } from "../../lib/logger.js";
 import type { CompoundToolDeps, CompoundResult } from "./types.js";
 import { stripPendingFields, waitForNavCacheUpdate, normalizeSystemName } from "./utils.js";
 import { systemPoiCache, cacheSystemPois } from "../poi-resolver.js";
+import type { PoiEntry } from "../poi-resolver.js";
 
 const log = createLogger("compound-tools");
+
+/** Check whether a game error message indicates an invalid/unknown POI. */
+function isInvalidPoiError(errMsg: string): boolean {
+  const lower = errMsg.toLowerCase();
+  return lower.includes("invalid_poi") || lower.includes("unknown destination") || lower.includes("invalid poi");
+}
+
+/**
+ * Attempt fuzzy POI matching after a travel failure.
+ *
+ * On invalid_poi errors, checks the current system's POI cache for substring
+ * matches against the agent's requested destination (case-insensitive).
+ *
+ * - Exactly one match → retries travel with the full POI ID and returns the response.
+ * - Multiple matches → pushes a descriptive error step and returns null.
+ * - No matches → returns null (caller uses original error).
+ *
+ * Fetches get_system first if the POI cache is empty for the current system.
+ */
+async function attemptFuzzyPoiRetry(
+  client: CompoundToolDeps["client"],
+  agentName: string,
+  requestedDest: string,
+  resolvedDest: string,
+  playerBefore: Record<string, unknown> | undefined,
+  statusCache: CompoundToolDeps["statusCache"],
+  steps: Array<{ action: string; result: unknown }>,
+  resolvePoiId: (agentName: string, name: string, statusCache: Map<string, { data: Record<string, unknown>; fetchedAt: number }>) => string,
+): Promise<{ result?: unknown; error?: unknown } | null> {
+  const currentSystem = playerBefore?.current_system as string | undefined;
+  if (!currentSystem) return null;
+
+  // Populate cache if needed
+  if (!systemPoiCache.has(currentSystem)) {
+    log.info("travel_to fuzzy: POI cache empty, fetching get_system", {
+      agent: agentName,
+      system: currentSystem,
+      destination: requestedDest,
+    });
+    try {
+      const sysResp = await client.execute("get_system", {});
+      if (sysResp.result) {
+        cacheSystemPois(sysResp.result);
+      }
+    } catch (e) {
+      log.warn("travel_to fuzzy: failed to fetch get_system", { agent: agentName, error: String(e) });
+    }
+  }
+
+  const pois = systemPoiCache.get(currentSystem);
+  if (!pois || pois.length === 0) return null;
+
+  // Substring match against POI IDs (case-insensitive)
+  const needle = requestedDest.toLowerCase();
+  const matches: PoiEntry[] = pois.filter(p => p.id.toLowerCase().includes(needle));
+
+  if (matches.length === 1) {
+    const fullId = matches[0].id;
+    log.info(`travel_to fuzzy resolved: "${requestedDest}" → "${fullId}"`, {
+      agent: agentName,
+      requested: requestedDest,
+      resolved: fullId,
+      system: currentSystem,
+    });
+    const retryResp = await client.execute("travel", { target_poi: fullId });
+    steps.push({ action: "travel_fuzzy_retry", result: retryResp.result ?? retryResp.error });
+    return retryResp;
+  }
+
+  if (matches.length > 1) {
+    const options = matches.map(p => p.id).join(", ");
+    const msg = `Ambiguous destination "${requestedDest}" — multiple POIs match in ${currentSystem}: ${options}. Use a more specific ID.`;
+    log.warn("travel_to fuzzy: ambiguous destination", {
+      agent: agentName,
+      requested: requestedDest,
+      matches: matches.map(p => p.id),
+      system: currentSystem,
+    });
+    steps.push({ action: "travel_fuzzy_error", result: msg });
+    return null;
+  }
+
+  // No matches — fall through to original error
+  log.warn("travel_to fuzzy: no POI match found", {
+    agent: agentName,
+    requested: requestedDest,
+    system: currentSystem,
+    poi_count: pois.length,
+  });
+  return null;
+}
 
 /**
  * Travel to a POI (and optionally dock). POI name is resolved to ID via resolvePoiId.
@@ -29,13 +121,13 @@ export async function travelTo(
 
   const cachedBefore = statusCache.get(agentName);
   const playerBefore = cachedBefore?.data?.player as Record<string, unknown> | undefined;
-  
+
   // Handle "home" destination
   let finalDestination = destination;
   if (destination.toLowerCase() === 'home') {
     const homePoi = playerBefore?.home_poi as string | undefined;
     const homeSystem = playerBefore?.home_system as string | undefined;
-    
+
     if (homePoi) {
       finalDestination = homePoi;
       log.info("travel_to: routing to home POI", { agent: agentName, homePoi, homeSystem });
@@ -101,17 +193,58 @@ export async function travelTo(
   const systemBefore = playerBefore?.current_system;
 
   // Travel to destination (server auto-undocks if needed)
-  const travelResp = await client.execute("travel", { target_poi: resolvedDest });
+  let travelResp = await client.execute("travel", { target_poi: resolvedDest });
   steps.push({ action: "travel", result: travelResp.result ?? travelResp.error });
   const tTravel = Date.now();
   if (travelResp.error) {
-    log.warn("travel execute failed", { agent: agentName, elapsed_ms: tTravel - t0 });
-    return {
-      status: "error",
-      error: "travel_failed",
-      message: `Travel execution failed: ${(travelResp.error as { message?: string })?.message ?? "unknown error"}`,
-      steps,
-    };
+    const errMsg = typeof travelResp.error === "string"
+      ? travelResp.error
+      : ((travelResp.error as { message?: string })?.message ?? "unknown error");
+
+    if (isInvalidPoiError(errMsg)) {
+      // Attempt fuzzy POI resolution and retry once
+      const fuzzyResp = await attemptFuzzyPoiRetry(
+        client, agentName, finalDestination, resolvedDest, playerBefore, statusCache, steps, resolvePoiId,
+      );
+      if (fuzzyResp !== null) {
+        // Got a retry response — check if it succeeded or failed on the new ID
+        if (fuzzyResp.error) {
+          log.warn("travel execute failed after fuzzy retry", { agent: agentName, elapsed_ms: Date.now() - t0 });
+          const retryErrMsg = typeof fuzzyResp.error === "string"
+            ? fuzzyResp.error
+            : ((fuzzyResp.error as { message?: string })?.message ?? "unknown error");
+          return {
+            status: "error",
+            error: "travel_failed",
+            message: `Travel execution failed: ${retryErrMsg}`,
+            steps,
+          };
+        }
+        // Fuzzy retry succeeded — continue with the rest of travelTo using fuzzyResp
+        travelResp = fuzzyResp;
+      } else {
+        // Ambiguous or no match — step already pushed with error detail
+        log.warn("travel execute failed (invalid POI, fuzzy match failed)", { agent: agentName, elapsed_ms: Date.now() - t0 });
+        const lastStep = steps[steps.length - 1];
+        const detailMsg = typeof lastStep?.result === "string"
+          ? lastStep.result
+          : `Travel execution failed: ${errMsg}`;
+        return {
+          status: "error",
+          error: "travel_failed",
+          message: detailMsg,
+          steps,
+        };
+      }
+    } else {
+      log.warn("travel execute failed", { agent: agentName, elapsed_ms: tTravel - t0 });
+      return {
+        status: "error",
+        error: "travel_failed",
+        message: `Travel execution failed: ${errMsg}`,
+        steps,
+      };
+    }
   } else {
     log.debug("travel execute succeeded", { agent: agentName, elapsed_ms: tTravel - t0 });
   }
