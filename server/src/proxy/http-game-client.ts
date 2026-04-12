@@ -31,8 +31,19 @@ const SERVER_ERROR_CODES = new Set([
 /** Error codes that signal session/auth expiry — trigger re-login. */
 const SESSION_EXPIRED_CODES = new Set([
   "session_expired", "unauthorized", "token_expired", "invalid_session",
-  "session_invalid",
+  "session_invalid", "not_logged_in",
 ]);
+
+/**
+ * Check if a game error response indicates the player is not logged in.
+ * The game server may return this as a structured code ("not_logged_in")
+ * or as a generic game_error with "not logged in" in the message text.
+ */
+function isNotLoggedInError(error: { code: string; message: string }): boolean {
+  if (SESSION_EXPIRED_CODES.has(error.code)) return true;
+  if (error.message && error.message.toLowerCase().includes("not logged in")) return true;
+  return false;
+}
 
 /** JSON-RPC response shape from MCP server. */
 interface McpJsonRpcResponse {
@@ -403,9 +414,10 @@ export class HttpGameClient implements GameTransport {
         continue;
       }
 
-      // session_expired auto-renewal
-      if (resp.error && SESSION_EXPIRED_CODES.has(resp.error.code) && this.credentials) {
-        this.log(`session expired (${resp.error.code}) — re-establishing MCP session`);
+      // session/auth expiry auto-renewal (includes "not logged in" from game server)
+      if (resp.error && isNotLoggedInError(resp.error) && this.credentials) {
+        this.log(`session expired (${resp.error.code}: ${resp.error.message}) — auto-re-login for ${this.label}`);
+        log.info(`[proxy] auto-re-login for ${this.label} after "${resp.error.message}"`);
         const renewed = await this.renewSession();
         if (renewed) {
           const retryResp = await this.mcpToolCall(command, payload ?? {}, opts?.timeoutMs);

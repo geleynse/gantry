@@ -248,3 +248,114 @@ describe("HttpGameClient (MCP)", () => {
     expect(headers["User-Agent"]).toMatch(/^Gantry\//);
   });
 });
+
+describe("HttpGameClient - auto-re-login on not_logged_in", () => {
+  let client: HttpGameClient;
+
+  beforeEach(() => {
+    fetchResponses = [];
+    fetchMock = mock((..._args: unknown[]) => {
+      const queued = fetchResponses.shift();
+      if (!queued) return Promise.resolve(new Response("", { status: 500 }));
+      const headers = new Headers(queued.headers ?? {});
+      if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      return Promise.resolve(new Response(queued.body, { status: queued.status, headers }));
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    client = new HttpGameClient("https://game.example.com/mcp", undefined);
+    client.label = "test-agent";
+  });
+
+  afterEach(async () => {
+    await client.close();
+    globalThis.fetch = originalFetch;
+  });
+
+  it("auto-re-login on not_logged_in error code", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pass");
+
+    // Command returns not_logged_in
+    pushMcpToolResult(JSON.stringify({ code: "not_logged_in", message: "Not logged in" }), true);
+    // Re-init sequence (session + init + initialized + login)
+    pushInitSequence();
+    pushMcpToolResult(JSON.stringify({ message: "Welcome back!" }));
+    // Retry command
+    pushMcpToolResult(JSON.stringify({ status: "ok" }));
+
+    const resp = await client.execute("get_status");
+    expect(resp.error).toBeUndefined();
+    expect(resp.result).toEqual({ status: "ok" });
+  });
+
+  it("auto-re-login on game_error with 'not logged in' message", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pass");
+
+    // Command returns game_error with "not logged in" in the message
+    pushMcpToolResult("Error: game_error: Player is not logged in", true);
+    // Re-init sequence + login
+    pushInitSequence();
+    pushMcpToolResult(JSON.stringify({ message: "Welcome back!" }));
+    // Retry command
+    pushMcpToolResult(JSON.stringify({ minerals: ["iron"] }));
+
+    const resp = await client.execute("mine");
+    expect(resp.error).toBeUndefined();
+    expect(resp.result).toEqual({ minerals: ["iron"] });
+  });
+
+  it("auto-re-login on 'Error: not_logged_in: ...' format", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pass");
+
+    // Command returns Error: not_logged_in: message format
+    pushMcpToolResult("Error: not_logged_in: Session expired, please log in again", true);
+    // Re-init sequence + login
+    pushInitSequence();
+    pushMcpToolResult(JSON.stringify({ message: "Welcome back!" }));
+    // Retry command
+    pushMcpToolResult(JSON.stringify({ status: "docked" }));
+
+    const resp = await client.execute("dock");
+    expect(resp.error).toBeUndefined();
+    expect(resp.result).toEqual({ status: "docked" });
+  });
+
+  it("does not loop — returns error if re-login fails", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pass");
+
+    // Command returns not_logged_in
+    pushMcpToolResult(JSON.stringify({ code: "not_logged_in", message: "Not logged in" }), true);
+    // Re-init fails (session creation returns error)
+    fetchResponses.push({
+      status: 500,
+      body: JSON.stringify({ error: "server error" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const resp = await client.execute("get_status");
+    // Should return the original error, not loop
+    expect(resp.error).toBeDefined();
+    expect(resp.error!.code).toBe("not_logged_in");
+  });
+
+  it("max 1 re-login attempt per request (no infinite loops)", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pass");
+
+    // Command returns not_logged_in
+    pushMcpToolResult(JSON.stringify({ code: "not_logged_in", message: "Not logged in" }), true);
+    // Re-init succeeds
+    pushInitSequence();
+    pushMcpToolResult(JSON.stringify({ message: "Welcome back!" }));
+    // But retry ALSO returns not_logged_in (weird edge case)
+    pushMcpToolResult(JSON.stringify({ code: "not_logged_in", message: "Still not logged in" }), true);
+
+    const resp = await client.execute("get_status");
+    // Should return the second error without trying to re-login again
+    expect(resp.error).toBeDefined();
+    expect(resp.error!.code).toBe("not_logged_in");
+  });
+});
