@@ -174,6 +174,7 @@ if (overseerAgent) {
       costUsd: data.costUsd,
       inputTokens: data.inputTokens,
       outputTokens: data.outputTokens,
+      durationMs: data.durationMs,
     });
   });
   log.info("Overseer cost backfill hook registered");

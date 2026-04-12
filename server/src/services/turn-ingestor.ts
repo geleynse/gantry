@@ -18,6 +18,7 @@ export interface PostIngestData {
   costUsd: number | null;
   inputTokens: number | null;
   outputTokens: number | null;
+  durationMs: number | null;
 }
 
 type PostIngestHook = (data: PostIngestData) => void;
@@ -141,6 +142,7 @@ export function ingestTurnFile(agent: string, filePath: string): void {
       costUsd: turn.summary.costUsd ?? null,
       inputTokens: turn.summary.inputTokens ?? null,
       outputTokens: turn.summary.outputTokens ?? null,
+      durationMs: turn.summary.durationMs ?? null,
     };
     for (const hook of postIngestHooks) {
       try { hook(hookData); } catch (err) {

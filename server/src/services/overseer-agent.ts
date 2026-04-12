@@ -110,24 +110,25 @@ export class OverseerAgent {
   }
 
   /**
-   * Backfill cost data on the most recent decision row.
+   * Backfill cost and duration data on the most recent decision row.
    * Called after each overseer turn completes and the JSONL file is ingested,
-   * since the agent cannot know its own cost at call time.
+   * since the agent cannot know its own cost or duration at call time.
    */
   updateLatestDecisionCost(data: {
     costUsd: number | null;
     inputTokens: number | null;
     outputTokens: number | null;
+    durationMs: number | null;
   }): void {
-    const { costUsd, inputTokens, outputTokens } = data;
+    const { costUsd, inputTokens, outputTokens, durationMs } = data;
     const db = getDb();
     const result = db.prepare(
       `UPDATE overseer_decisions
-          SET cost_estimate = ?, input_tokens = ?, output_tokens = ?
+          SET cost_estimate = ?, input_tokens = ?, output_tokens = ?, duration_ms = ?
         WHERE id = (SELECT MAX(id) FROM overseer_decisions)`,
-    ).run(costUsd, inputTokens, outputTokens);
+    ).run(costUsd, inputTokens, outputTokens, durationMs);
     if (result.changes > 0) {
-      log.info("Backfilled cost on latest overseer decision", { costUsd, inputTokens, outputTokens });
+      log.info("Backfilled cost and duration on latest overseer decision", { costUsd, inputTokens, outputTokens, durationMs });
     }
   }
 

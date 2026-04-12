@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Zap,
   AlertTriangle,
+  AlertCircle,
   CheckCircle,
   MinusCircle,
   Clock,
@@ -247,8 +248,13 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
   const [expanded, setExpanded] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
 
-  // A tick is pending if duration_ms hasn't been populated yet (still running)
-  const isPending = decision.duration_ms == null;
+  // A tick is pending if duration_ms hasn't been populated yet (still running).
+  // Treat very old (>10 min) null-duration rows as stale/unknown instead of running,
+  // to catch writer bugs that would otherwise spin forever.
+  const createdAtTime = new Date(decision.created_at).getTime();
+  const ageMs = Date.now() - createdAtTime;
+  const isStale = decision.duration_ms == null && ageMs > 10 * 60 * 1000; // >10 min old
+  const isPending = decision.duration_ms == null && !isStale;
 
   const hasActions =
     decision.actions_json &&
@@ -289,6 +295,11 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
           <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider bg-primary/10 border border-primary/30 text-primary">
             <RefreshCw className="w-2.5 h-2.5 animate-spin" />
             running
+          </span>
+        ) : isStale ? (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wider bg-muted/20 border border-muted/30 text-muted-foreground">
+            <AlertCircle className="w-2.5 h-2.5" />
+            stale
           </span>
         ) : (
           <StatusBadge status={decision.status} />
@@ -353,6 +364,8 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
               <span className="text-muted-foreground/60">cost </span>
               {isPending ? (
                 <span className="text-primary/70 animate-pulse">pending</span>
+              ) : isStale ? (
+                <span className="text-muted-foreground">{formatCost(decision.cost_estimate) ?? "unknown"}</span>
               ) : (
                 <span className="text-foreground">{formatCost(decision.cost_estimate)}</span>
               )}
@@ -361,6 +374,8 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
               <span className="text-muted-foreground/60">duration </span>
               {isPending ? (
                 <span className="text-primary/70 animate-pulse">pending</span>
+              ) : isStale ? (
+                <span className="text-muted-foreground">unknown</span>
               ) : (
                 <span className="text-foreground">{formatDuration(decision.duration_ms)}</span>
               )}
