@@ -1,0 +1,9 @@
+[
+  {
+    "agentName": "smoke-agent",
+    "credentials": {
+      "username": "smoke-agent",
+      "password": "enc:MjU1M2ZlODQyZjUyZmU2NDNlMjNhNWZkNjZjNDgxNmU6MWFkNzc3NWEwODliYWQ2NmRiYmZiOTRkYjY5ZjZjYTI6YjA0YWMyMDIyNjE5NzNiODZjOjM1OTIzMzQwNjk0MDM2Y2Q1YTMyZThmODBlYzA1MjNh"
+    }
+  }
+]

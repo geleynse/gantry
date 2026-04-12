@@ -259,7 +259,7 @@ function OverviewTab({
                 ) : (
                   systems.slice(0, 5).map((s) => (
                     <tr key={s.system} className="border-b border-border/50">
-                      <td className="px-3 py-2 font-mono text-xs">{s.system}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{s.system || '—'}</td>
                       <td className="px-3 py-2 text-right font-mono text-xs">{s.encounter_count}</td>
                       <td className={`px-3 py-2 text-right font-mono text-xs ${s.death_count > 0 ? "text-red-400" : ""}`}>
                         {s.death_count}

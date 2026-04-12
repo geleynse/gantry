@@ -1,0 +1,70 @@
+# Components
+
+- **ActivityPage** [client] — `server/src/app/activity/page.tsx`
+- **AgentDetailClient** [client] — `server/src/app/agent/[name]/client.tsx`
+- **AgentDetailPage** — `server/src/app/agent/[name]/page.tsx`
+- **LifetimeStatsPanel** [client] — props: label, color, bucket, defaultOpen — `server/src/app/agent/lifetime-stats.tsx`
+- **AlertsPage** [client] — `server/src/app/alerts/page.tsx`
+- **AnalyticsPage** [client] — `server/src/app/analytics/page.tsx`
+- **CombatPage** [client] — `server/src/app/combat/page.tsx`
+- **CommsPage** [client] — props: onOrderCreated, agentNames — `server/src/app/comms/page.tsx`
+- **ItemTooltip** [client] — props: itemId, className — `server/src/app/components/ItemTooltip.tsx`
+- **ShipComparison** [client] — props: current, target, compact, className — `server/src/app/components/ShipComparison.tsx`
+- **DiagnosticsPage** [client] — `server/src/app/diagnostics/page.tsx`
+- **FacilitiesPage** [client] — `server/src/app/facilities/page.tsx`
+- **BroadcastPage** [client] — `server/src/app/fleet/broadcast/page.tsx`
+- **CredentialsPage** [client] — `server/src/app/fleet/credentials/page.tsx`
+- **FleetPage** [client] — `server/src/app/fleet/page.tsx`
+- **RootLayout** — `server/src/app/layout.tsx`
+- **LeaderboardPage** [client] — `server/src/app/leaderboard/page.tsx`
+- **MapPage** [client] — `server/src/app/map/page.tsx`
+- **MissionsPage** [client] — `server/src/app/missions/page.tsx`
+- **NotesPage** [client] — `server/src/app/notes/page.tsx`
+- **NotesSearchPage** [client] — `server/src/app/notes/search/page.tsx`
+- **OutboundReviewPage** — `server/src/app/outbound-review/page.tsx`
+- **OverseerPage** [client] — `server/src/app/overseer/page.tsx`
+- **DashboardPage** [client] — `server/src/app/page.tsx`
+- **PromptsPageWrapper** [client] — `server/src/app/prompts/page.tsx`
+- **RateLimitsPage** [client] — `server/src/app/rate-limits/page.tsx`
+- **ShipImage** — props: shipClass, size, onClick, className, alt, lazy, rounded, onError, onLoad, chromaKey — `server/src/components/ShipImage.tsx`
+- **ShipImageFallback** — props: shipClass, width, height, className, style — `server/src/components/ShipImageFallback.tsx`
+- **SystemPopup** [client] — props: data, screenPos — `server/src/components/SystemPopup.tsx`
+- **ActivityFeed** [client] — `server/src/components/activity-feed.tsx`
+- **AgentActions** [client] — props: agent, isAdmin — `server/src/components/agent-card-actions.tsx`
+- **RoleTypeBadge** [client] — props: agent — `server/src/components/agent-card-status.tsx`
+- **AgentCard** [client] — props: agent, gameState, name, compact — `server/src/components/agent-card.tsx`
+- **AgentControls** [client] — props: agentName, agent — `server/src/components/agent-controls.tsx`
+- **CostChart** [client] — props: active, payload — `server/src/components/analytics-charts.tsx`
+- **AuthProvider** [client] — `server/src/components/auth-provider.tsx`
+- **ClientLayout** [client] — `server/src/components/client-layout.tsx`
+- **ControlsPanel** [client] — props: agentName — `server/src/components/controls-panel.tsx`
+- **CredentialDashboard** [client] — `server/src/components/credential-dashboard.tsx`
+- **CreditChart** [client] — props: active, payload — `server/src/components/credit-chart.tsx`
+- **DiaryViewer** [client] — props: agentName — `server/src/components/diary-viewer.tsx`
+- **EconomyPanel** [client] — props: agentName — `server/src/components/economy-panel.tsx`
+- **EncounterCard** [client] — props: encounter, expanded, onToggle, events — `server/src/components/encounter-card.tsx`
+- **EnrollmentForm** [client] — props: onClose, onSuccess — `server/src/components/enrollment-form.tsx`
+- **FleetCapacity** [client] — props: label, sortK, activeSortKey, asc, onSort — `server/src/components/fleet-capacity.tsx`
+- **FleetStatusSummary** [client] — props: agents — `server/src/components/fleet-status-summary.tsx`
+- **OverlayBar** [client] — props: active, onClick, title — `server/src/components/galaxy-map-overlays.tsx`
+- **MapTooltip** [client] — props: node, pos — `server/src/components/galaxy-map-tooltip.tsx`
+- **GalaxyMap** [client] — props: nodes, graphRef, containerWidth, containerHeight — `server/src/components/galaxy-map.tsx`
+- **HealthBar** [client] — props: value, max, label, size, invert — `server/src/components/health-bar.tsx`
+- **HealthMetricsCard** [client] — props: agent, latency, errorRate, connectionStatus — `server/src/components/health-metrics-card.tsx`
+- **HealthMonitorPanel** [client] — `server/src/components/health-monitor-panel.tsx`
+- **LeaderboardSkeleton** [client] — props: entries, statKey, statLabel, loading, nameKey — `server/src/components/leaderboard-table.tsx`
+- **LogPane** [client] — props: agents, defaultAgent — `server/src/components/log-pane.tsx`
+- **LogStream** [client] — props: agentName — `server/src/components/log-stream.tsx`
+- **OutboundReviewPanel** [client] — props: msg, onApprove, onReject, isPending — `server/src/components/outbound-review.tsx`
+- **PromptViewer** [client] — props: agentName — `server/src/components/prompt-viewer.tsx`
+- **RateLimitPanel** [client] — `server/src/components/rate-limit-panel.tsx`
+- **ServerLogStream** [client] — `server/src/components/server-log-stream.tsx`
+- **ServerStatusWidget** [client] — `server/src/components/server-status-widget.tsx`
+- **ServiceWorkerRegistrar** [client] — `server/src/components/service-worker-registrar.tsx`
+- **ShipLoadout** [client] — props: gameState — `server/src/components/ship-loadout.tsx`
+- **StartupSplash** [client] — `server/src/components/startup-splash.tsx`
+- **StatusBadge** — props: state, size, subLabel — `server/src/components/status-badge.tsx`
+- **SurvivabilityPanel** [client] — props: agentName, currentSystem — `server/src/components/survivability-panel.tsx`
+- **SystemView** [client] — props: system, systemNames, agentPositions — `server/src/components/system-view.tsx`
+- **ToolCallFeed** [client] — props: agentName — `server/src/components/tool-call-feed.tsx`
+- **TopBar** [client] — `server/src/components/top-bar.tsx`

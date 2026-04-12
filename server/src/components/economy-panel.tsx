@@ -220,12 +220,29 @@ function RecentTransactions({ agentName }: { agentName: string }) {
         if (!hasStructuredData) {
           for (const tc of live) {
             if (!isEconomicTool(tc.tool_name)) continue;
+
+            // Attempt to extract creditsDelta from result_summary
+            // Buy/sell/multi_sell results contain credits_after; compute delta if available
+            let creditsDelta: number | null = null;
+            if (tc.result_summary) {
+              try {
+                const result = JSON.parse(tc.result_summary);
+                if (typeof result.credits_after === 'number' && typeof result.credits_before === 'number') {
+                  creditsDelta = result.credits_after - result.credits_before;
+                } else if (typeof result.credits_delta === 'number') {
+                  creditsDelta = result.credits_delta;
+                }
+              } catch {
+                // result_summary may not be valid JSON; skip parsing
+              }
+            }
+
             combined.push({
               id: tc.id + 1_000_000, // offset to avoid id collisions
               time: relativeTime(tc.created_at),
               action: toolLabel(tc.tool_name),
               summary: tc.args_summary || (summarizeArgs(tc.result_summary) ?? "—"),
-              creditsDelta: null,
+              creditsDelta,
               success: tc.success === 1,
             });
           }

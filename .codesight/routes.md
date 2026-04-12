@@ -1,0 +1,193 @@
+# Routes
+
+## CRUD Resources
+
+- **`/sessions`** GET | POST | GET/:id | DELETE/:id → Session
+- **`/game-state`** GET | GET/:id | PUT/:id → Game-state
+- **`/:name/shutdown`** GET | POST | DELETE/:id → Shutdown
+- **`/quotas`** GET | POST | GET/:id | DELETE/:id → Quota
+- **`/:name/directives`** GET | POST | GET/:id | DELETE/:id → Directive
+
+## Other Routes
+
+- `GET` `/api/auth/me` [auth, cache, ai] ✓
+- `GET` `/api/auth/debug` [auth, cache, ai] ✓
+- `GET` `trust proxy` [auth, cache, ai]
+- `POST` `/mcp` [auth, db, cache, payment] ✓
+- `POST` `/mcp/v2` [auth, db, cache, payment] ✓
+- `POST` `/mcp/overseer` [auth, db, cache, payment] ✓
+- `GET` `/mcp` [auth, db, cache, payment] ✓
+- `GET` `/mcp/v2` [auth, db, cache, payment] ✓
+- `GET` `/mcp/overseer` [auth, db, cache, payment] ✓
+- `GET` `/health` [auth, db, cache, payment] ✓
+- `GET` `/health/instability` [auth, db, cache, payment] ✓
+- `GET` `/game-state/all` [auth, db, cache, payment] ✓
+- `GET` `/api/overrides/:agent` params(agent) [auth, db, cache, payment] ✓
+- `GET` `/api/overrides` [auth, db, cache, payment] ✓
+- `GET` `/agent/:agent_id/nudge-state` params(agent_id) [auth] ✓
+- `GET` `/nudge/agents` [auth] ✓
+- `POST` `/agent/:agent_id/resume` params(agent_id) [auth] ✓
+- `GET` `/api/ping` [auth, cache] ✓
+- `GET` `/` [auth] ✓
+- `POST` `/:username/assign` params(username) [auth] ✓
+- `POST` `/:username/release` params(username) [auth] ✓
+- `POST` `/start` [auth, db, cache]
+- `POST` `/stop` [auth, db, cache]
+- `POST` `/restart` [auth, db, cache]
+- `POST` `/kick/:agent` params(agent) [auth, db, cache]
+- `GET` `/logs` [auth, db, cache]
+- `GET` `/sessions/credentials` [auth, db, cache]
+- `GET` `/battle-state` [auth, db, cache]
+- `PUT` `/battle-state/:agent` params(agent) [auth, db, cache]
+- `GET` `/call-trackers` [auth, db, cache]
+- `PUT` `/call-trackers/:agent` params(agent) [auth, db, cache]
+- `DELETE` `/caches/:agent` params(agent) [auth, db, cache]
+- `GET` `/feed` ✓
+- `GET` `/stream` ✓
+- `GET` `/agent-stream/:name` params(name) ✓
+- `POST` `/start-all` [auth, cache, ai]
+- `POST` `/stop-all` [auth, cache, ai]
+- `GET` `/:name/prompts` params(name) [auth, cache, ai]
+- `GET` `/:name/composed-prompt` params(name) [auth, cache, ai]
+- `GET` `/:name` params(name) [auth, cache, ai]
+- `PATCH` `/:name/config` params(name) [auth, cache, ai]
+- `POST` `/:name/start` params(name) [auth, cache, ai]
+- `POST` `/:name/stop` params(name) [auth, cache, ai]
+- `POST` `/:name/restart` params(name) [auth, cache, ai]
+- `POST` `/:name/stop-after-turn` params(name) [auth, cache, ai]
+- `GET` `/count` [auth] ✓
+- `POST` `/acknowledge-all` [auth] ✓
+- `POST` `/:id/acknowledge` params(id) [auth] ✓
+- `GET` `/cost` [auth]
+- `GET` `/tools` [auth]
+- `GET` `/credits` [auth]
+- `GET` `/comparison` [auth]
+- `GET` `/hull-shield` [auth]
+- `GET` `/transactions` [auth]
+- `GET` `/expensive-turns` [auth]
+- `GET` `/efficiency` [auth]
+- `GET` `/system-pois` [auth]
+- `GET` `/agent-trails` [auth]
+- `GET` `/model-costs` [auth]
+- `POST` `/` ✓
+- `GET` `/history` ✓
+- `GET` `/:agent` params(agent)
+- `POST` `/:agent/search` params(agent)
+- `GET` `/:agent/location/:system` params(agent, system)
+- `GET` `/:agent/stats` params(agent)
+- `GET` `/status` ✓
+- `GET` `/summary` [db] ✓
+- `GET` `/log` [db] ✓
+- `GET` `/systems` [db] ✓
+- `GET` `/encounters` [db] ✓
+- `GET` `/encounters/:id` params(id) [db] ✓
+- `GET` `/death-heatmap` [db] ✓
+- `GET` `/timeline` [db] ✓
+- `GET` `/orders` [auth]
+- `POST` `/orders` [auth]
+- `GET` `/orders/pending/:agent` params(agent) [auth]
+- `POST` `/orders/:id/delivered` params(id) [auth]
+- `POST` `/report` [auth]
+- `POST` `/handoff` [auth]
+- `GET` `/handoff/:agent` params(agent) [auth]
+- `POST` `/handoff/:id/consume` params(id) [auth]
+- `GET` `/:name/context-summary` params(name) [auth, cache, ai] ✓
+- `POST` `/tick` [auth, db] ✓
+- `POST` `/enable` [auth, db] ✓
+- `POST` `/:agent/update` params(agent) [auth, db] ✓
+- `DELETE` `/:agent` params(agent) [auth, db] ✓
+- `GET` `/audit` [auth, db] ✓
+- `GET` `/schema` [db]
+- `GET` `/migrations` [db]
+- `POST` `/:name/nudge` params(name) [db] ✓
+- `GET` `/actions` [auth] ✓
+- `GET` `/types` [auth] ✓
+- `GET` `/pnl` [auth] ✓
+- `GET` `/session-pnl` [auth] ✓
+- `GET` `/enrollment-options` [auth, ai] ✓
+- `POST` `/enroll` [auth, ai] ✓
+- `POST` `/:name/deploy-prompt` params(name) [auth, ai] ✓
+- `GET` `/:name/prompt-preview` params(name) [auth, ai] ✓
+- `GET` `/capacity` [cache] ✓
+- `POST` `/:name/order` params(name) [auth] ✓
+- `POST` `/:name/routine` params(name) [auth] ✓
+- `GET` `/all` [cache] ✓
+- `GET` `/latency/:agent` params(agent) [auth] ✓
+- `GET` `/latency` [auth] ✓
+- `GET` `/errors/:agent` params(agent) [auth] ✓
+- `GET` `/errors` [auth] ✓
+- `GET` `/detailed/:agent` params(agent) [auth] ✓
+- `GET` `/detailed` [auth] ✓
+- `GET` `/health-monitor` ✓
+- `GET` `/:name/inject` params(name) [db] ✓
+- `POST` `/:name/inject` params(name) [db] ✓
+- `GET` `/forum` [cache]
+- `GET` `/forum/search` [cache]
+- `GET` `/faction-caps`
+- `GET` `/items`
+- `GET` `/recipes`
+- `GET` `/:name/logs/stream` params(name) ✓
+- `GET` `/:name/logs/history` params(name) ✓
+- `GET` `/:name/logs/search` params(name) ✓
+- `GET` `/:name/logfile` params(name) ✓
+- `GET` `/:system` params(system) [db]
+- `DELETE` `/:system/:poi` params(system, poi) [db]
+- `GET` `/positions` [cache] ✓
+- `GET` `/explored-systems` [cache] ✓
+- `GET` `/wormholes` [cache] ✓
+- `GET` `/system-detail` [cache] ✓
+- `POST` `/scan` [db, cache]
+- `GET` `/arbitrage` [db, cache]
+- `GET` `/cache-stats` [db, cache]
+- `GET` `/reservations` [db, cache]
+- `DELETE` `/reservations/:agent` params(agent) [db, cache]
+- `GET` `/:name/diary` params(name)
+- `POST` `/:name/diary` params(name)
+- `GET` `/fleet/search`
+- `GET` `/:name/search` params(name)
+- `GET` `/:name/:type` params(name, type)
+- `PUT` `/:name/:type` params(name, type)
+- `GET` `/pending/count` [auth, db] ✓
+- `GET` `/pending` [auth, db] ✓
+- `POST` `/approve/:id` params(id) [auth, db] ✓
+- `POST` `/reject/:id` params(id) [auth, db] ✓
+- `POST` `/approve-all` [auth, db] ✓
+- `GET` `/decisions`
+- `GET` `/decisions/:id` params(id)
+- `GET` `/agents` [auth] ✓
+- `GET` `/files` [auth] ✓
+- `GET` `/common-rules` [auth] ✓
+- `GET` `/assembled/:agentName` params(agentName) [auth] ✓
+- `PUT` `/files/:filename` params(filename) [auth] ✓
+- `GET` `/test` [auth] ✓
+- `GET` `/rate-limits` ✓
+- `GET` `/stats` [db]
+- `POST` `/rotate-secret` [auth]
+- `GET` `/startup` [auth, cache]
+- `GET` `/threat/:system` params(system) [cache] ✓
+- `GET` `/policy/:agent` params(agent) [cache] ✓
+- `GET` `/mods/:agent` params(agent) [cache] ✓
+- `GET` `/cloak-stats` [cache] ✓
+- `GET` `/thresholds` [cache] ✓
+- `POST` `/thresholds` [cache] ✓
+- `POST` `/cloak-policy` [cache] ✓
+- `POST` `/text` [auth, db, cache] ✓
+- `DELETE` `/prune` [auth, db, cache] ✓
+- `GET` `/missions` [auth, db, cache] ✓
+- `GET` `/turn-costs` [auth, db, cache] ✓
+- `POST` `/:name/reasoning` params(name) [auth, db, cache] ✓
+- `GET` `/:id` params(id)
+- `GET` `/agent/:name` params(name)
+
+## WebSocket Events
+
+- `WS` `message` — `server/src/proxy/__tests__/mock-ws-game-server.ts`
+- `WS` `close` — `server/src/proxy/__tests__/mock-ws-game-server.ts`
+- `WS` `connect` — `server/src/services/proxy-health.ts`
+- `WS` `error` — `server/src/services/proxy-health.ts`
+- `WS` `open` — `server/src/web/websocket.test.ts`
+- `WS` `error` — `server/src/web/websocket.test.ts`
+- `WS` `message` — `server/src/web/websocket.test.ts`
+- `WS` `message` — `server/src/web/websocket.ts`
+- `WS` `close` — `server/src/web/websocket.ts`
+- `WS` `error` — `server/src/web/websocket.ts`

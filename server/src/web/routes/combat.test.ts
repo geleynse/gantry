@@ -86,6 +86,33 @@ describe('GET /api/combat/systems', () => {
     expect(krynn).toBeDefined();
     expect(krynn!.encounter_count).toBeGreaterThan(0);
   });
+
+  it('filters out null/empty systems and never returns "Unknown"', async () => {
+    const db = getDb();
+    // Insert events with null and empty system values
+    db.prepare(`
+      INSERT INTO combat_events (agent, event_type, pirate_name, system, created_at)
+      VALUES
+        ('test-agent', 'pirate_warning', 'Null-System', NULL, datetime('now')),
+        ('test-agent', 'pirate_combat', 'Empty-System', '', datetime('now')),
+        ('test-agent', 'pirate_warning', 'Real-System', 'valid-system', datetime('now'))
+    `).run();
+
+    const res = await request(app).get('/api/combat/systems');
+    expect(res.status).toBe(200);
+    const systems = res.body.systems as Array<{ system: string }>;
+    
+    // Ensure no null, empty, or "Unknown" systems in results
+    for (const sys of systems) {
+      expect(sys.system).toBeTruthy();
+      expect(sys.system).not.toBe('Unknown');
+      expect(sys.system).not.toBe('');
+    }
+    
+    // Verify that real systems still appear
+    expect(systems.some((s) => s.system === 'valid-system')).toBe(true);
+  });
+
 });
 
 // ---------------------------------------------------------------------------

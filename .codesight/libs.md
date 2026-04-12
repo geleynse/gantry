@@ -1,0 +1,802 @@
+# Libraries
+
+- `server/src/app.ts` — function createApp: (config, options?) => void
+- `server/src/config/constants.ts`
+  - function setSoftStopTimingForTesting: (timeout, poll) => void
+  - type OperatingZone
+  - const DEFAULT_TURN_INTERVAL
+  - const DEFAULT_STAGGER_DELAY
+  - const VALID_OPERATING_ZONES
+- `server/src/config/env.ts`
+  - function getFleetDir: () => string
+  - function setFleetDirForTesting: (dir) => void
+  - const PORT
+  - const GANTRY_ENV
+  - const LOG_LEVEL
+  - const MARKET_SCAN_INTERVAL_MS
+  - _...4 more_
+- `server/src/config/fleet.ts`
+  - function resolveConfigPath: (fleetDir) => string
+  - function loadConfig: (fleetDir) => GantryConfig
+  - function getConfig: () => GantryConfig
+  - function getAgent: (name) => AgentConfig | undefined
+  - function validateAgentName: (name) => boolean
+  - function getAgentNames: () => string[]
+  - _...4 more_
+- `server/src/config/shipImages.ts`
+  - function getShipClassEmoji: (shipClass) => ShipClassEmoji
+  - function getShipImageUrl: (shipClass) => string
+  - interface ShipClassEmoji
+  - type ShipImageSize
+  - const SHIP_IMAGE_CDN_BASE
+  - const SIZE_PIXELS: Record<ShipImageSize, number>
+- `server/src/hooks/use-agent-names.ts` — function useAgentNames: () => string[]
+- `server/src/hooks/use-auth.ts`
+  - function useAuth: () => AuthState
+  - function useAuthFetch: () => AuthState
+  - interface AuthState
+  - type AuthRole
+  - const AuthContext
+- `server/src/hooks/use-fleet-status.ts`
+  - function useFleetStatus: () => void
+  - function useToolCallStream: () => void
+  - interface LatencyMetrics
+  - interface ErrorRateBreakdown
+  - interface AgentStatus
+  - interface ProxyInfo
+  - _...4 more_
+- `server/src/hooks/use-game-state.ts`
+  - function useGameState: (pollIntervalMs) => UseGameStateResult
+  - interface ShipModule
+  - interface CargoItem
+  - interface SkillData
+  - interface AgentShip
+  - interface LifetimeStats
+  - _...2 more_
+- `server/src/hooks/use-leaderboard.ts`
+  - function useLeaderboard: (pollIntervalMs, timeRange) => UseLeaderboardResult
+  - interface LeaderboardEntry
+  - interface LeaderboardData
+  - interface LeaderboardResponse
+  - interface UseLeaderboardResult
+  - type LeaderboardCategory
+  - _...1 more_
+- `server/src/hooks/use-overseer.ts`
+  - function useOverseerStatus: () => UseOverseerStatusResult
+  - function useOverseerDecisions: (limit) => UseOverseerDecisionsResult
+  - interface OverseerStatusResponse
+  - interface UseOverseerStatusResult
+  - interface UseOverseerDecisionsResult
+- `server/src/hooks/use-rate-limits.ts`
+  - function useRateLimits: () => UseRateLimitsResult
+  - interface IpStats
+  - interface AgentStats
+  - interface RateLimitEvent429
+  - interface RateLimitsData
+  - interface UseRateLimitsResult
+- `server/src/hooks/use-realtime-updates.ts`
+  - function useRealtimeUpdates: (options) => UseRealtimeUpdatesResult<T>
+  - interface UseRealtimeUpdatesOptions
+  - interface UseRealtimeUpdatesResult
+  - type RealtimeTransport
+- `server/src/hooks/use-server-status.ts` — function useServerStatus: () => void, interface ServerStatusData
+- `server/src/hooks/use-sse.ts`
+  - function useSSE: (url, eventName?, options?) => UseSSEResult<T>
+  - interface UseSSEResult
+  - interface UseSSEOptions
+- `server/src/lib/agent-display-state.ts`
+  - function getAgentDisplayState: (agent) => AgentDisplayState
+  - function getStateColor: (state) => string
+  - function getStateLabel: (state) => string
+  - type AgentDisplayState
+- `server/src/lib/api.ts` — function apiFetch: (path, options?) => Promise<T>
+- `server/src/lib/atomic-write.ts` — function atomicWriteFileSync: (filePath, data) => void
+- `server/src/lib/build-info.ts`
+  - function getUptimeSeconds: () => number
+  - const BUILD_VERSION: string
+  - const BUILD_COMMIT: string
+  - const SERVER_START_TIME: Date
+- `server/src/lib/chroma-key.ts`
+  - function applyChromaKey: (url, opts) => Promise<string>
+  - function getCachedChromaKey: (url, opts) => string | null
+  - function clearChromaKeyCache: () => void
+  - function isShipCdnImage: (url) => boolean
+  - interface ChromaKeyOptions
+- `server/src/lib/combat-grouping.ts` — function groupEncounters: (encounters, groupBy) => Array<, type GroupBy
+- `server/src/lib/lifecycle-manager.ts` — class LifecycleManager
+- `server/src/lib/logger.ts`
+  - function parseLogLevel: (str) => LogLevel
+  - function setLogLevel: (level) => void
+  - function getLogLevel: () => LogLevel
+  - function setDevelopmentMode: (enabled) => void
+  - function createLogger: (category) => Logger
+  - function enableFileLogging: (filePath) => Promise<void>
+  - _...2 more_
+- `server/src/lib/prompt-composer.ts`
+  - function substituteVars: (text, vars, string>) => string
+  - function toDisplayName: (agentName) => string
+  - function composePrompt: (opts) => ComposedPrompt
+  - interface PromptComposerOptions
+  - interface ComposedPrompt
+- `server/src/lib/proxy-status.ts` — function getProxyStatusText: (agent) => string
+- `server/src/lib/time.ts`
+  - function parseDbTimestamp: (ts) => Date
+  - function relativeTime: (ts) => string
+  - function formatTime: (ts) => string
+  - function formatDateTime: (ts) => string
+  - function formatTimeShort: (ts) => string
+  - function formatFullTimestamp: (ts) => string
+  - _...1 more_
+- `server/src/lib/utils.ts`
+  - function cn: (...inputs) => void
+  - function getAgentColor: (name) => string
+  - function formatCredits: (n) => string
+  - function relativeTime: (ts) => string
+  - function getItemName: (itemId, displayName?) => string
+  - function fixRomanNumerals: (name) => string
+  - _...4 more_
+- `server/src/proxy/account-pool.ts` — class AccountPool
+- `server/src/proxy/analyze-market-cache.ts`
+  - class AnalyzeMarketCache
+  - interface AnalyzeMarketEntry
+  - interface AnalyzeMarketCacheMetrics
+  - interface MarketCacheFullMetrics
+  - type MarketCacheToolType
+  - const CACHE_INVALIDATING_TOOLS
+- `server/src/proxy/arbitrage-analyzer.ts` — class ArbitrageAnalyzer, interface ArbitrageOpportunity
+- `server/src/proxy/auth-handlers.ts`
+  - function handleLogin: (deps, sessionId, username, password, label) => Promise<McpTextResult>
+  - function handleLogout: (deps, sessionId, label) => Promise<McpTextResult>
+  - interface LoginDeps
+  - interface HandoffRecord
+  - interface HandoffData
+  - type McpTextResult
+- `server/src/proxy/auto-cloak.ts`
+  - function setAgentCloakOverride: (agentName, enabled) => void
+  - function getCloakOverrides: () => Map<string, boolean>
+  - function _resetCloakState: () => void
+  - function evaluateCloakPolicy: (roleType, threatLevel, overrideEnabled?, config?) => boolean
+  - function checkCloakAdvisory: (agentName, currentSystem, isDocked, hullPercent, config) => string | null
+  - const CLOAK_THRESHOLDS: Record<string, ThreatLevel>
+- `server/src/proxy/cache-persistence.ts`
+  - function persistGameState: (agent, state, unknown>; fetchedAt) => Promise<void>
+  - function persistBattleState: (agent, state) => void
+  - function persistCallTracker: (agent, tracker) => Promise<void>
+  - function persistMarketCache: (data, fetchedAt) => void
+  - function persistGalaxyGraph: (systems, edges, fetchedAt) => void
+  - function restorePublicCaches: () => Promise<RestoredCaches>
+  - _...2 more_
+- `server/src/proxy/cached-queries.ts`
+  - function registerCachedQueries: (deps) => void
+  - interface CachedQueryDeps
+  - const STATUS_SLICE_EXTRACTORS: Record<string, (data: Record<string, unknown>)
+  - const STATUS_DESCRIPTIONS: Record<string, string>
+- `server/src/proxy/circuit-breaker.ts`
+  - class CircuitBreaker
+  - class BreakerRegistry
+  - interface CircuitBreakerConfig
+  - interface CircuitBreakerStatus
+  - type CircuitState
+  - type StateChangeListener
+- `server/src/proxy/combat-auto-trigger.ts`
+  - function isCombatAgent: (config, agentName) => boolean
+  - function shouldAutoTriggerCombat: (config, eventBuffers, EventBuffer>, agentName) => boolean
+  - function shouldAutoFlee: (config, eventBuffers, EventBuffer>, agentName, hullPercent?) => boolean
+  - function getAutoTriggerAction: (config, eventBuffers, EventBuffer>, agentName, originalAction, hullPercent?) => string
+- `server/src/proxy/compound-tools/batch-mine.ts` — function batchMine: (deps, count) => Promise<CompoundResult>
+- `server/src/proxy/compound-tools/battle-readiness.ts` — function battleReadiness: (deps, "agentName" | "statusCache">, ourAgentNames) => CompoundResult
+- `server/src/proxy/compound-tools/craft-path.ts` — function craftPathTo: (deps, args) => Promise<CompoundResult>
+- `server/src/proxy/compound-tools/craft-profitability.ts` — function getCraftProfitability: (deps, args) => Promise<CompoundResult>
+- `server/src/proxy/compound-tools/flee.ts` — function flee: (deps, targetPoi?) => Promise<CompoundResult>
+- `server/src/proxy/compound-tools/item-source.ts`
+  - function classifyItemSource: (itemId) => ItemSource
+  - function isSelfSourceable: (source) => boolean
+  - function selfSourceCost: (source, marketBuyPrice) => number
+  - type ItemSource
+- `server/src/proxy/compound-tools/jump-route.ts` — function jumpRoute: (deps, systemIds, fuelThreshold) => Promise<CompoundResult>
+- `server/src/proxy/compound-tools/loot-wrecks.ts` — function lootWrecks: (deps, count) => Promise<CompoundResult>
+- `server/src/proxy/compound-tools/multi-sell.ts` — function multiSell: (deps, items, calledTools) => Promise<CompoundResult>
+- `server/src/proxy/compound-tools/scan-and-attack.ts` — function scanAndAttack: (deps, ourAgentNames, targetArg?, stanceArg) => Promise<CompoundResult>
+- `server/src/proxy/compound-tools/travel-to.ts` — function travelTo: (deps, destination, resolvePoiId, name, statusCache, {...}, unknown>; fetchedAt) => void
+- `server/src/proxy/compound-tools/utils.ts`
+  - function normalizeSystemName: (name) => string
+  - function isAmmoItem: (item, unknown>) => boolean
+  - function extractWrecks: (result) => Array<Record<string, unknown>>
+  - function waitForNavCacheUpdate: (client) => void
+  - function waitForDockCacheUpdate: (client) => void
+  - function findTargets: (entities, unknown>>, agentName, ourAgentNames) => Array<Record<string, unknown>>
+  - _...2 more_
+- `server/src/proxy/discovery-service.ts` — function runDiscovery: (client) => Promise<void>, class DiscoveryService
+- `server/src/proxy/doc-tools.ts`
+  - function handleCreateAlert: (agentName, sessionId, severity, category, message, sessionAlertCounts, number>, db) => void
+  - function handleWriteDiary: (agentName, entry, contaminationWords, db, importance?) => void
+  - function handleReadDiary: (agentName, count, db, contaminationWords) => void
+  - function handleWriteDoc: (agentName, name, content, mode, contaminationWords, db, importance?) => void
+  - function handleReadDoc: (agentName, name, db) => void
+  - function handleWriteReport: (agentName, content, db) => void
+  - _...7 more_
+- `server/src/proxy/error-classifier.ts`
+  - function classifyHttpError: (status, message) => ClassifiedError
+  - function classifyNetworkError: (err) => ClassifiedError
+  - function classifyMcpError: (code, message) => ClassifiedError
+  - function classifyGameError: (code, message) => ClassifiedError
+  - interface ClassifiedError
+  - type ErrorCategory
+  - _...1 more_
+- `server/src/proxy/error-hints.ts` — function addErrorHint: (errorMessage, context?) => string, interface HintContext
+- `server/src/proxy/event-buffer.ts`
+  - function categorizeEvent: (type) => EventPriority
+  - class EventBuffer
+  - interface GameEvent
+  - enum EventPriority
+- `server/src/proxy/format-result.ts` — function formatForAgent: (data, format) => string
+- `server/src/proxy/game-client.ts` — function createGameClient: (mcpUrl, serverMetrics, socksPort?) => HttpGameClient
+- `server/src/proxy/gantry-v2.ts`
+  - function mapV2ToV1: (toolName, action, args, unknown>, serverTool?) => void
+  - function createGantryServerV2: (config, shared, allowedTools?) => void
+  - interface V2SharedState
+  - const V2_ACTION_TO_V1_NAME: Record<string, Record<string, string>>
+- `server/src/proxy/http-game-client.ts` — class HttpGameClient
+- `server/src/proxy/injection-registry.ts`
+  - function extractBattleStatus: (battleCache, BattleState | null>, agentName) => Record<string, unknown> | null
+  - function createDefaultInjections: () => Injection[]
+  - class InjectionRegistry
+  - interface Injection
+- `server/src/proxy/instability-hints.ts`
+  - function generateInstabilityHint: (metrics) => string
+  - function generatePendingHint: (retryCount, waitSeconds) => string
+  - function checkToolBlocked: (toolName, status) => string
+- `server/src/proxy/instability-metrics.ts`
+  - class MetricsWindow
+  - interface HealthMetrics
+  - interface MetricsConfig
+  - type ServerStatus
+- `server/src/proxy/market-cache.ts`
+  - function abortSignalAny: (signals) => AbortSignal
+  - class MarketCache
+  - interface MarketItem
+  - interface MarketData
+- `server/src/proxy/market-enrichment.ts` — function enrichWithGlobalContext: (cargo, localBids, number>, marketData, currentStation) => GlobalMarketContext | null
+- `server/src/proxy/market-reservations.ts`
+  - class MarketReservationCache
+  - interface Reservation
+  - interface MarketReservationDeps
+- `server/src/proxy/mcp-factory.ts`
+  - function sanitizeToolName: (raw) => void
+  - function createMcpServer: (config) => void
+  - const OUR_SCHEMA_PARAMS: Record<string, string[]>
+- `server/src/proxy/mock-game-client.ts` — class MockGameClient
+- `server/src/proxy/mod-policy.ts`
+  - function getModRecommendations: (roleType) => readonly ModRecommendation[]
+  - interface ModRecommendation
+  - const ROLE_MOD_PRIORITIES: Record<string, ModRecommendation[]>
+- `server/src/proxy/nav-loop-detector.ts`
+  - class NavLoopDetector
+  - const NAV_LOOP_THRESHOLD
+  - const NAV_LOOP_WINDOW_MS
+- `server/src/proxy/nudge-handler.ts` — class NudgeHandler, interface NudgeHandlerConfig
+- `server/src/proxy/nudge-integration.ts`
+  - function initializeNudgeSystem: (config) => void
+  - function handleToolExecutionError: (agent_id, error, error_reason) => Promise<AgentNudgeState>
+  - function canAgentExecute: (agent_id) => boolean
+  - function getAgentNudgeState: (agent_id) => AgentNudgeState | null
+  - function resumeAgent: (agent_id, operatorId?) => Promise<AgentNudgeState>
+  - function getAllAgentStates: () => AgentNudgeState[]
+  - _...2 more_
+- `server/src/proxy/nudge-state.ts`
+  - class NudgeStateManager
+  - interface ErrorChainEntry
+  - interface NudgeContext
+  - interface IdleContext
+  - interface AgentNudgeState
+  - type AgentState
+- `server/src/proxy/override-system.ts`
+  - function extractAgentState: (statusCache, {...}, unknown>; fetchedAt, agent) => void
+  - function createOverrideInjection: (registry) => Injection
+  - class OverrideRegistry
+  - interface OverrideContext
+  - interface OverrideRule
+  - interface OverrideHistoryEntry
+  - _...1 more_
+- `server/src/proxy/overseer-mcp.ts` — function createOverseerMcpServer: (deps) => McpServer, interface OverseerMcpDeps
+- `server/src/proxy/passthrough-handler.ts`
+  - function textResult: (data) => McpTextResult
+  - function waitForActionResult: (eventBuffer, command, timeoutMs, pollIntervalMs) => Promise<Array<Record<string, unknown>> | null>
+  - function waitForCraftActionResult: (eventBuffer, timeoutMs, pollIntervalMs) => Promise<Array<Record<string, unknown>> | null>
+  - function handlePassthrough: (deps, client, agentName, action, v1ToolName, payload?, unknown>, navDest?, traceId?, opts?) => Promise<McpTextResult>
+  - function extractLocalBids: (analyzeMarketResult) => Map<string, number>
+  - interface PassthroughClient
+  - _...2 more_
+- `server/src/proxy/pathfinder.ts`
+  - function normalizeSystemName: (name) => string
+  - function fetchAndBuildGraph: (url) => Promise<
+  - class GalaxyGraph
+  - interface MapSystem
+  - interface MapData
+- `server/src/proxy/pipeline.ts`
+  - function getAgentForSession: (ctx, sessionId?) => string | undefined
+  - function getTracker: (ctx, agentName) => AgentCallTracker
+  - function resetTracker: (ctx, agentName) => void
+  - function getAgentFormat: (config, agentName) => "json" | "yaml"
+  - function getAutoTriggerActionFromContext: (ctx, agentName, originalAction) => string
+  - function callSignatureV1: (toolName, args?, unknown>) => string
+  - _...12 more_
+- `server/src/proxy/poi-resolver.ts`
+  - function restoreSystemPoiCache: () => void
+  - function cacheSystemPois: (result) => void
+  - function resolvePoiId: (agentName, destination, statusCache, {...}, unknown>; fetchedAt) => string
+  - interface PoiEntry
+  - const systemPoiCache
+- `server/src/proxy/poi-validator.ts` — function createPoiValidator: (graph) => PoiValidator, interface PoiValidator
+- `server/src/proxy/proxy-constants.ts`
+  - function stripPendingFields: (result) => void
+  - function throttledPersistGameState: (agentName, state, unknown>; fetchedAt) => void
+  - function reformatResponse: (text, agentFormat, label) => string
+  - class GameStatePersister
+  - const STATE_CHANGING_TOOLS
+  - const MUTATION_COMMANDS
+  - _...1 more_
+- `server/src/proxy/public-tools.ts`
+  - function handleGetGlobalMarket: (marketCache, itemName?) => Record<string, unknown>
+  - function handleFindLocalRoute: (galaxyGraph, fromStr, toStr) => Record<string, unknown>
+  - function handleGetRecipe: (marketCache, itemId) => Record<string, unknown>
+  - function registerPublicTools: (deps) => void
+  - interface PublicToolDeps
+- `server/src/proxy/retry-policy.ts`
+  - function calculateDelay: (attempt, policy) => number
+  - function isRetryableError: (resp) => boolean
+  - function withRetry: (fn) => void
+  - interface RetryPolicy
+  - interface RetryResult
+  - const DEFAULT_RETRY_POLICY: RetryPolicy
+  - _...1 more_
+- `server/src/proxy/schema.ts`
+  - function invalidateSchemaCache: () => void
+  - function fetchGameCommands: (mcpUrl) => Promise<
+  - function applyPatches: (commands) => GameCommand[]
+  - function checkSchemaDrift: (ourSchemaParams, string[]>, serverTools) => void
+  - function resolveGameTools: (mcpUrl, fallbackTools, ourSchemaParams?, string[]>) => Promise<
+  - function fetchGameCommandsV2: (mcpUrl, preset) => Promise<
+  - _...7 more_
+- `server/src/proxy/sell-log.ts` — class SellLog, interface SellEntry
+- `server/src/proxy/server.ts`
+  - function createGantryServer: (config, shared?) => void
+  - interface GameHealthRef
+  - interface SharedState
+  - const STATIC_GAME_TOOLS
+- `server/src/proxy/session-manager.ts` — class SessionManager
+- `server/src/proxy/session-shutdown.ts`
+  - function getSessionShutdownManager: () => SessionShutdownManager
+  - function resetSessionShutdownManager: () => void
+  - class SessionShutdownManager
+- `server/src/proxy/session-store.ts` — class SessionStore, interface McpSessionRecord
+- `server/src/proxy/state-hints.ts`
+  - function createStateHintInjection: (engine) => Injection
+  - class StateHintEngine
+  - interface StateHint
+  - type HintCategory
+  - const BUILT_IN_HINTS: StateHint[]
+- `server/src/proxy/strategy-sanitizer.ts`
+  - function sanitizeStrategyContent: (content, patterns) => SanitizeResult
+  - interface SanitizeResult
+  - const STRATEGY_CONTAMINATION_PATTERNS: string[]
+- `server/src/proxy/summarizers.ts` — function summarizeToolResult: (toolName, result) => unknown
+- `server/src/proxy/threat-assessment.ts`
+  - function classifyShip: (ship) => ShipClass
+  - function assessShipThreat: (ship) => ShipThreatAssessment
+  - function summarizeShipThreats: (ships) => string | null
+  - function extractShipsFromResult: (result) => ShipData[] | null
+  - function enrichWithThreatAssessment: (result) => boolean
+  - function clearThreatCache: () => void
+  - _...7 more_
+- `server/src/proxy/tool-call-logger.ts`
+  - function generateTraceId: (agentName) => string
+  - function getRingBuffer: () => ToolCallRecord[]
+  - function getRingSeq: () => number
+  - function subscribe: (cb) => boolean
+  - function unsubscribe: (cb) => void
+  - function logAssistantText: (agent, text, traceId?) => void
+  - _...6 more_
+- `server/src/proxy/tool-registry.ts`
+  - function handleGetEvents: (eventBuffers, EventBuffer>, agentName, types?, limit?) => void
+  - function handleGetSessionInfo: (config, sessions, agentName) => Record<string, unknown>
+  - function buildCompoundActions: (deps, ourAgentNames) => Record<string, CompoundActionHandler>
+  - function registerPassthroughTools: (deps) => void
+  - function registerCompoundTools: (deps) => void
+  - interface ToolRegistryDeps
+  - _...5 more_
+- `server/src/proxy/transit-stuck-detector.ts`
+  - function isEmptyLocation: (toolName, result) => boolean
+  - class TransitStuckDetector
+  - const STUCK_WARN_THRESHOLD
+  - const STUCK_URGENT_THRESHOLD
+  - const STATIONARY_LOOP_THRESHOLD
+  - const LOCATION_TOOLS
+- `server/src/proxy/transit-throttle.ts`
+  - function detectTransitState: (cached) => void
+  - class TransitThrottle
+  - interface StatusCacheEntry
+  - const THROTTLE_INTERVAL_MS
+  - const TRANSIT_THROTTLED_TOOLS
+  - const TRANSIT_THROTTLED_V2_ACTIONS
+- `server/src/routines/bootstrap.ts` — function runBootstrap: () => Promise<void>
+- `server/src/routines/routine-dispatch.ts`
+  - function parseRoutineDirective: (text) => RoutineDirective | null
+  - function hasRoutineDirective: (text) => boolean
+  - function isRoutineModeEnabled: (agentName, fleetConfig) => boolean
+  - function dispatchRoutine: (directive, deps) => Promise<
+  - interface RoutineDirective
+  - interface DispatchDeps
+- `server/src/routines/routine-runner.ts`
+  - function _resetRegistryForTest: () => void
+  - function getRoutineTools: (routineName) => readonly string[] | undefined
+  - function getAvailableRoutines: () => string[]
+  - function hasRoutine: (name) => boolean
+  - function runRoutine: (routineName, rawParams, ctx, timeoutMs) => Promise<RoutineResult>
+  - function formatRoutineResult: (routineName, result) => string
+- `server/src/routines/routine-utils.ts`
+  - function done: (summary, data, unknown>, phases) => RoutineResult
+  - function handoff: (reason, data, unknown>, phases) => RoutineResult
+  - function phase: (name) => RoutinePhase
+  - function completePhase: (p, result?) => RoutinePhase
+  - function checkCombat: (result) => boolean
+  - function withRetry: (fn) => void
+  - _...8 more_
+- `server/src/services/action-log-parser.ts`
+  - function parseActionLog: (agent, rawResult) => ActionLogEntry[]
+  - function persistActionLogEntries: (entries) => number
+  - function syncActionLog: (agent, rawResult) => void
+  - interface ActionLogEntry
+- `server/src/services/action-proxy-health.ts`
+  - function bindProxySessions: (sessions, toolCount) => void
+  - function getActionProxyStatus: () => ActionProxyStatus
+  - class ActionProxyHealthService
+  - interface ProxySessionHandle
+- `server/src/services/agent-manager.ts`
+  - function setLifecycleHooks: (hooks) => void
+  - function addLifecycleHook: (hooks) => void
+  - function startAgent: (name) => Promise<
+  - function forceStopAgent: (name) => Promise<
+  - function softStopAgent: (name) => Promise<
+  - function stopAgent: (name) => Promise<
+  - _...6 more_
+- `server/src/services/agent-queries.ts` — function hasActiveProxySession: (agentName) => boolean, function getLastActivityAt: (agentName) => string | null
+- `server/src/services/agent-shutdown-db.ts`
+  - function getShutdownState: (agentName) => AgentShutdownState
+  - function setShutdownState: (agentName, state, reason?) => void
+  - function clearShutdownState: (agentName) => void
+  - function getAgentsInShutdown: () => AgentShutdownRecord[]
+  - function getShutdownRecord: (agentName) => AgentShutdownRecord | null
+  - function getAgentsWaitingForBattle: () => string[]
+- `server/src/services/alerts-db.ts`
+  - function createAlert: (agent, severity, category, message) => number
+  - function getPendingAlerts: (agent?) => AgentAlert[]
+  - function getAlertCount: () => number
+  - function acknowledgeAlert: (id, by?) => boolean
+  - function acknowledgeAll: (agent?) => number
+  - interface AgentAlert
+- `server/src/services/analytics-query.ts`
+  - function getCostOverTime: (filter) => CostDataPoint[]
+  - function getToolFrequency: (filter) => ToolFrequencyEntry[]
+  - function getCreditsOverTime: (filter) => CreditsDataPoint[]
+  - function getHullShieldOverTime: (filter) => HullShieldDataPoint[]
+  - function getAgentComparison: (filter) => AgentComparisonEntry[]
+  - function getEconomicTransactions: (filter) => EconomicTransaction[]
+  - _...26 more_
+- `server/src/services/analytics-service.ts` — function getAnalytics: (agentName) => Promise<Analytics>, function getAllAnalytics: () => Promise<Analytics[]>
+- `server/src/services/captains-logs-db.ts`
+  - function parseLogEntry: (entryText) => void
+  - function persistCaptainsLogEntry: (agent, entryText, gameLogId, sequenceNumber?) => number
+  - function syncCaptainsLogsFromServer: (agent, serverEntries) => void
+  - function getCaptainsLogs: (agent, limit, daysBack?) => CaptainsLogEntry[]
+  - function searchCaptainsLogs: (agent, query, limit) => CaptainsLogEntry[]
+  - function getFleetCaptainsLogs: (agents?, limit) => Array<CaptainsLogEntry &
+  - _...3 more_
+- `server/src/services/comms-db.ts`
+  - function createOrder: (input) => number
+  - function listOrders: (limit) => (Order &
+  - function getPendingOrders: (agentName) => Order[]
+  - function getAllPendingOrders: () => Order[]
+  - function markDelivered: (orderId, agentName) => void
+  - function createReport: (agentName, message) => void
+  - _...1 more_
+- `server/src/services/comms-timeline.ts` — function parseCommsTimeline: (baseDir?) => TimelineEntry[], interface TimelineEntry
+- `server/src/services/coordinator-demand.ts`
+  - function analyzeFleetDemand: (arbitrageData, currentQuotas, config, onlineAgentCount) => FleetDemand
+  - function suggestRole: (agent, demand, currentAssignments, CoordinatorRole>, _config) => RoleSuggestion
+  - function isZoneCompatible: (agentZone, _role, params, unknown>) => boolean
+  - function zoneProximityScore: (agent, targetZone) => number
+  - function formatAssignmentMessage: (role, routine, params, unknown>, reason, quota?) => string
+  - interface AgentSnapshot
+  - _...2 more_
+- `server/src/services/coordinator-state.ts`
+  - function gatherFleetSnapshot: (deps) => FleetSnapshot
+  - function buildAgentConfigs: () => AgentSnapshotConfig[]
+  - function agentsToRawSnapshot: (statusCache, StatusCacheEntry>) => Record<string, unknown>
+  - interface AgentSnapshotConfig
+  - interface StateGathererDeps
+  - interface MarketOpportunitySummary
+  - _...5 more_
+- `server/src/services/coordinator.ts` — class FleetCoordinator
+- `server/src/services/credentials-crypto.ts`
+  - function encryptCredentials: (creds, secret) => RawCredentialsFile
+  - function decryptCredentials: (creds) => RawCredentialsFile
+  - function encryptPassword: (password) => string
+  - function decryptPassword: (password) => string
+  - function migrateCredentialsIfNeeded: (fleetDir) => boolean
+  - function getCredentialsFilePath: (fleetDir) => string
+  - _...4 more_
+- `server/src/services/crypto.ts`
+  - function setSecretPathsForTesting: (secretPath, prevSecretPath) => void
+  - function getEncryptionSecret: () => string
+  - function encrypt: (plaintext, secret) => string
+  - function decrypt: (encrypted, secret) => string
+  - function isEncrypted: (stored) => boolean
+  - function setCachedSecret: (newSecret) => void
+  - _...8 more_
+- `server/src/services/database.ts`
+  - function createDatabase: (dbPath?) => void
+  - function getDb: () => Database
+  - function getDbIfInitialized: () => Database | null
+  - function getDbInstanceId: () => string | null
+  - function verifyDatabaseWorks: () => boolean
+  - function closeDb: () => void
+  - _...4 more_
+- `server/src/services/directives.ts`
+  - function getActiveDirectives: (agentName) => DirectiveRow[]
+  - function addDirective: (agentName, text, priority, expiresAt?) => number
+  - function removeDirective: (id) => boolean
+  - function listDirectives: (agentName?) => DirectiveRow[]
+  - interface DirectiveRow
+  - type DirectivePriority
+- `server/src/services/enrollment-audit.ts`
+  - function logEnrollmentEvent: (agentName, action, actor, details, any> | null) => void
+  - function getAuditLog: (agentName?, limit) => EnrollmentAuditEvent[]
+  - interface EnrollmentAuditEvent
+  - type EnrollmentAction
+- `server/src/services/faction-monitor.ts`
+  - function checkStorageLimits: (used, capacity) => StorageAlert | null
+  - function getCapacityForTier: (tierName) => number
+  - interface StorageAlert
+  - const FACTION_STORAGE_CAPS: Record<string, number>
+- `server/src/services/file-manager.ts`
+  - function readComms: () => Promise<CommsData>
+  - function appendOrder: (message) => Promise<void>
+  - function appendBulletin: (message) => Promise<void>
+  - function readReport: (agentName) => Promise<string>
+  - function clearComms: () => Promise<void>
+  - function safeReadFile: (path) => Promise<string>
+- `server/src/services/file-watcher.ts`
+  - class FileWatcher
+  - interface ReadResult
+  - interface HistoryResult
+- `server/src/services/fleet-health-monitor.ts`
+  - function createFleetHealthMonitor: (deps) => FleetHealthMonitor
+  - interface AgentConnectionHealth
+  - interface FleetHealthSnapshot
+  - interface FleetHealthMonitorDeps
+  - interface FleetHealthMonitor
+- `server/src/services/fleet-watchdog.ts`
+  - function createFleetWatchdog: (deps) => FleetWatchdog
+  - interface FleetWatchdogDeps
+  - interface FleetWatchdog
+- `server/src/services/forum-scraper.ts`
+  - function createForumService: (forumUrl?) => ForumService
+  - class StubForumService
+  - class CachedForumService
+  - interface ForumPost
+  - interface ForumService
+- `server/src/services/galaxy-poi-registry.ts`
+  - function registerPoi: (poi) => void
+  - function getPoi: (id) => GalaxyPoi | null
+  - function findPoisByService: (service_type) => GalaxyPoi[]
+  - function getPoisBySystem: (system) => GalaxyPoi[]
+  - function markDockable: (id, dockable, fallback?) => void
+  - function isDockable: (id) => boolean | null
+  - _...2 more_
+- `server/src/services/game-catalog.ts`
+  - function fetchAndCacheCatalog: (gameApiUrl, fleetDir) => Promise<CatalogData | null>
+  - function getCatalog: () => CatalogData | null
+  - function getItem: (id) => GameItem | undefined
+  - function getRecipe: (id) => Recipe | undefined
+  - function getShip: (id) => ShipSpec | undefined
+  - function searchCatalog: (type, search?, id?, limit) => void
+  - _...2 more_
+- `server/src/services/game-item-registry.ts`
+  - function registerItem: (item) => void
+  - function getItem: (id) => GameItem | null
+  - function getAllItems: () => GameItem[]
+  - interface GameItem
+- `server/src/services/game-registration.ts`
+  - function registerAccount: (username, empire, registrationCode) => Promise<RegistrationResult>
+  - interface RegistrationResult
+  - interface RegistrationError
+- `server/src/services/handoff.ts`
+  - function createHandoff: (input) => number
+  - function getUnconsumedHandoff: (agent) => Handoff | null
+  - function consumeHandoff: (id) => boolean
+- `server/src/services/health-monitor.ts`
+  - function createHealthMonitor: (agents) => HealthMonitor
+  - interface AgentRestartState
+  - interface HealthMonitor
+- `server/src/services/health-scorer.ts` — function getHealthScore: (agentName, breakerRegistry) => Promise<HealthScore>, function getAllHealthScores: (breakerRegistry) => Promise<HealthScore[]>
+- `server/src/services/health-status.ts`
+  - function computeServerStatus: (healthRef, breakerRegistry, serverMetrics) => ServerStatusResponse
+  - interface GameHealthRef
+  - interface ServerStatusResponse
+  - type ServerStatus
+- `server/src/services/leaderboard-cache.ts`
+  - function getLeaderboard: () => Promise<CacheEntry &
+  - function getCacheStatus: () => void
+  - function clearCacheForTesting: () => void
+  - interface LeaderboardEntry
+  - interface LeaderboardData
+  - type LeaderboardCategory
+- `server/src/services/learned-metadata.ts`
+  - function resolveName: (id) => string | null
+  - function getLearnedMetadata: () => MetadataEntry[]
+  - function learnMetadata: (id, name, type?) => void
+  - function getType: (id) => string | null
+  - function learnFromObjects: (items) => void
+- `server/src/services/log-parser.ts`
+  - function parseAgentLog: (agentName, maxLines) => Promise<ParsedLog | null>
+  - function readFullLog: (agentName) => Promise<string>
+  - function formatAge: (seconds) => string
+  - interface ParsedLog
+- `server/src/services/log-streamer.ts`
+  - function startTailing: (agentName, onLine) => Promise<void>
+  - function stopTailing: (agentName) => void
+  - function stopAllTailers: () => void
+  - function getActiveTailers: () => string[]
+  - type LineCallback
+- `server/src/services/market-history.ts`
+  - function recordPrice: (snapshot) => void
+  - function recordMarketData: (poi_id, data) => void
+  - function getPriceTrends: (item_id, days) => PriceTrend | null
+  - interface MarketSnapshot
+  - interface PriceTrend
+- `server/src/services/market-scanner.ts` — function runMarketScan: () => Promise<
+- `server/src/services/notes-db.ts`
+  - function autoScore: (text) => number
+  - function addDiaryEntry: (agent, entry, importance?) => number
+  - function getRecentDiary: (agent, count) => void
+  - function decontaminateDiary: (agent, words) => number
+  - function getDiaryCount: (agent) => number
+  - function getNote: (agent, type) => string | null
+  - _...9 more_
+- `server/src/services/outbound-review.ts`
+  - function queueMessage: (msg, unknown>;
+  status?) => number
+  - function approveMessage: (id, reviewer) => OutboundMessage | null
+  - function rejectMessage: (id, reviewer, reason?) => boolean
+  - function getPending: (channel?) => OutboundMessage[]
+  - function getPendingCount: (channel?) => number
+  - function getHistory: (opts) => OutboundMessage[]
+  - _...4 more_
+- `server/src/services/overseer-actions.ts` — function createActionExecutor: (deps) => void, interface ActionExecutorDeps
+- `server/src/services/overseer-agent.ts` — class OverseerAgent
+- `server/src/services/overseer-event-log.ts` — class OverseerEventLog
+- `server/src/services/overseer-prompt.ts` — function buildSystemPrompt: (maxActions) => string, function buildUserPrompt: (snapshot, previousDecisions) => string
+- `server/src/services/poi-lore.ts`
+  - function recordLore: (system, poiName, note, discoveredBy, tags?) => void
+  - function getLore: (system) => PoiLore[];
+  - function getLore: (system, poiName) => PoiLore | null;
+  - function getLore: (system, poiName?) => PoiLore[] | PoiLore | null
+  - function searchLore: (keyword) => PoiLore[]
+  - function getPoiLore: (system, poiName) => PoiLore | null
+  - _...4 more_
+- `server/src/services/process-manager.ts`
+  - function hasSession: (name) => Promise<boolean>
+  - function newSession: (name, spec) => Promise<void>
+  - function killSession: (name) => Promise<void>
+  - function capturePane: (name, lines) => Promise<string>
+  - function scanOrphanedProcesses: () => Promise<Array<
+  - function _getTrackedProcesses: () => Map<string, childProcess.ChildProcess>
+  - _...1 more_
+- `server/src/services/prompt-deployer.ts` — function deployPrompt: (opts) => Promise<void>, interface DeployOptions
+- `server/src/services/proxy-health.ts`
+  - function checkProxyHealth: (port) => Promise<'up' | 'down'>
+  - function getProxyStatuses: () => Promise<ProxyInfo[]>
+  - class ProxyHealthService
+- `server/src/services/rate-limit-tracker.ts`
+  - function resolveIpLabel: (agentConfig) => string
+  - function buildTrackerDeps: (config) => RateLimitTrackerDeps
+  - function getTracker: () => RateLimitTracker | null
+  - function initTracker: (config) => RateLimitTracker
+  - function resetTracker: () => void
+  - class RateLimitTracker
+  - _...6 more_
+- `server/src/services/recipe-registry.ts`
+  - function registerRecipe: (recipe) => void
+  - function getRecipe: (id) => Recipe | null
+  - function getRecipesByOutput: (item_id) => Recipe[]
+  - function getAllRecipes: () => Recipe[]
+  - interface RecipeInput
+  - interface RecipeSkill
+  - _...1 more_
+- `server/src/services/report-parser.ts` — function parseReport: (agentName, content) => ParsedOrder[], interface ParsedOrder
+- `server/src/services/resource-knowledge.ts`
+  - function recordMarketResources: (knowledge, system, station, result, agent) => number
+  - class ResourceKnowledge
+  - interface ResourceRecord
+  - interface ResourceLocation
+  - interface BestPrice
+- `server/src/services/secret-rotation.ts` — function rotateSecret: (sessionManager) => RotationResult, interface RotationResult
+- `server/src/services/session-metrics.ts`
+  - function getSessionInfo: (agentName) => SessionInfo
+  - function getTurnCountFromDb: (agentName) => number
+  - function getLatencyMetrics: (agentName) => LatencyMetrics
+  - function getErrorRateBreakdown: (agentName) => ErrorRateBreakdown
+  - function getLastSuccessfulCommand: (agentName) => string | null
+- `server/src/services/signals-db.ts`
+  - function createSignal: (agent, type, message) => void
+  - function consumeSignal: (agent, type) => string | null
+  - function hasSignal: (agent, type) => boolean
+  - function clearSignal: (agent, type) => void
+- `server/src/services/turn-ingestor.ts`
+  - function addPostIngestHook: (fn) => void
+  - function ingestTurnFile: (agent, filePath) => void
+  - function backfillAgent: (agent, turnDir) => void
+  - function watchTurnFiles: () => void
+  - interface PostIngestData
+- `server/src/services/turn-parser.ts`
+  - function extractGameState: (content) => GameState | null
+  - function extractCombatEvents: (yamlText, system?) => CombatEvent[]
+  - function parseTurnFile: (content) => ParsedTurn
+  - interface ToolCallData
+  - interface TurnSummary
+  - interface GameState
+  - _...2 more_
+- `server/src/services/usage-parser.ts`
+  - function estimateCodexCost: (totalTokens, model?) => number
+  - function parseUsageLog: (agentName) => Promise<UsageEntry[]>
+  - function getAgentUsageSummary: (agentName, model?) => Promise<UsageSummary>
+  - interface ClaudeUsageEntry
+  - interface CodexUsageEntry
+  - type UsageEntry
+- `server/src/services/wormhole-classifier.ts`
+  - function classifyConnections: (systems, connections, string]>, stdDevThreshold) => Map<string, ConnectionType>
+  - function getWormholes: (classification, ConnectionType>) => Array<
+  - interface SystemCoords
+  - interface WormholeConnection
+  - type ConnectionType
+- `server/src/shared/schemas.ts`
+  - function validateStatusCacheEntry: (raw) => void
+  - type AgentStatusParsed
+  - type FleetStatusParsed
+  - type AgentGameStateParsed
+  - type StatusCacheEntry
+  - const LatencyMetricsSchema
+  - _...14 more_
+- `server/src/utils/socks5-tunnel.ts`
+  - function createSOCKS5Tunnel: (proxyHost, proxyPort, targetHost, targetPort) => Promise<Socket>
+  - function createSOCKS5Relay: (proxyPort, wsUrl) => Promise<
+  - interface SOCKS5Config
+- `server/src/web/auth/adapters/cloudflare-access.ts` — function createCloudflareAccessAdapter: (config) => AuthAdapter
+- `server/src/web/auth/adapters/deny.ts` — function createDenyAdapter
+- `server/src/web/auth/adapters/domain.ts` — function createDomainAdapter: (config) => AuthAdapter
+- `server/src/web/auth/adapters/layered.ts` — function createLayeredAdapter: (config?) => AuthAdapter
+- `server/src/web/auth/adapters/local-network.ts` — function createLocalNetworkAdapter: (config?) => AuthAdapter
+- `server/src/web/auth/adapters/loopback.ts` — function createLoopbackAdapter: () => AuthAdapter
+- `server/src/web/auth/adapters/token.ts` — function createTokenAdapter: (config) => AuthAdapter
+- `server/src/web/auth/index.ts` — function createAuthAdapter: (authConfig?) => Promise<AuthAdapter>
+- `server/src/web/auth/middleware.ts` — function authMiddleware: (adapter) => void, function localhostOnlyMiddleware: (req, res, next) => void
+- `server/src/web/middleware/agent-online.ts` — function requireAgentOnline: (req, res, next) => Promise<void>
+- `server/src/web/middleware/query-agent.ts`
+  - function extractQueryAgent: (req) => string | undefined
+  - function getQueryAgent: (req) => string | undefined
+  - function requireQueryAgent: (req, res) => string | null
+- `server/src/web/middleware/query-helpers.ts` — function queryString: (req, key) => string | undefined, function queryInt: (req, key) => number | undefined
+- `server/src/web/middleware/rate-limit.ts`
+  - function getRateLimitStats: () => RateLimitStats
+  - function rateLimiter: (config) => RequestHandler
+  - interface RateLimitConfig
+  - interface RateLimitLimiterStats
+  - interface RateLimitStats
+  - const sessionLimiter: RequestHandler
+  - _...3 more_
+- `server/src/web/sse.ts` — function initSSE: (req, res) => void, function writeSSE: (res, event, data) => void
+- `server/src/web/websocket.ts`
+  - function attachWebSocketServer: (httpServer) => void
+  - function getWebSocketClientCount: () => number
+  - type WsChannel

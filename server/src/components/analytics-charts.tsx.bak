@@ -438,13 +438,13 @@ export function AgentComparisonTable({ hours }: AgentComparisonTableProps) {
 
   return (
     <div className="overflow-x-auto h-[300px] flex flex-col">
-      <table className="w-full min-w-[560px] text-[11px] border-collapse">
+      <table className="w-full min-w-[640px] text-[11px] border-collapse">
         <thead>
           <tr className="border-b border-border sticky top-0 bg-nord-1/50">
-            <th className="sticky left-0 bg-nord-1/50 z-10 text-left px-2 py-2 font-semibold text-foreground">Agent</th>
+            <th className="text-left px-2 py-2 font-semibold text-foreground">Agent</th>
             <th className="text-right px-2 py-2 font-semibold text-foreground">Turns</th>
             <th className="text-right px-2 py-2 font-semibold text-foreground">Cost</th>
-            <th className="text-right px-2 py-2 font-semibold text-foreground">Avg $</th>
+            <th className="text-right px-2 py-2 font-semibold text-foreground">Avg Cost</th>
             <th className="text-right px-2 py-2 font-semibold text-foreground">Iterations</th>
             <th className="text-right px-2 py-2 font-semibold text-foreground">Avg Time</th>
             <th className="text-right px-2 py-2 font-semibold text-foreground whitespace-nowrap">Credits</th>
@@ -454,7 +454,7 @@ export function AgentComparisonTable({ hours }: AgentComparisonTableProps) {
         <tbody>
           {data.map((row) => (
             <tr key={row.agent} className="border-b border-border/50 hover:bg-primary/5">
-              <td className="sticky left-0 bg-nord-1 z-10 px-2 py-2">
+              <td className="px-2 py-2">
                 <span
                   style={{
                     backgroundColor: `${AGENT_COLORS[row.agent] ?? "#888"}33`,
@@ -589,7 +589,7 @@ export function ExpensiveTurnsTable({ hours, limit = 10 }: ExpensiveTurnsTablePr
       <table className="w-full min-w-[700px] text-[11px] border-collapse">
         <thead>
           <tr className="border-b border-border sticky top-0 bg-nord-1/50">
-            <th className="sticky left-0 bg-nord-1/50 z-10 text-left px-2 py-2 font-semibold text-foreground">Agent</th>
+            <th className="text-left px-2 py-2 font-semibold text-foreground">Agent</th>
             <th className="text-right px-2 py-2 font-semibold text-foreground">Turn #</th>
             <th className="text-left px-2 py-2 font-semibold text-foreground">Time</th>
             <th className="text-right px-2 py-2 font-semibold text-foreground">Cost</th>
@@ -922,7 +922,7 @@ export function SessionPnlPanel({ agents }: { agents?: string[] }) {
             <thead>
               <tr className="border-b border-border sticky top-0 bg-nord-1/50">
                 <th className="text-left px-2 py-2 font-semibold text-foreground w-4"></th>
-                <th className="sticky left-0 bg-nord-1/50 z-10 text-left px-2 py-2 font-semibold text-foreground">Agent</th>
+                <th className="text-left px-2 py-2 font-semibold text-foreground">Agent</th>
                 <th className="text-left px-2 py-2 font-semibold text-foreground">Session Start</th>
                 <th className="text-left px-2 py-2 font-semibold text-foreground">Session End</th>
                 <th className="text-right px-2 py-2 font-semibold text-foreground whitespace-nowrap">Credits Start → End</th>
@@ -1082,7 +1082,7 @@ export function TokenEfficiencyPanel({ hours }: TokenEfficiencyPanelProps) {
       <table className="w-full min-w-[640px] text-[11px] border-collapse">
         <thead>
           <tr className="border-b border-border sticky top-0 bg-nord-1/50">
-            <th className="sticky left-0 bg-nord-1/50 z-10 text-left px-2 py-2 font-semibold text-foreground">Agent</th>
+            <th className="text-left px-2 py-2 font-semibold text-foreground">Agent</th>
             <th className="text-right px-2 py-2 font-semibold text-foreground">Total Cost</th>
             <th className="text-right px-2 py-2 font-semibold text-foreground">Avg/Turn</th>
             <th className="text-right px-2 py-2 font-semibold text-foreground">Avg Tokens/Turn</th>
