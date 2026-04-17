@@ -324,17 +324,17 @@ export async function handlePassthrough(
     }
   }
 
-  // --- 1c. market cache check (analyze_market + view_market) ---
-  // Return cached result immediately if another agent already fetched this station's data
-  // within the TTL. Cache key: {toolType}:{system}:{station}. Invalidated by buy/sell/order actions.
-  if ((v1ToolName === "analyze_market" || v1ToolName === "view_market") && deps.analyzeMarketCache) {
+  // --- 1c. market cache check (analyze_market only) ---
+  // view_market is item_id-filtered — cache keyed by system:station would serve
+  // stale data for the wrong item on back-to-back calls with different item_ids.
+  if (v1ToolName === "analyze_market" && deps.analyzeMarketCache) {
     const cached = statusCache.get(agentName);
     const playerData = cached?.data?.player as Record<string, unknown> | undefined;
     const currentSystem = playerData?.current_system as string | undefined;
     const currentStation = playerData?.current_poi as string | undefined;
 
     if (currentSystem && currentStation) {
-      const toolType = v1ToolName as "analyze_market" | "view_market";
+      const toolType = "analyze_market" as const;
       const hit = deps.analyzeMarketCache.get(currentSystem, currentStation, toolType);
       if (hit) {
         const annotation = AnalyzeMarketCache.freshnessAnnotation(hit.ageMs, hit.agent);
@@ -1083,18 +1083,16 @@ export async function handlePassthrough(
     }
   }
 
-  // --- market cache store (analyze_market + view_market) ---
-  // After a successful live game API call, store the result for other agents at the same station.
-  // (We are past the resp.error early-return, so this is always a success.)
-  if ((v1ToolName === "analyze_market" || v1ToolName === "view_market") && deps.analyzeMarketCache) {
+  // --- market cache store (analyze_market only) ---
+  // view_market is item_id-filtered and unsafe to cache by system:station alone.
+  if (v1ToolName === "analyze_market" && deps.analyzeMarketCache) {
     try {
       const cacheStatus = statusCache.get(agentName);
       const cachePlayer = cacheStatus?.data?.player as Record<string, unknown> | undefined;
       const cacheSystem = cachePlayer?.current_system as string | undefined;
       const cacheStation = cachePlayer?.current_poi as string | undefined;
       if (cacheSystem && cacheStation) {
-        const toolType = v1ToolName as "analyze_market" | "view_market";
-        deps.analyzeMarketCache.set(cacheSystem, cacheStation, JSON.stringify(summarized), agentName, toolType);
+        deps.analyzeMarketCache.set(cacheSystem, cacheStation, JSON.stringify(summarized), agentName, "analyze_market");
       }
     } catch (err) {
       log.warn(`${v1ToolName} cache store failed (non-fatal)`, {
@@ -1231,7 +1229,7 @@ export async function handlePassthrough(
     }
     buyResult.hint =
       "Items purchased go to STATION STORAGE, not cargo. " +
-      "Call withdraw_items(item_id) to move to cargo, then install_mod(item_id) to equip.";
+      "Call withdraw_items(item_id) to move to cargo, then install_mod(id) to equip.";
   }
 
   // --- Auto-reserve on buy/sell ---

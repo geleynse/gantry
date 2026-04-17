@@ -313,7 +313,7 @@ describe("handlePassthrough", () => {
     const inner = parsed.result as Record<string, unknown>;
     expect(String(inner.hint)).toContain("STATION STORAGE");
     expect(String(inner.hint)).toContain("withdraw_items");
-    expect(String(inner.hint)).toContain("install_mod(item_id)");
+    expect(String(inner.hint)).toContain("install_mod(id)");
   });
 
   it("buy: adds _stale_market_warning when no recent market analysis", async () => {

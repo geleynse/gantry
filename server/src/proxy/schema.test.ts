@@ -148,11 +148,11 @@ describe("V2_TO_V1_PARAM_MAP", () => {
     expect(V2_TO_V1_PARAM_MAP.faction_upgrade).toEqual({ id: "facility_id", text: "facility_type" });
   });
 
-  it("bug #3 fix: install_mod and uninstall_mod map id to item_id (not mod_id)", () => {
-    // The game API uses item_id, not mod_id. Agents send generic 'id' which remaps to item_id.
-    // Also accepts module_id alias — agents commonly send this instead of id.
-    expect(V2_TO_V1_PARAM_MAP.install_mod).toEqual({ id: "item_id", module_id: "item_id" });
-    expect(V2_TO_V1_PARAM_MAP.uninstall_mod).toEqual({ id: "item_id", module_id: "item_id" });
+  it("install_mod and uninstall_mod map id to module_id", () => {
+    // The game API uses module_id (confirmed via /api/v1/help topic=install_mod).
+    // Agents send generic 'id' which remaps to module_id; module_id passes through unchanged.
+    expect(V2_TO_V1_PARAM_MAP.install_mod).toEqual({ id: "module_id" });
+    expect(V2_TO_V1_PARAM_MAP.uninstall_mod).toEqual({ id: "module_id" });
   });
 
   it("bug #4 fix: estimate_purchase maps id to item_id", () => {

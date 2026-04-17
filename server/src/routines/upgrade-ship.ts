@@ -233,7 +233,7 @@ async function run(ctx: RoutineContext, rawParams: UpgradeShipParams): Promise<R
     // Recheck budget (prices may vary, be conservative)
     if (candidate.price > remainingBudget) continue;
 
-    const installResp = await ctx.client.execute("install_mod", { item_id: candidate.id });
+    const installResp = await ctx.client.execute("install_mod", { module_id: candidate.id });
     if (installResp.error) {
       ctx.log("warn", `upgrade_ship: install_mod failed for ${candidate.id}: ${JSON.stringify(installResp.error)}`);
       continue;

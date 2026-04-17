@@ -213,7 +213,7 @@ describe("upgrade_ship routine", () => {
       const result = await upgradeShipRoutine.run(ctx, {});
       expect(result.status).toBe("completed");
       // engine_mk2 (tier 2) should NOT be installed since we already have tier 3
-      expect(installArgs.every((a) => a.item_id !== "engine_mk2")).toBe(true);
+      expect(installArgs.every((a) => a.module_id !== "engine_mk2")).toBe(true);
     });
 
     it("respects budget limit", async () => {
@@ -232,7 +232,7 @@ describe("upgrade_ship routine", () => {
       // Budget of 3000 — engine_mk2 costs 5000 (too expensive), weapon_basic costs 2000 (ok)
       const result = await upgradeShipRoutine.run(ctx, { budget: 3000 });
       expect(result.status).toBe("completed");
-      expect(installArgs.every((a) => a.item_id !== "engine_mk2")).toBe(true);
+      expect(installArgs.every((a) => a.module_id !== "engine_mk2")).toBe(true);
     });
 
     it("respects blacklist", async () => {
@@ -250,8 +250,8 @@ describe("upgrade_ship routine", () => {
 
       const result = await upgradeShipRoutine.run(ctx, { blacklist: ["engine_mk2", "shield_mk3"] });
       expect(result.status).toBe("completed");
-      expect(installArgs.every((a) => a.item_id !== "engine_mk2")).toBe(true);
-      expect(installArgs.every((a) => a.item_id !== "shield_mk3")).toBe(true);
+      expect(installArgs.every((a) => a.module_id !== "engine_mk2")).toBe(true);
+      expect(installArgs.every((a) => a.module_id !== "shield_mk3")).toBe(true);
     });
 
     it("returns 0 upgrades when market is empty", async () => {
@@ -383,7 +383,7 @@ describe("upgrade_ship routine", () => {
       const result = await upgradeShipRoutine.run(ctx, { budget: 4000, priorities: ["shield"] });
       expect(result.status).toBe("completed");
       // Shield should be first since it has priority bonus
-      expect(installArgs[0]?.item_id).toBe("shield_mk2");
+      expect(installArgs[0]?.module_id).toBe("shield_mk2");
     });
   });
 });
