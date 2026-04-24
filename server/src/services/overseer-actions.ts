@@ -7,11 +7,17 @@ const LIFECYCLE_COOLDOWN_MS = 5 * 60 * 1000;
 export interface ActionExecutorDeps {
   agentManager: {
     startAgent: (name: string) => Promise<{ ok: boolean; message: string }>;
-    stopAgent: (name: string) => Promise<{ ok: boolean; message: string }>;
+    stopAgent: (name: string, reason?: string) => Promise<{ ok: boolean; message: string }>;
   };
   commsDb: {
     createOrder: (opts: { message: string; target_agent: string; priority?: string }) => number;
   };
+  /**
+   * Authoritative check for whether an agent's Claude Code process is alive.
+   * Backed by process-manager.hasSession (in-memory ChildProcess map + PID file).
+   * Optional for backward compat — if omitted, redundancy pre-checks are skipped.
+   */
+  isAgentRunning?: (name: string) => Promise<boolean>;
 }
 
 export function createActionExecutor(deps: ActionExecutorDeps) {
@@ -38,15 +44,37 @@ export function createActionExecutor(deps: ActionExecutorDeps) {
         }
         case "start_agent":
         case "stop_agent": {
+          // Authoritative liveness check — the overseer's fleet snapshot derives
+          // isOnline from statusCache (game tool activity age), which reads stale
+          // after even a few minutes of idleness. The real source of truth is
+          // process-manager.hasSession. If the overseer asks to start an agent
+          // whose Claude Code process is already alive, short-circuit with a log
+          // line instead of returning "already running" as a failure.
+          if (deps.isAgentRunning) {
+            try {
+              const running = await deps.isAgentRunning(agent);
+              if (type === "start_agent" && running) {
+                log.info("overseer: skipping start — already running", { agent });
+                return { action, success: true, message: `${agent} already running (skipped redundant start)` };
+              }
+              if (type === "stop_agent" && !running) {
+                log.info("overseer: skipping stop — already stopped", { agent });
+                return { action, success: true, message: `${agent} already stopped (skipped redundant stop)` };
+              }
+            } catch (err) {
+              log.warn("overseer: isAgentRunning check failed, proceeding with action", { agent, error: err instanceof Error ? err.message : String(err) });
+            }
+          }
           const lastAction = lifecycleTimestamps.get(agent) ?? 0;
           if (Date.now() - lastAction < LIFECYCLE_COOLDOWN_MS) {
             return { action, success: false, message: `Lifecycle rate limit: ${agent} had action <5 min ago` };
           }
           lifecycleTimestamps.set(agent, Date.now());
+          const overseerReason = (params.reason as string | undefined) ?? "no reason given";
           const result =
             type === "start_agent"
               ? await deps.agentManager.startAgent(agent)
-              : await deps.agentManager.stopAgent(agent);
+              : await deps.agentManager.stopAgent(agent, `overseer: ${overseerReason}`);
           return { action, success: result.ok, message: result.message };
         }
         case "reassign_role": {

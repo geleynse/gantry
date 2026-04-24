@@ -39,6 +39,7 @@ const testConfig: GantryConfig = {
   agents: AGENT_NAMES.map((name) => ({ name })),
   gameUrl: "https://game.spacemolt.com/mcp",
   gameApiUrl: "https://game.spacemolt.com/api/v1",
+  gameMcpUrl: "https://game.spacemolt.com/mcp",
   agentDeniedTools: {
     "*": {
       self_destruct: "Self destruct disabled in load tests.",

@@ -912,6 +912,40 @@ These routes are on the MCP router, not the web API router.
 **Response:** `{ "ok": true }`  
 **404** — agent not found.
 
+### `GET /api/routines`
+
+**Auth:** viewer  
+**Description:** List available routine names.  
+**Response:** `{ "routines": ["mining_loop", "sell_cycle"] }`
+
+### `GET /api/routines/jobs`
+
+**Auth:** viewer  
+**Query:** `agent`, `status=running|completed|error`, `limit`  
+**Description:** Recent routine job history, including async Codex routine jobs. The in-memory history is bounded to the latest 200 jobs and is reset when Gantry restarts.  
+**Response:**
+```json
+{
+  "jobs": [
+    {
+      "id": "rust-vane-1776547689153-ab12cd",
+      "agent": "rust-vane",
+      "routine": "mining_loop",
+      "status": "running",
+      "started_at": "2026-04-18T19:48:09.153Z",
+      "duration_ms": 42000,
+      "trace_id": "trace-123"
+    }
+  ]
+}
+```
+
+### `GET /api/routines/jobs/:id`
+
+**Auth:** viewer  
+**Description:** One routine job by id.  
+**404** — routine job not found.
+
 ---
 
 ## Combat
@@ -1195,4 +1229,3 @@ These routes are on the MCP router, not the web API router.
 **Description:** Clear all reservations for an agent (e.g., after logout).  
 **Response:** `{ "ok": true, "cleared": 3 }`  
 **404** — agent not found.
-

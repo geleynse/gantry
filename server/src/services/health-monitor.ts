@@ -17,6 +17,7 @@ import { hasSignal } from "./signals-db.js";
 import { startAgent } from "./agent-manager.js";
 import { hasSession } from "./process-manager.js";
 import type { AgentConfig } from "../config.js";
+import { getFleetDisabledState } from "./fleet-control.js";
 
 const log = createLogger("health-monitor");
 
@@ -80,6 +81,15 @@ export function createHealthMonitor(agents: AgentConfig[]): HealthMonitor {
   }
 
   async function tick(): Promise<void> {
+    const fleetDisabled = getFleetDisabledState();
+    if (fleetDisabled.disabled) {
+      for (const name of agentNames) markStopped(name);
+      log.debug("Health monitor skipped because fleet is disabled", {
+        reason: fleetDisabled.reason,
+      });
+      return;
+    }
+
     for (const name of agentNames) {
       try {
         await checkAgent(name);

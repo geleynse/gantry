@@ -72,7 +72,7 @@ describe("HttpGameClient (MCP)", () => {
       const headers = new Headers(resp.headers);
       return new Response(resp.body, { status: resp.status, headers });
     });
-    globalThis.fetch = fetchMock as typeof fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
     client = new HttpGameClient("https://game.test/mcp");
     client.label = "test-agent";
   });
@@ -115,6 +115,35 @@ describe("HttpGameClient (MCP)", () => {
     expect(body.method).toBe("tools/call");
     expect(body.params.name).toBe("mine");
     expect(body.params.arguments).toEqual({ resource: "iron" });
+  });
+
+  it("execute returns a structured timeout error instead of throwing on abort", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pass");
+
+    // Swap fetch with one that honors the AbortSignal — fires as soon as the
+    // caller triggers the timeout. mcpToolCall should catch the AbortError,
+    // log a warning, and surface a { error: { code: "timeout", ... } } response.
+    globalThis.fetch = mock(async (_url: string | URL | Request, opts?: RequestInit) => {
+      return new Promise((_, reject) => {
+        const signal = opts?.signal;
+        if (signal) {
+          const onAbort = () => {
+            const err = new Error("aborted");
+            err.name = "AbortError";
+            reject(err);
+          };
+          if (signal.aborted) onAbort();
+          else signal.addEventListener("abort", onAbort);
+        }
+        // never resolve
+      });
+    }) as unknown as typeof fetch;
+
+    const resp = await client.execute("jump", { target_system: "sirius" }, { timeoutMs: 50 });
+    expect(resp.error).toBeDefined();
+    expect(resp.error?.code).toBe("timeout");
+    expect(String(resp.error?.message)).toContain("jump");
   });
 
   it("execute handles game errors (isError: true)", async () => {

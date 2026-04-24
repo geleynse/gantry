@@ -650,4 +650,23 @@ CREATE INDEX IF NOT EXISTS idx_resource_knowledge_resource ON resource_knowledge
 CREATE INDEX IF NOT EXISTS idx_resource_knowledge_system ON resource_knowledge(system);
 CREATE INDEX IF NOT EXISTS idx_resource_knowledge_last_seen ON resource_knowledge(last_seen);
 
+CREATE TABLE IF NOT EXISTS routine_jobs (
+  id TEXT PRIMARY KEY,
+  agent TEXT NOT NULL,
+  routine TEXT NOT NULL,
+  trace_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  duration_ms INTEGER,
+  result_status TEXT,
+  result_summary TEXT,
+  handoff_reason TEXT,
+  error TEXT,
+  CHECK (status IN ('running', 'completed', 'error'))
+);
+CREATE INDEX IF NOT EXISTS idx_routine_jobs_agent ON routine_jobs(agent);
+CREATE INDEX IF NOT EXISTS idx_routine_jobs_started ON routine_jobs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_routine_jobs_status ON routine_jobs(status);
+
 `;

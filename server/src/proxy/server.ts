@@ -120,6 +120,12 @@ export interface SharedState {
     active: SessionManager;
     store: SessionStore;
     agentMap: Map<string, string>;
+    /**
+     * Close any MCP transports bound to this agent other than the provided
+     * sessionId. Populated by mcp-factory; undefined when a server is
+     * constructed standalone in tests.
+     */
+    closeStaleTransportsForAgent?: (agentName: string, currentSessionId: string | undefined) => void;
   };
   cache: {
     status: Map<string, { data: Record<string, unknown>; fetchedAt: number }>;
@@ -289,6 +295,7 @@ export function createGantryServer(config: GantryConfig, shared?: SharedState) {
     createHandoff,
     marketReservations,
     overseerEventLog: shared?.fleet.overseerEventLog ?? null,
+    closeStaleTransportsForAgent: shared?.sessions.closeStaleTransportsForAgent,
   };
 
   mcpServer.registerTool("login", {

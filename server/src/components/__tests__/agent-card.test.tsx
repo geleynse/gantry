@@ -144,7 +144,8 @@ describe('AgentCard', () => {
       render(
         <AgentCard agent={createMockAgentStatus({ healthScore: 50, healthIssues: issues })} />,
       );
-      const healthScoreDiv = screen.getByText('health').closest('div');
+      const healthText = screen.getByText('health');
+      const healthScoreDiv = healthText.parentElement?.parentElement;
       expect(healthScoreDiv).toHaveAttribute('title', issues.join('; '));
     });
 
@@ -152,7 +153,8 @@ describe('AgentCard', () => {
       render(
         <AgentCard agent={createMockAgentStatus({ healthScore: 90, healthIssues: [] })} />,
       );
-      const healthScoreDiv = screen.getByText('health').closest('div');
+      const healthText = screen.getByText('health');
+      const healthScoreDiv = healthText.parentElement?.parentElement;
       expect(healthScoreDiv).toHaveAttribute('title', 'Healthy');
     });
   });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Play, Square, Eye, RotateCw, List, LayoutGrid } from "lucide-react";
+import { Play, Square, Eye, RotateCw, List, LayoutGrid, Shield, ShieldOff } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
@@ -128,22 +128,117 @@ function OverseerBanner() {
   );
 }
 
+interface FleetDisabledState {
+  disabled: boolean;
+  reason?: string;
+  disabledAt?: string;
+}
+
+function FleetStateBadge({
+  state,
+  busy,
+  isAdmin,
+  onToggle,
+}: {
+  state: FleetDisabledState | null;
+  busy: boolean;
+  isAdmin: boolean;
+  onToggle: () => void;
+}) {
+  const disabled = state?.disabled ?? false;
+  const label = disabled ? "Night Mode" : "Armed";
+  const title = disabled
+    ? `Fleet disabled${state?.reason ? `: ${state.reason}` : ""}`
+    : "Fleet can be started by operators and automation";
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <span
+        className={cn(
+          "inline-flex items-center gap-1.5 px-2.5 py-1.5 border text-[10px] uppercase tracking-wider",
+          disabled
+            ? "text-warning border-warning/30 bg-warning/10"
+            : "text-success border-success/30 bg-success/10"
+        )}
+        title={title}
+      >
+        {disabled ? <ShieldOff className="w-3 h-3" /> : <Shield className="w-3 h-3" />}
+        {label}
+      </span>
+      {isAdmin && (
+        <button
+          onClick={onToggle}
+          disabled={busy}
+          className={cn(
+            "inline-flex items-center gap-1 px-2.5 py-1.5 text-[10px] uppercase tracking-wider border transition-colors disabled:opacity-50",
+            disabled
+              ? "text-success border-success/30 hover:bg-success/10"
+              : "text-warning border-warning/30 hover:bg-warning/10"
+          )}
+          title={disabled ? "Arm fleet without starting agents" : "Disable fleet starts without stopping running agents"}
+        >
+          {disabled ? <Shield className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
+          {disabled ? "Arm" : "Disable"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { isAdmin } = useAuth();
   const { data: fleetStatus, connected, error: sseError } = useFleetStatus();
   const { data: gameStates, loading: gameLoading } = useGameState();
   const agentNames = useAgentNames();
   const [fleetBusy, setFleetBusy] = useState(false);
+  const [fleetStateBusy, setFleetStateBusy] = useState(false);
+  const [fleetState, setFleetState] = useState<FleetDisabledState | null>(null);
   const [compactView, setCompactView] = useState(false);
+
+  async function loadFleetState() {
+    try {
+      const data = await apiFetch<FleetDisabledState>("/agents/fleet-state");
+      setFleetState(data);
+    } catch (err) {
+      console.error("Fleet state fetch failed:", err);
+    }
+  }
+
+  useEffect(() => {
+    loadFleetState();
+    const timer = setInterval(loadFleetState, 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   async function fleetAction(action: "start-all" | "stop-all") {
     setFleetBusy(true);
     try {
       await apiFetch(`/agents/${action}`, { method: "POST" });
+      await loadFleetState();
     } catch (err) {
       console.error(`Fleet ${action} failed:`, err);
     } finally {
       setFleetBusy(false);
+    }
+  }
+
+  async function toggleFleetState() {
+    const disabled = fleetState?.disabled ?? false;
+    setFleetStateBusy(true);
+    try {
+      const data = await apiFetch<FleetDisabledState>(
+        disabled ? "/agents/fleet-state/enable" : "/agents/fleet-state/disable",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: disabled ? "dashboard arm" : "dashboard disable" }),
+        }
+      );
+      setFleetState(data);
+    } catch (err) {
+      console.error("Fleet state update failed:", err);
+    } finally {
+      setFleetStateBusy(false);
     }
   }
 
@@ -225,6 +320,12 @@ export default function DashboardPage() {
 
         {/* Fleet controls */}
         <div className="flex items-center gap-1.5 ml-auto w-full sm:w-auto mt-2 sm:mt-0">
+          <FleetStateBadge
+            state={fleetState}
+            busy={fleetStateBusy}
+            isAdmin={isAdmin}
+            onToggle={toggleFleetState}
+          />
           <button
             onClick={() => setCompactView((v) => !v)}
             className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground hover:bg-secondary border border-border transition-colors"

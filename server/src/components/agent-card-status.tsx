@@ -45,10 +45,17 @@ export interface AgentStatusHeaderProps {
 }
 
 export function AgentStatusHeader({ agent }: AgentStatusHeaderProps) {
+  const credFailed = agent.credentialHealth?.status === 'auth_failed';
   return (
     <div className="flex-1 min-w-0 flex flex-col">
       <span className="font-bold text-foreground text-base block w-full break-words leading-tight mb-1">
         {agent.name}
+        {credFailed && (
+          <span
+            className="ml-1.5 inline-block w-2 h-2 rounded-full bg-red-500 align-middle"
+            title={agent.credentialHealth?.reason ?? 'Auth failed'}
+          />
+        )}
       </span>
       <div className="flex items-center gap-2">
         <StatusBadge

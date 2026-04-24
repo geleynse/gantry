@@ -64,6 +64,9 @@ export interface GantryConfig {
   gameMcpUrl: string;
   agentDeniedTools: Record<string, Record<string, string>>;
   callLimits: Record<string, number>;
+  prayer?: {
+    fuzzyMatchThreshold: number;
+  };
   turnSleepMs: number;
   staggerDelay: number;
   auth?: AuthConfig;

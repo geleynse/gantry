@@ -16,6 +16,7 @@ const testConfig: GantryConfig = {
   ] as GantryConfig['agents'],
   gameUrl: 'ws://localhost',
   gameApiUrl: 'http://localhost',
+  gameMcpUrl: 'http://localhost',
   agentDeniedTools: {},
   callLimits: {},
   turnSleepMs: 90,
@@ -44,6 +45,7 @@ mock.module('../../services/process-manager.js', () => ({
 
 import { agentFleetControlRouter, routinesRouter } from './fleet-control.js';
 import { listOrders } from '../../services/comms-db.js';
+import { clearRoutineJobsForTesting, completeRoutineJob, createRoutineJob, failRoutineJob } from '../../services/routine-jobs.js';
 
 function makeApp() {
   const app = express();
@@ -56,6 +58,7 @@ function makeApp() {
 beforeEach(() => {
   setConfigForTesting(testConfig);
   createDatabase(':memory:');
+  clearRoutineJobsForTesting();
 });
 
 afterEach(() => {
@@ -220,5 +223,60 @@ describe('GET /api/routines', () => {
     const app = makeApp();
     const res = await request(app).get('/api/routines');
     expect(res.body.routines.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/routines/jobs
+// ---------------------------------------------------------------------------
+
+describe('GET /api/routines/jobs', () => {
+  it('returns recent routine jobs newest first', async () => {
+    const app = makeApp();
+    const older = createRoutineJob({ agentName: 'drifter-gale', routineId: 'sell_cycle', traceId: 'trace-1' });
+    completeRoutineJob(older, { status: 'completed', summary: 'sold cargo', data: {}, phases: [], durationMs: 0 }, 'sold cargo', 1200);
+    const newer = createRoutineJob({ agentName: 'sable-thorn', routineId: 'mining_loop', traceId: 'trace-2' });
+
+    const res = await request(app).get('/api/routines/jobs');
+
+    expect(res.status).toBe(200);
+    expect(res.body.jobs).toHaveLength(2);
+    expect(res.body.jobs[0].id).toBe(newer.id);
+    expect(res.body.jobs[0].status).toBe('running');
+    expect(res.body.jobs[1].id).toBe(older.id);
+    expect(res.body.jobs[1].result.summary).toBe('sold cargo');
+  });
+
+  it('filters routine jobs by agent and status', async () => {
+    const app = makeApp();
+    const running = createRoutineJob({ agentName: 'drifter-gale', routineId: 'sell_cycle', traceId: 'trace-1' });
+    const failed = createRoutineJob({ agentName: 'drifter-gale', routineId: 'mining_loop', traceId: 'trace-2' });
+    failRoutineJob(failed, 'boom', 2500);
+    createRoutineJob({ agentName: 'sable-thorn', routineId: 'refuel_repair', traceId: 'trace-3' });
+
+    const res = await request(app).get('/api/routines/jobs?agent=drifter-gale&status=running');
+
+    expect(res.status).toBe(200);
+    expect(res.body.jobs).toHaveLength(1);
+    expect(res.body.jobs[0].id).toBe(running.id);
+  });
+
+  it('returns one routine job by id', async () => {
+    const app = makeApp();
+    const job = createRoutineJob({ agentName: 'drifter-gale', routineId: 'sell_cycle', traceId: 'trace-1' });
+
+    const res = await request(app).get(`/api/routines/jobs/${job.id}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.job.id).toBe(job.id);
+    expect(res.body.job.agent).toBe('drifter-gale');
+  });
+
+  it('rejects invalid job status filters', async () => {
+    const app = makeApp();
+    const res = await request(app).get('/api/routines/jobs?status=stale');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/status/);
   });
 });

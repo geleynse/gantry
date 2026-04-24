@@ -41,11 +41,12 @@ import {
 } from "./doc-tools.js";
 import { handleGetGlobalMarket, handleFindLocalRoute } from "./public-tools.js";
 import { handleGetEvents, handleGetSessionInfo, buildCompoundActions } from "./tool-registry.js";
-import { handlePassthrough, type PassthroughDeps, textResult } from "./passthrough-handler.js";
+import { handlePassthrough, type PassthroughClient, type PassthroughDeps, textResult } from "./passthrough-handler.js";
 import { getTracker as getRateLimitTracker } from "../services/rate-limit-tracker.js";
 import { dispatchRoutine, isRoutineModeEnabled } from "../routines/routine-dispatch.js";
 import { queueMessage as queueOutboundMessage, type ReviewPolicy } from "../services/outbound-review.js";
 import { hasRoutine, getRoutineTools } from "../routines/routine-runner.js";
+import { completeRoutineJob, createRoutineJob, failRoutineJob, getLatestRoutineJobForAgent, getRoutineJob, toRoutineJobSnapshot, type RoutineJob } from "../services/routine-jobs.js";
 import type { SharedState } from "./server.js";
 import type { AgentCallTracker } from "../shared/types.js";
 import { STATE_CHANGING_TOOLS, CONTAMINATION_WORDS, stripPendingFields, throttledPersistGameState, reformatResponse } from "./proxy-constants.js";
@@ -56,6 +57,7 @@ import { OverrideRegistry, BUILT_IN_RULES, createOverrideInjection } from "./ove
 import { StateHintEngine, createStateHintInjection } from "./state-hints.js";
 import { ResourceKnowledge, recordMarketResources } from "../services/resource-knowledge.js";
 import { searchCatalog } from "../services/game-catalog.js";
+import { runPrayerScript } from "./prayer/index.js";
 
 // ---------------------------------------------------------------------------
 // Rate limit tracking helper
@@ -159,6 +161,51 @@ const BATTLE_SUB_ACTIONS = new Set(["advance", "retreat", "stance", "target", "h
 
 // Generic v2 param names that may need remapping to v1 equivalents
 const GENERIC_PARAMS = ["id", "text", "target", "content", "index"] as const;
+
+export function withPrayerScriptSchema(toolName: string, serverTool?: ServerTool): ServerTool | undefined {
+  if (toolName !== "spacemolt") return serverTool;
+
+  const inputSchema = serverTool?.inputSchema ?? { type: "object", properties: {}, required: [] };
+  const properties = { ...(inputSchema.properties ?? {}) };
+  const required = [...(inputSchema.required ?? [])];
+
+  const action = properties.action as { enum?: string[]; type?: string; description?: string } | undefined;
+  if (action?.enum) {
+    const proxyActions = ["pray", "get_routine_status"];
+    const missingActions = proxyActions.filter((name) => !action.enum!.includes(name));
+    if (missingActions.length > 0) {
+      properties.action = { ...action, enum: [...action.enum, ...missingActions] };
+    }
+  }
+
+  properties.script = {
+    type: "string",
+    description: "PrayerLang script to execute when action is 'pray'. Prefer the standalone spacemolt_pray tool.",
+  };
+  properties.max_steps = {
+    type: "integer",
+    description: "Maximum PrayerLang steps to execute when action is 'pray'.",
+  };
+  properties.timeout_ticks = {
+    type: "integer",
+    description: "Maximum game ticks to wait before aborting the prayer script.",
+  };
+  properties.async = {
+    type: "boolean",
+    description: "For execute_routine, start the routine in the background and return immediately.",
+  };
+
+  return {
+    name: serverTool?.name ?? "spacemolt",
+    description: serverTool?.description,
+    inputSchema: {
+      ...inputSchema,
+      type: inputSchema.type ?? "object",
+      properties,
+      required,
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // mapV2ToV1 — translate v2 tool+action to v1 tool name and args
@@ -268,7 +315,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
   // Per-agent routine lock: prevents normal tool calls from interleaving
   // with routine execution on the same GameClient WebSocket.
   // Maps agent name → { resolve } so waiting callers can be notified when routine completes.
-  const agentRoutineLocks = new Map<string, { promise: Promise<void>; resolve: () => void }>();
+  const agentRoutineLocks = new Map<string, { promise: Promise<void>; resolve: () => void; job?: RoutineJob }>();
 
   const sessionAgentMap = shared.sessions.agentMap;
   const statusCache = shared.cache.status;
@@ -416,6 +463,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
     createHandoff,
     marketReservations: shared.fleet.marketReservations,
     overseerEventLog: shared.fleet.overseerEventLog ?? null,
+    closeStaleTransportsForAgent: shared.sessions.closeStaleTransportsForAgent,
   };
 
   mcpServer.registerTool("login", {
@@ -469,7 +517,178 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
     resourceKnowledge,
   };
 
+  async function handlePrayerAction(
+    rawArgs: Record<string, unknown>,
+    agentName: string,
+    traceId: string,
+    client: GameClientLike & PassthroughClient,
+    sessionId?: string,
+  ): Promise<ReturnType<typeof textResult>> {
+    const script = typeof rawArgs.script === "string"
+      ? rawArgs.script
+      : (typeof rawArgs.text === "string" ? rawArgs.text : "");
+    if (!script.trim()) return textResult({ error: "script is required for pray" });
+    if (script.length > 16_384) return textResult({ error: "script too long for pray (max 16384 chars)" });
+
+    const liveConfig = getConfig();
+    const agentConfig = liveConfig.agents.find((agent) => agent.name === agentName);
+    if (agentConfig?.prayEnabled !== true) {
+      return textResult({ error: `Prayer scripting is not enabled for ${agentName}. Set prayEnabled: true in fleet config.` });
+    }
+
+    if (battleCache.get(agentName)) {
+      log.warn(`[${agentName}] pray REJECTED: active combat | trace: ${traceId}`);
+      return textResult({ error: "Cannot execute prayer script during active combat. Handle the battle first." });
+    }
+
+    const agentEventBuf = eventBuffers.get(agentName);
+    if (agentEventBuf?.hasEventOfType(["pirate_warning", "pirate_combat", "combat_update", "player_died", "respawn_state", "police_warning", "scan_detected"])) {
+      log.warn(`[${agentName}] pray REJECTED: dangerous events | trace: ${traceId}`);
+      return textResult({ error: "Dangerous event detected (combat/pirate/police/scan) — cannot start prayer script. Handle the situation first." });
+    }
+
+    const requestedMaxSteps = typeof rawArgs.max_steps === "number" ? Math.trunc(rawArgs.max_steps) : undefined;
+    const maxSteps = Math.min(500, Math.max(1, requestedMaxSteps ?? (script.includes("until") ? 50 : 100)));
+    const requestedTimeoutTicks = typeof rawArgs.timeout_ticks === "number" ? Math.trunc(rawArgs.timeout_ticks) : 40;
+    const timeoutTicks = Math.min(120, Math.max(1, requestedTimeoutTicks));
+    const PRAYER_TICK_TIMEOUT_MS = 30_000;
+
+    const pendingId = logToolCallStart(
+      agentName,
+      "pray",
+      { script, max_steps: maxSteps, timeout_ticks: timeoutTicks },
+      { isCompound: true, traceId },
+    );
+    const prayerStartMs = Date.now();
+    log.info(`[${agentName}] pray START | trace: ${traceId}`);
+
+    let routineLockResolve: () => void;
+    const routineLockPromise = new Promise<void>((resolve) => { routineLockResolve = resolve; });
+    agentRoutineLocks.set(agentName, { promise: routineLockPromise, resolve: routineLockResolve! });
+
+    const sessionKeepalive = setInterval(() => {
+      if (shared.sessions.store) {
+        shared.sessions.store.getSession(sessionId ?? "");
+      }
+    }, 60_000);
+
+    try {
+      const trackedClient = makeTrackedClient(client, agentName, passthroughDeps.rateLimitTracker);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Prayer script exceeded timeout_ticks (${timeoutTicks})`)), timeoutTicks * PRAYER_TICK_TIMEOUT_MS),
+      );
+
+      const result = await Promise.race([
+        runPrayerScript(script, {
+          agentName,
+          client: trackedClient,
+          compoundActions,
+          statusCache,
+          battleCache: battleCache as Map<string, unknown>,
+          eventBuffers,
+          agentDeniedTools: liveConfig.agentDeniedTools,
+          fuzzyMatchThreshold: liveConfig.prayer?.fuzzyMatchThreshold,
+          maxSteps,
+          maxLoopIters: 200,
+          maxWallClockMs: 10 * 60 * 1000,
+          handlePassthrough: async (tool, passthroughArgs) => {
+            const mcpResult = await handlePassthrough(
+              passthroughDeps,
+              client,
+              agentName,
+              tool,
+              tool,
+              passthroughArgs && Object.keys(passthroughArgs).length > 0 ? passthroughArgs : undefined,
+              undefined,
+              traceId,
+              { skipLogging: true },
+            );
+            try {
+              const parsed = JSON.parse(mcpResult.content[0].text);
+              if (parsed.error) return { error: parsed.error };
+              return parsed.result ?? parsed;
+            } catch {
+              return mcpResult.content[0].text;
+            }
+          },
+          isToolDenied: (backingTool) => {
+            const refreshed = getConfig();
+            const globalDenied = refreshed.agentDeniedTools["*"] ?? {};
+            const agentDenied = refreshed.agentDeniedTools[agentName] ?? {};
+            return globalDenied[backingTool] ?? agentDenied[backingTool] ?? null;
+          },
+          logSubTool: (subToolName, subArgs, subResult, durationMs) => {
+            logToolCall(agentName, subToolName, subArgs, subResult, durationMs, {
+              isCompound: false,
+              traceId,
+              parentId: pendingId,
+            });
+          },
+        }),
+        timeoutPromise,
+      ]);
+
+      const durationMs = Date.now() - prayerStartMs;
+      log.info(`[${agentName}] pray ${result.status} ${durationMs}ms | trace: ${traceId}`);
+      logToolCallComplete(
+        pendingId,
+        agentName,
+        "pray",
+        { status: result.status, steps_executed: result.steps_executed, handoff_reason: result.handoff_reason, error: result.error },
+        durationMs,
+        { isCompound: true, success: result.status !== "error" },
+      );
+
+      return await withInjections(agentName, textResult(result));
+    } catch (err) {
+      const durationMs = Date.now() - prayerStartMs;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      log.error(`[${agentName}] pray CRASH ${durationMs}ms | trace: ${traceId} | ${errMsg}`);
+      const result = { status: "error", steps_executed: 0, normalized_script: script, error: { tier: "runtime", code: "pray_crash", message: errMsg }, duration_ms: durationMs };
+      logToolCallComplete(
+        pendingId,
+        agentName,
+        "pray",
+        result,
+        durationMs,
+        { isCompound: true, success: false, errorCode: "pray_crash" },
+      );
+      return textResult(result);
+    } finally {
+      clearInterval(sessionKeepalive);
+      const lock = agentRoutineLocks.get(agentName);
+      if (lock) {
+        lock.resolve();
+        agentRoutineLocks.delete(agentName);
+      }
+    }
+  }
+
   // --- v2 consolidated tool registration ---
+
+  if (!allowedTools || allowedTools.has("spacemolt_pray") || allowedTools.has("spacemolt")) {
+    mcpServer.registerTool("spacemolt_pray", {
+      description: "Execute a bounded PrayerLang script for the logged-in SpaceMolt agent. Requires prayEnabled: true in fleet config.",
+      inputSchema: {
+        script: z.string().min(1).max(16_384).describe("PrayerLang script to execute"),
+        max_steps: z.number().int().min(1).max(500).optional().describe("Maximum script steps to execute"),
+        timeout_ticks: z.number().int().min(1).max(120).optional().describe("Maximum game ticks to wait before timing out"),
+      },
+    }, async (rawArgs: Record<string, unknown>, extra) => {
+      const agentName = getAgentForSession(extra.sessionId);
+      if (!agentName) return textResult({ error: "not logged in — call login first" });
+
+      const traceId = generateTraceId(agentName);
+      const client = sessions.getClient(agentName);
+      if (!client) return textResult({ error: "no session" });
+
+      const args = (rawArgs ?? {}) as Record<string, unknown>;
+      delete args.session_id;
+      log.info(`[${agentName}] spacemolt_pray(script=${JSON.stringify(String(args.script ?? "").slice(0, 80))}) | trace: ${traceId}`);
+      return handlePrayerAction(args, agentName, traceId, client, extra.sessionId);
+    });
+    registeredTools.push("spacemolt_pray");
+  }
 
   for (const toolName of shared.v2Tools) {
     // login/logout are registered separately above (proxy-intercepted)
@@ -487,7 +706,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
       continue;
     }
 
-    const serverTool = shared.v2ToolSchemas.get(toolName);
+    const serverTool = withPrayerScriptSchema(toolName, shared.v2ToolSchemas.get(toolName));
     const description = shared.v2Descriptions.get(toolName) ?? `SpaceMolt v2 ${toolName}`;
     const zodSchema = serverTool ? serverSchemaToZod(serverTool) : z.object({}).passthrough();
 
@@ -545,6 +764,15 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
         }
         log.info(`[${agentName}] BLOCKED ${actionKey} | trace: ${traceId} | reason: ${blocked.slice(0, 80)}`);
         return textResult({ error: blocked });
+      }
+
+      if (toolName === "spacemolt" && action === "get_routine_status") {
+        const requestedId = typeof args.id === "string" ? args.id : undefined;
+        const job = requestedId ? getRoutineJob(requestedId) : getLatestRoutineJobForAgent(agentName);
+        if (!job || job.agentName !== agentName) {
+          return textResult({ status: "none", message: "No routine job found for this agent." });
+        }
+        return await withInjections(agentName, textResult(toRoutineJobSnapshot(job)));
       }
 
       // --- Routine lock: wait silently while a routine is running ---
@@ -683,15 +911,23 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
           }
         }
 
+        const agentConfig = liveConfig.agents.find((agent) => agent.name === agentName);
+        const runAsync = args.async === true || agentConfig?.backend === "codex";
+        const job = createRoutineJob({
+          agentName,
+          routineId,
+          traceId,
+        });
+
         // Log start
         const pendingId = logToolCallStart(
           agentName,
           "execute_routine",
-          { routine: routineId, params: routineParams },
+          { routine: routineId, params: routineParams, async: runAsync, job_id: job.id },
           { isCompound: true, traceId },
         );
         const routineStartMs = Date.now();
-        log.info(`[${agentName}] execute_routine:${routineId} START | trace: ${traceId}`);
+        log.info(`[${agentName}] execute_routine:${routineId} START${runAsync ? " async" : ""} | trace: ${traceId}`);
 
         // Outer timeout: routine runner has its own 15min timeout, but if that
         // fails we don't want the agent's turn to hang forever.
@@ -700,7 +936,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
         // Set routine lock with a promise that resolves when routine completes
         let routineLockResolve: () => void;
         const routineLockPromise = new Promise<void>((resolve) => { routineLockResolve = resolve; });
-        agentRoutineLocks.set(agentName, { promise: routineLockPromise, resolve: routineLockResolve! });
+        agentRoutineLocks.set(agentName, { promise: routineLockPromise, resolve: routineLockResolve!, job });
 
         // Keep session alive during long-running routines.
         // Without this, the idle timeout (5 min) kills the session mid-routine.
@@ -710,7 +946,8 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
           }
         }, 60_000);
 
-        try {
+        const executeRoutineJob = async (): Promise<ReturnType<typeof textResult>> => {
+          try {
           // Wrap the game client so routine sub-calls to compound tools
           // (travel_to, batch_mine, etc.) are routed through the proxy's
           // compound action handlers instead of the raw game server.
@@ -778,6 +1015,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
           const { result, formatted } = await Promise.race([routinePromise, timeoutPromise]);
 
           const durationMs = Date.now() - routineStartMs;
+          completeRoutineJob(job, result, formatted, durationMs);
           log.info(`[${agentName}] execute_routine:${routineId} ${result.status} ${durationMs}ms | trace: ${traceId}`);
           logToolCallComplete(
             pendingId,
@@ -792,6 +1030,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
         } catch (err) {
           const durationMs = Date.now() - routineStartMs;
           const errMsg = err instanceof Error ? err.message : String(err);
+          failRoutineJob(job, errMsg, durationMs);
           log.error(`[${agentName}] execute_routine:${routineId} CRASH ${durationMs}ms | trace: ${traceId} | ${errMsg}`);
           logToolCallComplete(
             pendingId,
@@ -811,6 +1050,30 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
             agentRoutineLocks.delete(agentName);
           }
         }
+        };
+
+        if (runAsync) {
+          void executeRoutineJob().catch((err) => {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            failRoutineJob(job, errMsg, Date.now() - routineStartMs);
+            log.error(`[${agentName}] execute_routine:${routineId} async handler failed | trace: ${traceId} | ${errMsg}`);
+          });
+
+          return textResult({
+            status: "started",
+            async: true,
+            id: job.id,
+            routine: routineId,
+            message: "Routine is running in the background. Poll spacemolt(action=\"get_routine_status\") for completion.",
+          });
+        }
+
+        return await executeRoutineJob();
+      }
+
+      // Execute prayer script (spacemolt action="pray")
+      if (toolName === "spacemolt" && action === "pray") {
+        return handlePrayerAction(args, agentName, traceId, client, extra.sessionId);
       }
 
       // Cached queries (spacemolt actions from WebSocket state cache)

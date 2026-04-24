@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import * as fsPromises from 'node:fs/promises';
 import { parseAgentLog, readFullLog, formatAge } from './log-parser.js';
 
@@ -36,17 +36,30 @@ some output
       expect(result?.lastTurnTime).toBe('2026-02-14 10:05:30');
     });
 
-    it('counts quota hits in last 50 lines', async () => {
+    it('counts quota hits in last 50 lines — runner-generated lines only', async () => {
       const lines = Array(100).fill('normal output');
-      lines[60] = 'rate limit error';
-      lines[70] = 'CLI rate limit hit';
+      lines[60] = '[turn 5] Error detected (rate_limit), backing off 300s';
+      lines[70] = "You've hit your limit · resets 9pm (UTC)";
       lines[80] = 'Server overload detected';
-      lines[90] = 'backing off';
       const logContent = lines.join('\n');
       readFileSpy.mockResolvedValue(logContent);
 
       const result = await parseAgentLog('test-agent');
-      expect(result?.quotaHits).toBe(4);
+      expect(result?.quotaHits).toBe(3);
+    });
+
+    it('ignores agent narrative that mentions "rate limit"', async () => {
+      // Agents (esp. overseer) sometimes narrate fleet-control events using the
+      // words "rate limit". That must NOT inflate the quota counter.
+      const lines = Array(100).fill('normal output');
+      lines[60] = 'Rust-vane hit lifecycle rate limit on restart';
+      lines[70] = 'Rate limited. Will start next turn.';
+      lines[80] = 'Checking rate limit status.';
+      const logContent = lines.join('\n');
+      readFileSpy.mockResolvedValue(logContent);
+
+      const result = await parseAgentLog('test-agent');
+      expect(result?.quotaHits).toBe(0);
     });
 
     it('detects backed-off state when last 5 lines contain backing off', async () => {
@@ -110,11 +123,11 @@ Game output line 4`;
       ]);
     });
 
-    it('counts auth hits in last 50 lines', async () => {
+    it('counts auth hits in last 50 lines — runner-generated lines only', async () => {
       const lines = Array(100).fill('normal output');
-      lines[60] = 'unauthorized access denied';
-      lines[75] = 'token expired please re-auth';
-      lines[85] = 'Auth error detected in session';
+      lines[60] = '[turn 3] Error detected (auth), backing off 300s';
+      lines[75] = "You're not logged in to Claude Code";
+      lines[85] = 'invalid API key provided';
       const logContent = lines.join('\n');
       readFileSpy.mockResolvedValue(logContent);
 
@@ -122,16 +135,16 @@ Game output line 4`;
       expect(result?.authHits).toBe(3);
     });
 
-    it('auth hits don\'t count as quota hits', async () => {
+    it('auth hits don\'t count as quota hits and vice versa', async () => {
       const lines = Array(100).fill('normal output');
-      lines[70] = 'unauthorized access';
-      lines[80] = 'token expired';
-      lines[90] = 'forbidden resource';
+      lines[70] = '[turn 3] Error detected (auth), backing off 300s';
+      lines[80] = 'invalid API key';
       const logContent = lines.join('\n');
       readFileSpy.mockResolvedValue(logContent);
 
       const result = await parseAgentLog('test-agent');
       expect(result?.quotaHits).toBe(0);
+      expect(result?.authHits).toBe(2);
     });
 
     it('returns authHits: 0 for normal log', async () => {

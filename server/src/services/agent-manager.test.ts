@@ -16,6 +16,7 @@ const testConfig: GantryConfig = {
   ] as GantryConfig['agents'],
   gameUrl: 'ws://localhost',
   gameApiUrl: 'http://localhost',
+  gameMcpUrl: 'http://localhost',
   agentDeniedTools: {},
   callLimits: {},
   turnSleepMs: 90,
@@ -26,7 +27,8 @@ const testConfig: GantryConfig = {
 // poisoning process-manager.test.ts (mock.module persists across files).
 import * as proc from './process-manager.js';
 import * as signalsDb from './signals-db.js';
-import { startAgent, stopAgent, forceStopAgent, softStopAgent, softRestartAgent } from './agent-manager.js';
+import { clearCredentialHealthForTesting, recordCredentialAuthFailure } from './credential-health.js';
+import { startAgent, stopAgent, forceStopAgent, softStopAgent, softRestartAgent, startAll } from './agent-manager.js';
 
 describe('agent-manager', () => {
   let mockedHasSession: ReturnType<typeof spyOn>;
@@ -36,6 +38,7 @@ describe('agent-manager', () => {
   let mockedClearSignal: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
+    mock.restore();
     setConfigForTesting(testConfig);
     setSoftStopTimingForTesting(100, 10); // Fast timeouts for tests
     mockedHasSession = spyOn(proc, 'hasSession').mockImplementation(async (_name: string) => false);
@@ -43,6 +46,7 @@ describe('agent-manager', () => {
     mockedKillSession = spyOn(proc, 'killSession').mockImplementation(async () => {});
     mockedCreateSignal = spyOn(signalsDb, 'createSignal').mockImplementation(() => {});
     mockedClearSignal = spyOn(signalsDb, 'clearSignal').mockImplementation(() => {});
+    clearCredentialHealthForTesting();
   });
 
   describe('startAgent', () => {
@@ -74,6 +78,16 @@ describe('agent-manager', () => {
     it('fails for unknown agent', async () => {
       const result = await startAgent('unknown-agent');
       expect(result.ok).toBe(false);
+    });
+
+    it('blocks start when credential health has auth_failed', async () => {
+      recordCredentialAuthFailure('rust-vane', 'Rust Vane');
+
+      const result = await startAgent('rust-vane');
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain('failed authentication');
+      expect(mockedNewSession).not.toHaveBeenCalled();
     });
 
     it('builds correct command for drifter-gale with encoded tools', async () => {
@@ -117,7 +131,7 @@ describe('agent-manager', () => {
       expect(result.ok).toBe(true);
       expect(result.message).toContain('gracefully');
       expect(mockedCreateSignal).toHaveBeenCalledWith('drifter-gale', 'inject', expect.stringContaining('SHUTDOWN'));
-      expect(mockedCreateSignal).toHaveBeenCalledWith('drifter-gale', 'shutdown');
+      expect(mockedCreateSignal).toHaveBeenCalledWith('drifter-gale', 'shutdown', expect.any(String));
       expect(mockedCreateSignal).toHaveBeenCalledWith('drifter-gale', 'stopped_gracefully');
       expect(mockedClearSignal).toHaveBeenCalledWith('drifter-gale', 'shutdown');
     });
@@ -225,6 +239,75 @@ describe('agent-manager', () => {
       // clearSignal: shutdown on stop + stopped_gracefully/shutdown/inject on start
       expect(mockedClearSignal).toHaveBeenCalledTimes(4);
       expect(mockedNewSession).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('startAll', () => {
+    it('staggers agent starts using configured staggerDelay', async () => {
+      // Short stagger for test speed — staggerDelay is in seconds
+      setConfigForTesting({ ...testConfig, staggerDelay: 0.01 }); // 10ms base
+
+      mockedHasSession.mockResolvedValue(false);
+      mockedNewSession.mockResolvedValue(undefined);
+
+      const t0 = Date.now();
+      const results = await startAll();
+      const elapsed = Date.now() - t0;
+
+      // 5 agents; 4 inter-agent waits.
+      // Between drifter-gale (sonnet) → sable-thorn (sonnet): heavy×heavy = 2x = 20ms
+      // sable-thorn (sonnet) → rust-vane (haiku): mixed = 10ms
+      // rust-vane (haiku) → lumen-shoal (sonnet): mixed = 10ms
+      // lumen-shoal (sonnet) → cinder-wake (codex, no model): mixed = 10ms
+      // Total minimum ≈ 50ms. Allow a generous ceiling for CI jitter.
+      expect(elapsed).toBeGreaterThanOrEqual(45);
+      expect(results).toHaveLength(5);
+      expect(mockedNewSession).toHaveBeenCalledTimes(5);
+    });
+
+    it('uses double stagger between two consecutive heavy-token (sonnet) agents', async () => {
+      // Fleet where agents 0 and 1 are both sonnet — forces the heavy-pair path
+      setConfigForTesting({
+        ...testConfig,
+        staggerDelay: 0.02, // 20ms base → 40ms heavy-pair
+        agents: [
+          { name: 'drifter-gale', backend: 'claude', model: 'sonnet' },
+          { name: 'sable-thorn', backend: 'claude', model: 'sonnet' },
+        ] as GantryConfig['agents'],
+      });
+
+      mockedHasSession.mockResolvedValue(false);
+      mockedNewSession.mockResolvedValue(undefined);
+
+      const t0 = Date.now();
+      await startAll();
+      const elapsed = Date.now() - t0;
+
+      // Only one wait (between agent 0 and 1); it must be the heavy-pair delay (2×20ms = 40ms).
+      expect(elapsed).toBeGreaterThanOrEqual(38);
+      expect(mockedNewSession).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses single stagger between a heavy agent and a non-heavy agent', async () => {
+      setConfigForTesting({
+        ...testConfig,
+        staggerDelay: 0.02,
+        agents: [
+          { name: 'drifter-gale', backend: 'claude', model: 'sonnet' },
+          { name: 'rust-vane', backend: 'claude', model: 'haiku' },
+        ] as GantryConfig['agents'],
+      });
+
+      mockedHasSession.mockResolvedValue(false);
+      mockedNewSession.mockResolvedValue(undefined);
+
+      const t0 = Date.now();
+      await startAll();
+      const elapsed = Date.now() - t0;
+
+      // Mixed pair → base delay (20ms). Must NOT exceed heavy-pair delay (40ms) by much.
+      expect(elapsed).toBeGreaterThanOrEqual(18);
+      expect(elapsed).toBeLessThan(40);
     });
   });
 });

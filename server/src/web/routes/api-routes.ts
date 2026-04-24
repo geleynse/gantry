@@ -42,6 +42,7 @@ import alertsRoutes from "./alerts.js";
 import { createPromptsRouter } from "./prompts.js";
 import diagnosticsRoutes from "./diagnostics.js";
 import leaderboardRoutes from "./leaderboard.js";
+import prayerCanaryRoutes from "./prayer-canary.js";
 import { createEnrollmentRouter } from "./enrollment.js";
 import { createCredentialsRouter } from "./credentials.js";
 import { createHealthMonitorRouter } from "./health-monitor-route.js";
@@ -106,7 +107,6 @@ export function createApiRoutes(deps: ApiRouteDeps): Router {
     sharedState.cache.battle,
     sharedState.proxy.breakerRegistry,
     sharedState.proxy.serverMetrics,
-    config,
   );
   router.use("/status", statusRouter);
 
@@ -174,6 +174,7 @@ export function createApiRoutes(deps: ApiRouteDeps): Router {
   router.use("/security", createSecurityRouter(sessions));
   router.use("/diagnostics", diagnosticsRoutes);
   router.use("/leaderboard", leaderboardRoutes);
+  router.use("/prayer-canary", prayerCanaryRoutes);
 
   // Health monitor watchdog (optional — only when healthMonitor is provided)
   if (healthMonitor) {

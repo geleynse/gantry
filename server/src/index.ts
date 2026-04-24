@@ -7,6 +7,7 @@ import { FLEET_DIR, PORT, LOG_LEVEL, MARKET_SCAN_INTERVAL_MS } from "./config.js
 import { loadConfig } from "./config.js";
 import { createApp } from "./app.js";
 import { createDatabase } from "./services/database.js";
+import { loadRecentRoutineJobs } from "./services/routine-jobs.js";
 import { decontaminateDiary, decontaminateNotes } from "./services/notes-db.js";
 import { watchTurnFiles, addPostIngestHook } from "./services/turn-ingestor.js";
 import { pruneOldToolCalls } from "./web/routes/tool-calls.js";
@@ -20,7 +21,8 @@ import { runBootstrap } from "./routines/bootstrap.js";
 import { LifecycleManager } from "./lib/lifecycle-manager.js";
 import { createHealthMonitor } from "./services/health-monitor.js";
 import { setLifecycleHooks } from "./services/agent-manager.js";
-import { migrateCredentialsIfNeeded, validateCredentials } from "./services/credentials-crypto.js";
+import { migrateCredentialsIfNeeded, validateAllCredentials } from "./services/credentials-crypto.js";
+import { recordCredentialValidationResult } from "./services/credential-health.js";
 import { fetchAndCacheCatalog } from "./services/game-catalog.js";
 
 // Configure log level early
@@ -96,7 +98,9 @@ for (const agent of config.agents) {
 // --- 1b. Validate credentials against game API (advisory — never blocks startup) ---
 // Skipped when validateCredentialsOnStartup is explicitly false or in mock mode.
 if (config.validateCredentialsOnStartup !== false && !config.mockMode?.enabled) {
-  validateCredentials(FLEET_DIR, config.gameMcpUrl).catch((err: unknown) => {
+  validateAllCredentials(FLEET_DIR, config.gameMcpUrl).then((results) => {
+    for (const result of results) recordCredentialValidationResult(result);
+  }).catch((err: unknown) => {
     log.warn("Credential validation threw unexpectedly", {
       error: err instanceof Error ? err.message : String(err),
     });
@@ -119,6 +123,8 @@ try {
   log.info("Analytics database initialized");
 
   // Purge contaminated diary entries and note lines on startup
+  loadRecentRoutineJobs(50);
+
   for (const agent of config.agents) {
     const diaryPurged = decontaminateDiary(agent.name, CONTAMINATION_WORDS);
     const notesPurged = decontaminateNotes(agent.name, CONTAMINATION_WORDS);
@@ -144,12 +150,9 @@ const { app, sessions, sharedState, overseerAgent, dispose: disposeProxy } = awa
 const sessionStore = sharedState.sessions.store;
 setLifecycleHooks({
   onStarted: (name) => healthMonitor.markRunning(name),
-  onStopped: (name) => {
+  onStopped: (name, kind) => {
     healthMonitor.markStopped(name);
-    // Delay session expiry by 30s to give the agent time to write its captain's log
-    // and logout after receiving the shutdown signal. Without this delay, the session
-    // expires ~4s after the signal — too fast for the agent to clean up.
-    setTimeout(() => {
+    const expire = () => {
       try {
         sessionStore.expireAgentSessions(name);
         log.info("Expired MCP sessions for stopped agent", { agent: name });
@@ -159,7 +162,16 @@ setLifecycleHooks({
           error: err instanceof Error ? err.message : String(err),
         });
       }
-    }, 30_000);
+    };
+
+    if (kind === "soft") {
+      // Delay session expiry by 30s to give the agent time to write its captain's log
+      // and logout after receiving the shutdown signal. Forced stops need immediate
+      // expiry so the dashboard and API do not show stale proxy sessions overnight.
+      setTimeout(expire, 30_000);
+    } else {
+      expire();
+    }
   },
 });
 

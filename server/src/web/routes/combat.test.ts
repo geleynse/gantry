@@ -389,7 +389,7 @@ describe('GET /api/combat/timeline', () => {
   });
 
   it('shows deaths and damage totals per agent per day', async () => {
-    const res = await request(app).get('/api/combat/timeline');
+    const res = await request(app).get('/api/combat/timeline?hours=2000');
     expect(res.status).toBe(200);
     const timeline = res.body.timeline as Array<{ agent: string; date: string; deaths: number; damage: number }>;
 

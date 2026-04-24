@@ -10,18 +10,21 @@ describe('file-manager', () => {
   let readFileSpy: any;
   let appendFileSpy: any;
   let readdirSpy: any;
+  let mkdirSpy: any;
 
   beforeEach(() => {
     // Use spyOn instead of mock.module to avoid process-wide leaks
-    readFileSpy = spyOn(fs, 'readFile').mockImplementation(async () => '');
+    readFileSpy = spyOn(fs, 'readFile').mockImplementation((() => Promise.resolve('')) as unknown as typeof fs.readFile);
     appendFileSpy = spyOn(fs, 'appendFile').mockImplementation(async () => {});
     readdirSpy = spyOn(fs, 'readdir').mockImplementation(async () => []);
+    mkdirSpy = spyOn(fs, 'mkdir').mockImplementation((() => Promise.resolve('')) as unknown as typeof fs.mkdir);
   });
 
   afterEach(() => {
     readFileSpy.mockRestore();
     appendFileSpy.mockRestore();
     readdirSpy.mockRestore();
+    mkdirSpy.mockRestore();
   });
 
   describe('readComms', () => {

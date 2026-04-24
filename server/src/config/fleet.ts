@@ -158,6 +158,7 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
     gameMcpUrl,
     agentDeniedTools,
     callLimits,
+    prayer: fleetConfig.prayer,
     turnSleepMs,
     staggerDelay,
     auth,

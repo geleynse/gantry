@@ -28,6 +28,7 @@ const testConfig: GantryConfig = {
   agents: [{ name: TEST_AGENT }],
   gameUrl: "https://game.spacemolt.com/mcp",
   gameApiUrl: "https://game.spacemolt.com/api/v1",
+  gameMcpUrl: "https://game.spacemolt.com/mcp",
   agentDeniedTools: {
     "*": {
       self_destruct: "Self destruct is disabled in smoke tests.",

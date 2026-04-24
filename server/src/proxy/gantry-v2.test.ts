@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect, beforeEach } from "bun:test";
-import { createGantryServerV2, mapV2ToV1, V2_ACTION_TO_V1_NAME, type V2SharedState } from "./gantry-v2.js";
+import { createGantryServerV2, mapV2ToV1, V2_ACTION_TO_V1_NAME, withPrayerScriptSchema, type V2SharedState } from "./gantry-v2.js";
+import { serverSchemaToZod, type ServerTool } from "./schema.js";
 import type { GantryConfig } from "../config.js";
 import { SessionManager } from "./session-manager.js";
 import { SessionStore } from "./session-store.js";
@@ -32,6 +33,7 @@ const testConfig: GantryConfig = {
   agents: [{ name: "alpha-agent" }, { name: "beta-agent" }],
   gameUrl: "https://game.spacemolt.com/mcp",
   gameApiUrl: "https://game.spacemolt.com/api/v1",
+  gameMcpUrl: "https://game.spacemolt.com/mcp",
   agentDeniedTools: {},
   callLimits: {},
   turnSleepMs: 90,
@@ -114,9 +116,46 @@ describe("createGantryServerV2", () => {
   it("total registered tools = login + logout + query_known_resources + query_catalog + v2Tools (minus spacemolt_auth)", () => {
     const shared = createTestSharedState();
     const { registeredTools } = createGantryServerV2(testConfig, shared);
-    // +4 for login, logout, query_known_resources, query_catalog (proxy-defined tools)
-    const expectedCount = 4 + V2_TEST_TOOLS.filter(t => t !== "spacemolt_auth").length;
+    // +5 for login, logout, spacemolt_pray, query_known_resources, query_catalog (proxy-defined tools)
+    const expectedCount = 5 + V2_TEST_TOOLS.filter(t => t !== "spacemolt_auth").length;
     expect(registeredTools.length).toBe(expectedCount);
+  });
+
+  it("registers dedicated spacemolt_pray proxy tool", () => {
+    const shared = createTestSharedState();
+    const { registeredTools } = createGantryServerV2(testConfig, shared);
+    expect(registeredTools).toContain("spacemolt_pray");
+  });
+
+  it("advertises PrayerLang params on spacemolt action dispatch", () => {
+    const serverTool: ServerTool = {
+      name: "spacemolt",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["get_status", "mine"] },
+          id: { type: "string" },
+        },
+        required: ["action"],
+      },
+    };
+
+    const patched = withPrayerScriptSchema("spacemolt", serverTool)!;
+    const action = patched.inputSchema?.properties?.action as { enum?: string[] };
+    expect(action.enum).toContain("pray");
+    expect(action.enum).toContain("get_routine_status");
+    expect(patched.inputSchema?.properties).toHaveProperty("script");
+    expect(patched.inputSchema?.properties).toHaveProperty("max_steps");
+    expect(patched.inputSchema?.properties).toHaveProperty("timeout_ticks");
+    expect(patched.inputSchema?.properties).toHaveProperty("async");
+
+    const parsed = serverSchemaToZod(patched).safeParse({
+      action: "pray",
+      script: "halt;",
+      max_steps: 1,
+      timeout_ticks: 1,
+    });
+    expect(parsed.success).toBe(true);
   });
 
   it("returns shared session state", () => {
@@ -156,18 +195,18 @@ describe("createGantryServerV2 - V2SharedState interface", () => {
 });
 
 describe("createGantryServerV2 - empty v2Tools", () => {
-  it("registers login, logout, query_known_resources, and query_catalog when v2Tools is empty", () => {
+  it("registers proxy tools when v2Tools is empty", () => {
     const shared = createTestSharedState();
     shared.v2Tools = [];
     const { registeredTools } = createGantryServerV2(testConfig, shared);
-    expect(registeredTools).toEqual(["login", "logout", "query_known_resources", "query_catalog"]);
+    expect(registeredTools).toEqual(["login", "logout", "spacemolt_pray", "query_known_resources", "query_catalog"]);
   });
 
-  it("registers login, logout, query_known_resources, and query_catalog when v2Tools contains only spacemolt_auth", () => {
+  it("registers proxy tools when v2Tools contains only spacemolt_auth", () => {
     const shared = createTestSharedState();
     shared.v2Tools = ["spacemolt_auth"];
     const { registeredTools } = createGantryServerV2(testConfig, shared);
-    expect(registeredTools).toEqual(["login", "logout", "query_known_resources", "query_catalog"]);
+    expect(registeredTools).toEqual(["login", "logout", "spacemolt_pray", "query_known_resources", "query_catalog"]);
   });
 });
 

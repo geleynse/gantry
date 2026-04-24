@@ -307,6 +307,33 @@ describe("SessionStore — startup clearAll and session lifecycle", () => {
     expect(session?.agent).toBe("drifter-gale");
   });
 
+  it("setSessionAgent expires other live sessions for the same agent (session leak fix)", () => {
+    // Three prior sessions accumulate for one agent across process churn
+    const stale1 = store.createSession("drifter-gale");
+    const stale2 = store.createSession("drifter-gale");
+    const stale3 = store.createSession("drifter-gale");
+
+    // A fresh MCP session initialized by the new runner process claims the agent
+    const fresh = store.createSession(undefined);
+    store.setSessionAgent(fresh, "drifter-gale");
+
+    // Only the fresh session remains valid for this agent
+    expect(store.isValidSession(stale1)).toBe(false);
+    expect(store.isValidSession(stale2)).toBe(false);
+    expect(store.isValidSession(stale3)).toBe(false);
+    expect(store.isValidSession(fresh)).toBe(true);
+    const active = store.getActiveSessions();
+    expect(active.filter(s => s.agent === "drifter-gale")).toHaveLength(1);
+  });
+
+  it("setSessionAgent does not touch sessions owned by other agents", () => {
+    const other = store.createSession("rust-vane");
+    const fresh = store.createSession(undefined);
+    store.setSessionAgent(fresh, "drifter-gale");
+
+    expect(store.isValidSession(other)).toBe(true);
+  });
+
   it("cleanup returns 0 when no sessions are expired", () => {
     store.createSession("agent-a");
     const deleted = store.cleanup();
@@ -319,5 +346,174 @@ describe("SessionStore — startup clearAll and session lifecycle", () => {
 
     store.clearAll();
     expect(store.isValidSession(sid)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sanitizeToolName — additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("sanitizeToolName — additional edge cases", () => {
+  it("handles tool name with numbers and underscores unchanged", () => {
+    const { name, sanitized } = sanitizeToolName("mcp__gantry__batch_mine_v2");
+    expect(name).toBe("mcp__gantry__batch_mine_v2");
+    expect(sanitized).toBe(false);
+  });
+
+  it("does not alter names that contain mid-string quote", () => {
+    // A single-quote mid-name is unusual but should not be stripped
+    const input = "spacemolt_auth";
+    const { name, sanitized } = sanitizeToolName(input);
+    expect(name).toBe(input);
+    expect(sanitized).toBe(false);
+  });
+
+  it("strips only trailing artifact, not all quotes", () => {
+    // Tool name ending with double-quote — strip it
+    const input = 'mcp__gantry__logout"';
+    const { name, sanitized } = sanitizeToolName(input);
+    expect(name).toBe("mcp__gantry__logout");
+    expect(sanitized).toBe(true);
+  });
+
+  it("is idempotent — sanitizing a clean name twice yields same result", () => {
+    const clean = "mcp__gantry__jump";
+    const first = sanitizeToolName(clean);
+    const second = sanitizeToolName(first.name);
+    expect(second.name).toBe(clean);
+    expect(second.sanitized).toBe(false);
+  });
+
+  it("strips whitespace-only artifact suffix", () => {
+    // Trailing whitespace with /> artifact
+    const { name, sanitized } = sanitizeToolName("spacemolt   />");
+    expect(name).toBe("spacemolt");
+    expect(sanitized).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OUR_SCHEMA_PARAMS — navigation, social, and market tool coverage
+// ---------------------------------------------------------------------------
+
+describe("OUR_SCHEMA_PARAMS — navigation and social tools", () => {
+  it("find_route has destination_system_id param", () => {
+    expect(OUR_SCHEMA_PARAMS.find_route).toEqual(["destination_system_id"]);
+  });
+
+  it("search_systems has name param", () => {
+    expect(OUR_SCHEMA_PARAMS.search_systems).toEqual(["name"]);
+  });
+
+  it("get_system has system_id param", () => {
+    expect(OUR_SCHEMA_PARAMS.get_system).toEqual(["system_id"]);
+  });
+
+  it("get_poi has poi_id param", () => {
+    expect(OUR_SCHEMA_PARAMS.get_poi).toEqual(["poi_id"]);
+  });
+
+  it("chat has required channel and content params", () => {
+    expect(OUR_SCHEMA_PARAMS.chat).toContain("channel");
+    expect(OUR_SCHEMA_PARAMS.chat).toContain("content");
+  });
+
+  it("view_market has item_id and category params", () => {
+    expect(OUR_SCHEMA_PARAMS.view_market).toContain("item_id");
+    expect(OUR_SCHEMA_PARAMS.view_market).toContain("category");
+  });
+
+  it("estimate_purchase has item_id and quantity params", () => {
+    expect(OUR_SCHEMA_PARAMS.estimate_purchase).toContain("item_id");
+    expect(OUR_SCHEMA_PARAMS.estimate_purchase).toContain("quantity");
+  });
+
+  it("loot_wreck has wreck_id, item_id, quantity params", () => {
+    expect(OUR_SCHEMA_PARAMS.loot_wreck).toContain("wreck_id");
+    expect(OUR_SCHEMA_PARAMS.loot_wreck).toContain("item_id");
+    expect(OUR_SCHEMA_PARAMS.loot_wreck).toContain("quantity");
+  });
+
+  it("salvage_wreck has wreck_id param", () => {
+    expect(OUR_SCHEMA_PARAMS.salvage_wreck).toEqual(["wreck_id"]);
+  });
+
+  it("get_chat_history has channel, target_id, before, limit params", () => {
+    expect(OUR_SCHEMA_PARAMS.get_chat_history).toContain("channel");
+    expect(OUR_SCHEMA_PARAMS.get_chat_history).toContain("limit");
+  });
+
+  it("buy_ship has ship_class param", () => {
+    expect(OUR_SCHEMA_PARAMS.buy_ship).toContain("ship_class");
+  });
+
+  it("switch_ship has ship_id param", () => {
+    expect(OUR_SCHEMA_PARAMS.switch_ship).toEqual(["ship_id"]);
+  });
+
+  it("decline_mission has template_id param", () => {
+    expect(OUR_SCHEMA_PARAMS.decline_mission).toEqual(["template_id"]);
+  });
+
+  it("create_sell_order has price_each param", () => {
+    expect(OUR_SCHEMA_PARAMS.create_sell_order).toContain("price_each");
+    expect(OUR_SCHEMA_PARAMS.create_sell_order).toContain("item_id");
+    expect(OUR_SCHEMA_PARAMS.create_sell_order).toContain("quantity");
+  });
+
+  it("create_buy_order has deliver_to param", () => {
+    expect(OUR_SCHEMA_PARAMS.create_buy_order).toContain("deliver_to");
+    expect(OUR_SCHEMA_PARAMS.create_buy_order).toContain("price_each");
+  });
+
+  it("modify_order has new_price param", () => {
+    expect(OUR_SCHEMA_PARAMS.modify_order).toContain("new_price");
+    expect(OUR_SCHEMA_PARAMS.modify_order).toContain("order_id");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getToolsForRolePreset — additional edge cases
+// ---------------------------------------------------------------------------
+
+describe("getToolsForRolePreset — additional edge cases", () => {
+  const FACTORY_PRESETS: Record<string, string[]> = {
+    combat:   ["spacemolt", "spacemolt_ship", "spacemolt_social", "spacemolt_catalog"],
+    trader:   ["spacemolt", "spacemolt_market", "spacemolt_storage", "spacemolt_social"],
+    standard: ["spacemolt", "spacemolt_social", "spacemolt_ship", "spacemolt_market", "spacemolt_storage", "spacemolt_catalog"],
+  };
+
+  it("returns null when mcpPresets is null", () => {
+    expect(getToolsForRolePreset(null as any, "combat")).toBeNull();
+  });
+
+  it("standard preset includes all tool namespaces", () => {
+    const tools = getToolsForRolePreset(FACTORY_PRESETS, "standard")!;
+    expect(tools).toContain("spacemolt");
+    expect(tools).toContain("spacemolt_social");
+    expect(tools).toContain("spacemolt_ship");
+    expect(tools).toContain("spacemolt_market");
+    expect(tools).toContain("spacemolt_storage");
+    expect(tools).toContain("spacemolt_catalog");
+  });
+
+  it("result always includes login and logout even when not in preset", () => {
+    const presets = { minimal: ["spacemolt"] };
+    const tools = getToolsForRolePreset(presets, "minimal")!;
+    expect(tools).toContain("login");
+    expect(tools).toContain("logout");
+  });
+
+  it("result for unknown role is same as standard", () => {
+    const tools = getToolsForRolePreset(FACTORY_PRESETS, "unknown-xyz")!;
+    const standard = getToolsForRolePreset(FACTORY_PRESETS, "standard")!;
+    expect(tools).toBeDefined();
+    expect(new Set(tools)).toEqual(new Set(standard));
+  });
+
+  it("explorer preset (unknown) falls back to standard, not combat", () => {
+    const tools = getToolsForRolePreset(FACTORY_PRESETS, "explorer")!;
+    const standard = getToolsForRolePreset(FACTORY_PRESETS, "standard")!;
+    expect(new Set(tools)).toEqual(new Set(standard));
   });
 });

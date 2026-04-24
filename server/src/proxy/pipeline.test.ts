@@ -89,6 +89,7 @@ function makeConfig(overrides: Partial<GantryConfig> = {}): GantryConfig {
     ],
     gameUrl: "http://localhost:9999",
     gameApiUrl: "http://localhost:9999/api",
+    gameMcpUrl: "http://localhost:9999",
     agentDeniedTools: {},
     callLimits: {},
     turnSleepMs: 0,

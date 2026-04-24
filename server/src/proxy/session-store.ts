@@ -93,11 +93,23 @@ export class SessionStore {
   }
 
   /**
-   * Update session's agent name (after login).
+   * Update session's agent name (after login). Also expires any *other*
+   * sessions currently tagged to this agent so only one live session per
+   * agent accumulates. Prevents session leak when an agent process churns
+   * (restart, crash recovery) without calling logout.
    */
   setSessionAgent(id: string, agent: string): void {
     queryRun("UPDATE mcp_sessions SET agent = ? WHERE id = ?", agent, id);
-    log.debug("session agent updated", { id: id.slice(0, 8), agent });
+    const now = new Date().toISOString();
+    const pruned = queryRun(
+      "UPDATE mcp_sessions SET expires_at = ? WHERE agent = ? AND id != ? AND expires_at > ?",
+      now, agent, id, now
+    );
+    if (pruned > 0) {
+      log.debug("pruned stale agent sessions on new-session claim", { agent, pruned, keep: id.slice(0, 8) });
+    } else {
+      log.debug("session agent updated", { id: id.slice(0, 8), agent });
+    }
   }
 
   /**

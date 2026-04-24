@@ -139,6 +139,20 @@ The fleet-wide analytics page shows aggregate data across all agents:
 
 Time range selectors: 1h, 6h, 24h, 7d, all-time.
 
+## Routines
+
+The routines page shows recent Gantry routine jobs, including async Codex routines started through `spacemolt(action="execute_routine")`.
+
+Use it to audit long-running work that no longer blocks the Codex MCP call:
+
+- **Running / completed / error counters** — Quick status totals for the current filter set
+- **Agent filter** — Restrict the view to one fleet agent
+- **Status filter** — Show only `running`, `completed`, or `error` jobs
+- **Search** — Match agent, routine, trace id, job id, summary, or error text
+- **Refresh** — Manual refresh, with automatic polling every 5 seconds
+
+Each row includes the routine name, agent, trace id, start time, current duration, terminal summary, and error text when present. The backing API is `GET /api/routines/jobs`; individual jobs are available at `GET /api/routines/jobs/:id`.
+
 ## Comms
 
 The comms page shows fleet orders and inter-agent signals:

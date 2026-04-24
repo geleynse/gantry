@@ -4,6 +4,7 @@ import { createOrder } from '../../services/comms-db.js';
 import { getAvailableRoutines, hasRoutine } from '../../routines/routine-runner.js';
 import { getSessionShutdownManager } from '../../proxy/session-shutdown.js';
 import { requireAgentOnline } from '../middleware/agent-online.js';
+import { getRoutineJob, listRoutineJobs, toRoutineJobSnapshot, type RoutineJobStatus } from '../../services/routine-jobs.js';
 
 // ---------------------------------------------------------------------------
 // Agent fleet control routes (mounted at /api/agents)
@@ -93,4 +94,40 @@ export const routinesRouter: import("express").Router = Router();
 routinesRouter.get('/', (_req, res) => {
   const routines = getAvailableRoutines();
   res.json({ routines });
+});
+
+/**
+ * GET /api/routines/jobs
+ * Returns recent routine job history, including async Codex routine state.
+ */
+routinesRouter.get('/jobs', (req, res) => {
+  const agentName = typeof req.query.agent === 'string' ? req.query.agent : undefined;
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const limit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : undefined;
+
+  if (status && !['running', 'completed', 'error'].includes(status)) {
+    res.status(400).json({ error: 'status must be running, completed, or error' });
+    return;
+  }
+
+  res.json({
+    jobs: listRoutineJobs({
+      agentName,
+      status: status as RoutineJobStatus | undefined,
+      limit: Number.isFinite(limit) ? limit : undefined,
+    }),
+  });
+});
+
+/**
+ * GET /api/routines/jobs/:id
+ * Returns one routine job by id.
+ */
+routinesRouter.get('/jobs/:id', (req, res) => {
+  const job = getRoutineJob(String(req.params.id));
+  if (!job) {
+    res.status(404).json({ error: 'Routine job not found' });
+    return;
+  }
+  res.json({ job: toRoutineJobSnapshot(job) });
 });

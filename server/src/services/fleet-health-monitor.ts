@@ -59,10 +59,10 @@ export interface FleetHealthMonitorDeps {
   getTransportCount: () => number;
 
   /** Stop a single agent. Returns whether the stop succeeded. */
-  stopAgent: (name: string) => Promise<{ ok: boolean; message: string }>;
+  stopAgent: (name: string, reason?: string) => Promise<{ ok: boolean; message: string }>;
 
   /** Stop all agents in the fleet. */
-  stopAllAgents: () => Promise<void>;
+  stopAllAgents: (reason?: string) => Promise<void>;
 
   /** Logger override (for testing). */
   logger?: Logger;
@@ -254,7 +254,7 @@ export function createFleetHealthMonitor(deps: FleetHealthMonitorDeps): FleetHea
     logger.warn("fleet-health: auto-stopping agent", { agent: agentName, reason });
     autoShutdownReason = reason;
     try {
-      const result = await deps.stopAgent(agentName);
+      const result = await deps.stopAgent(agentName, `fleet-health: ${reason}`);
       if (result.ok) {
         logger.info("fleet-health: agent stopped successfully", { agent: agentName });
       } else {
@@ -272,7 +272,7 @@ export function createFleetHealthMonitor(deps: FleetHealthMonitorDeps): FleetHea
     logger.warn("fleet-health: auto-stopping entire fleet", { reason });
     autoShutdownReason = reason;
     try {
-      await deps.stopAllAgents();
+      await deps.stopAllAgents(`fleet-health: ${reason}`);
       logger.info("fleet-health: fleet stopped successfully");
     } catch (err) {
       logger.error("fleet-health: exception stopping fleet", {

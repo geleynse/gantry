@@ -241,6 +241,13 @@ export function getCatalog(): CatalogData | null {
 }
 
 /**
+ * Set the catalog directly for unit tests.
+ */
+export function setCatalogForTesting(catalog: CatalogData | null): void {
+  _catalog = catalog;
+}
+
+/**
  * Look up a specific item by ID.
  */
 export function getItem(id: string): GameItem | undefined {

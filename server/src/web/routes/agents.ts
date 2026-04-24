@@ -16,6 +16,8 @@ import {
   startAgent, stopAgent, restartAgent, startAll, stopAll,
   forceStopAgent, forceRestartAgent, softStopAgent, softRestartAgent, forceStopAll,
 } from '../../services/agent-manager.js';
+import { disableFleet, enableFleet, enableFleetState, getFleetDisabledState } from '../../services/fleet-control.js';
+import { getCredentialHealth } from '../../services/credential-health.js';
 import type { BreakerRegistry } from '../../proxy/circuit-breaker.js';
 
 export function createAgentRouter(
@@ -102,6 +104,15 @@ export function createAgentRouter(
     };
   }
 
+  function buildCredentialHealth(agentName: string): { status: 'ok' | 'auth_failed' | 'unknown'; lastFailureAt?: number; reason?: string } {
+    const entry = getCredentialHealth(agentName);
+    if (!entry) return { status: 'unknown' };
+    if (entry.status === 'auth_failed') {
+      return { status: 'auth_failed', lastFailureAt: entry.checkedAt, reason: `credentials for "${entry.username}" failed authentication` };
+    }
+    return { status: 'ok', lastFailureAt: entry.checkedAt };
+  }
+
   // List all agents with shutdown and battle state
   router.get('/', async (req, res) => {
     const agentStatuses = await Promise.all(
@@ -109,6 +120,7 @@ export function createAgentRouter(
         name: agent.name,
         backend: getAgentLabel(agent),
         model: agent.model || agent.backend,
+        credentialHealth: buildCredentialHealth(agent.name),
         ...(await buildAgentShutdownStatus(agent.name)),
       }))
     );
@@ -116,6 +128,24 @@ export function createAgentRouter(
   });
 
   // Fleet-wide actions (must be before :name routes)
+  router.get('/fleet-state', (_req, res) => {
+    res.json(getFleetDisabledState());
+  });
+
+  router.post('/fleet-state/enable', (req, res) => {
+    const reason = typeof req.body?.reason === 'string' && req.body.reason.trim()
+      ? req.body.reason.trim()
+      : 'manual enable';
+    res.json(enableFleetState(reason));
+  });
+
+  router.post('/fleet-state/disable', (req, res) => {
+    const reason = typeof req.body?.reason === 'string' && req.body.reason.trim()
+      ? req.body.reason.trim()
+      : 'manual disable';
+    res.json(disableFleet(reason));
+  });
+
   router.post('/start-all', async (req, res) => {
     const messages = await startAll();
     res.json({ ok: true, messages });
@@ -123,7 +153,7 @@ export function createAgentRouter(
 
   router.post('/stop-all', async (req, res) => {
     const force = req.query.force === 'true';
-    const messages = force ? await forceStopAll() : await stopAll();
+    const messages = force ? await forceStopAll('API stop-all') : await stopAll('API stop-all');
     res.json({ ok: true, messages });
   });
 
@@ -276,6 +306,7 @@ export function createAgentRouter(
       res.status(404).json({ error: `Unknown agent: ${name}` });
       return;
     }
+    enableFleet(`start ${name}`);
     const result = await startAgent(name);
     res.json(result);
   });
@@ -287,7 +318,7 @@ export function createAgentRouter(
       return;
     }
     const force = req.query.force === 'true';
-    const result = force ? await forceStopAgent(name) : await softStopAgent(name);
+    const result = force ? await forceStopAgent(name, 'API stop') : await softStopAgent(name, 'API stop');
     res.json(result);
   });
 
@@ -298,7 +329,8 @@ export function createAgentRouter(
       return;
     }
     const force = req.query.force === 'true';
-    const result = force ? await forceRestartAgent(name) : await softRestartAgent(name);
+    enableFleet(`restart ${name}`);
+    const result = force ? await forceRestartAgent(name, 'API restart') : await softRestartAgent(name, 'API restart');
     res.json(result);
   });
 

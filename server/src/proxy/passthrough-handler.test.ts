@@ -1240,8 +1240,10 @@ describe("dock dockability recording", () => {
 
     const client = createMockClient({ dock: { result: { status: "completed" } } });
     const statusCache = new Map();
+    // docked_at_base: false so the idempotent-dock short-circuit doesn't fire
+    // and the real dock call runs (which is what marks the POI dockable).
     statusCache.set("agent1", {
-      data: { player: { current_poi: "sol_station", current_system: "sol", docked_at_base: true } },
+      data: { player: { current_poi: "sol_station", current_system: "sol", docked_at_base: false } },
       fetchedAt: Date.now(),
     });
     const deps = createMockDeps({
@@ -1303,8 +1305,9 @@ describe("pre-dock dockability check", () => {
 
     const client = createMockClient({ dock: { result: { status: "completed" } } });
     const statusCache = new Map();
+    // docked_at_base: false so the idempotent dock short-circuit doesn't kick in
     statusCache.set("agent1", {
-      data: { player: { current_poi: "sol_station", current_system: "sol", docked_at_base: true } },
+      data: { player: { current_poi: "sol_station", current_system: "sol", docked_at_base: false } },
       fetchedAt: Date.now(),
     });
     const deps = createMockDeps({
@@ -1319,8 +1322,9 @@ describe("pre-dock dockability check", () => {
   it("allows dock at unknown POI (dockable=null)", async () => {
     const client = createMockClient({ dock: { result: { status: "completed" } } });
     const statusCache = new Map();
+    // docked_at_base: false so the idempotent dock short-circuit doesn't kick in
     statusCache.set("agent1", {
-      data: { player: { current_poi: "new_station", current_system: "sol", docked_at_base: true } },
+      data: { player: { current_poi: "new_station", current_system: "sol", docked_at_base: false } },
       fetchedAt: Date.now(),
     });
     const deps = createMockDeps({
@@ -1353,6 +1357,56 @@ describe("pre-dock dockability check", () => {
     // Should return already_insured error
     const err = parsed.error as Record<string, unknown>;
     expect(err.code).toBe("already_insured");
+  });
+
+  it("dock pre-flight: short-circuits to success when docked_at_base=true in statusCache", async () => {
+    const client = createMockClient({ dock: { result: { status: "ok" } } });
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("docked-agent", {
+      data: { player: { current_poi: "sol_station", current_system: "sol", docked_at_base: true } },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+
+    const result = await handlePassthrough(deps, client, "docked-agent", "dock", "dock", {}, "dock");
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(client.execute).not.toHaveBeenCalled();
+    expect(parsed.status).toBe("ok");
+    expect(parsed.already_docked).toBe(true);
+    expect(String(parsed.message)).toContain("Already docked");
+  });
+
+  it("undock pre-flight: short-circuits to success when docked_at_base=false in statusCache", async () => {
+    const client = createMockClient({ undock: { result: { status: "ok" } } });
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("spaced-agent", {
+      data: { player: { current_poi: "sol_station", current_system: "sol", docked_at_base: false } },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+
+    const result = await handlePassthrough(deps, client, "spaced-agent", "undock", "undock", {}, "undock");
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(client.execute).not.toHaveBeenCalled();
+    expect(parsed.status).toBe("ok");
+    expect(parsed.already_undocked).toBe(true);
+  });
+
+  it("dock pre-flight: falls through when docked_at_base is not a boolean (unknown state)", async () => {
+    const client = createMockClient({ dock: { result: { status: "ok" } } });
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("fresh-agent", {
+      data: { player: { current_poi: "sol_station", current_system: "sol" } },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache, waitForDockCacheUpdate: mock(async () => true) });
+
+    await handlePassthrough(deps, client, "fresh-agent", "dock", "dock", {}, "dock");
+
+    // No short-circuit — the real dock call runs
+    expect(client.execute).toHaveBeenCalled();
   });
 
   it("buy_insurance: goes through when statusCache has no insurance data", async () => {

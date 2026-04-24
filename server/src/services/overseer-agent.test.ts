@@ -122,7 +122,7 @@ describe("OverseerAgent", () => {
       model: "sonnet",
     });
 
-    agent.updateLatestDecisionCost({ costUsd: 0.0042, inputTokens: 1200, outputTokens: 350 });
+    agent.updateLatestDecisionCost({ costUsd: 0.0042, inputTokens: 1200, outputTokens: 350, durationMs: null });
 
     const history = agent.getDecisionHistory(1);
     expect(history[0].cost_estimate).toBeCloseTo(0.0042);
@@ -146,7 +146,7 @@ describe("OverseerAgent", () => {
       model: "sonnet",
     });
 
-    agent.updateLatestDecisionCost({ costUsd: 0.001, inputTokens: 500, outputTokens: 100 });
+    agent.updateLatestDecisionCost({ costUsd: 0.001, inputTokens: 500, outputTokens: 100, durationMs: null });
 
     // Oldest decision should be unaffected
     const old = agent.getDecisionById(d1.id);
@@ -156,7 +156,7 @@ describe("OverseerAgent", () => {
   it("updateLatestDecisionCost is a no-op when no decisions exist", () => {
     // Should not throw
     expect(() => {
-      agent.updateLatestDecisionCost({ costUsd: 0.005, inputTokens: 100, outputTokens: 50 });
+      agent.updateLatestDecisionCost({ costUsd: 0.005, inputTokens: 100, outputTokens: 50, durationMs: null });
     }).not.toThrow();
   });
 
@@ -171,7 +171,7 @@ describe("OverseerAgent", () => {
 
     expect(agent.getCostToday()).toBe(0);
 
-    agent.updateLatestDecisionCost({ costUsd: 0.0077, inputTokens: 800, outputTokens: 200 });
+    agent.updateLatestDecisionCost({ costUsd: 0.0077, inputTokens: 800, outputTokens: 200, durationMs: null });
     expect(agent.getCostToday()).toBeCloseTo(0.0077);
   });
 

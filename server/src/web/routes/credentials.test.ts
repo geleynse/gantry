@@ -24,6 +24,7 @@ function setTestConfig() {
     agents: TEST_AGENTS.map((name) => ({ name, roleType: "trader" }) as any),
     gameUrl: "http://localhost/mcp",
     gameApiUrl: "http://localhost/api/v1",
+    gameMcpUrl: "http://localhost/mcp",
     agentDeniedTools: {},
     callLimits: {},
     turnSleepMs: 300000,

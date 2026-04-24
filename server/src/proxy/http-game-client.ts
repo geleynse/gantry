@@ -182,12 +182,52 @@ export class HttpGameClient implements GameTransport {
     args: Record<string, unknown> = {},
     timeoutMs = COMMAND_TIMEOUT_MS,
   ): Promise<GameResponse> {
-    const resp = await this.rawPost(this.mcpUrl, {
-      jsonrpc: "2.0",
-      id: this.nextRequestId++,
-      method: "tools/call",
-      params: { name: tool, arguments: args },
-    }, timeoutMs);
+    // Instrument long-running MCP calls (e.g. jump that hung for the full 90s
+    // timeout observed on cinder-wake). Without this log line, all we see is a
+    // bare "Request timed out after 90000ms" with no attribution to which tool
+    // triggered it or how long it actually ran before timing out.
+    const tStart = Date.now();
+    try {
+      const resp = await this.rawPost(this.mcpUrl, {
+        jsonrpc: "2.0",
+        id: this.nextRequestId++,
+        method: "tools/call",
+        params: { name: tool, arguments: args },
+      }, timeoutMs);
+      const durationMs = Date.now() - tStart;
+      // Log slow MCP round-trips so stuck-server incidents leave a trail.
+      // Threshold: half the timeout (45s by default) — anything slower than that
+      // is almost certainly the game server hanging, not normal tick latency.
+      if (durationMs > timeoutMs / 2) {
+        log.warn("slow MCP tool call", { agent: this.label, tool, durationMs, timeoutMs });
+      }
+      return this.parseToolCallResponse(tool, resp);
+    } catch (err) {
+      const durationMs = Date.now() - tStart;
+      if (err instanceof Error && err.message.includes("timed out")) {
+        log.warn("MCP tool call timed out", { agent: this.label, tool, durationMs, timeoutMs });
+        // Convert the thrown timeout into a structured GameResponse error so
+        // callers (jump-route, passthrough, compound-tools) can handle it
+        // gracefully instead of letting the exception escape.
+        return {
+          error: {
+            code: "timeout",
+            message: `Game server did not respond to ${tool} within ${timeoutMs}ms — tool call aborted.`,
+          },
+        };
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Extracted from mcpToolCall so the timeout-handling wrapper stays compact.
+   * Parses the raw JSON-RPC response into a GameResponse.
+   */
+  private parseToolCallResponse(
+    _tool: string,
+    resp: { body: string; headers: Headers; contentType: string },
+  ): GameResponse {
 
     const rpc = this.parseRpcResponse(resp.body, resp.contentType);
 

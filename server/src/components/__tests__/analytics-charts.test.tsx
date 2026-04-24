@@ -220,9 +220,6 @@ describe('TokenEfficiencyPanel', () => {
     });
   });
 });
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import { render, screen, waitFor } from '@testing-library/react';
-import { AgentComparisonTable } from '../analytics-charts';
 
 // ---------------------------------------------------------------------------
 // Tests: AgentComparisonTable

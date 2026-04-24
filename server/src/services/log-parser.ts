@@ -47,10 +47,13 @@ export async function parseAgentLog(agentName: string, maxLines = 200): Promise<
     }
   }
 
-  // Quota + auth hits in last 50 lines (single pass)
+  // Quota + auth hits in last 50 lines (single pass).
+  // Must only match runner-generated strings — agents' own narrative often
+  // mentions "rate limit" when reporting on fleet state, which would inflate
+  // the counter if matched naively.
   const recentLines = lines.slice(-50);
-  const quotaPattern = /rate limit|CLI rate limit|Server overload|backing off/i;
-  const authPattern = /auth error|unauthorized|token.*expired|oauth|forbidden|credentials/i;
+  const quotaPattern = /Error detected \(rate_limit\)|You've hit (your|the)[^.]+limit|Server overload/i;
+  const authPattern = /Error detected \(auth\)|You're not logged in|invalid API key|unauthorized/i;
   let quotaHits = 0;
   let authHits = 0;
   for (const l of recentLines) {

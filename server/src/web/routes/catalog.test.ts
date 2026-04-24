@@ -6,7 +6,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import express from "express";
 import supertest from "supertest";
 import { createDatabase, closeDb } from "../../services/database.js";
-import { registerItem } from "../../services/game-item-registry.js";
+import { setCatalogForTesting } from "../../services/game-catalog.js";
 import { createCatalogRouter } from "./catalog.js";
 
 // ---------------------------------------------------------------------------
@@ -16,14 +16,22 @@ import { createCatalogRouter } from "./catalog.js";
 beforeAll(() => {
   createDatabase(":memory:");
 
-  registerItem({ id: "iron_ore", name: "Iron Ore", type: "ore", mass: 2, value: 10, legality: "legal", base_price: 50 });
-  registerItem({ id: "laser_cannon", name: "Laser Cannon", type: "weapon", mass: 5, value: 500, legality: "legal", base_price: 1200 });
-  registerItem({ id: "shield_gen", name: "Shield Generator", type: "shield", mass: 8, value: 800, legality: "legal", base_price: 2000 });
-  registerItem({ id: "dark_matter", name: "Dark Matter", type: "contraband", mass: 1, value: 5000, legality: "illegal", base_price: 10000 });
-  registerItem({ id: "scanner_mk2", name: "Deep Scanner Mk2", type: "scanner", mass: 3, value: 300, legality: "legal", base_price: 800 });
+  setCatalogForTesting({
+    fetched_at: new Date().toISOString(),
+    recipes: [],
+    ships: [],
+    items: [
+      { id: "iron_ore", name: "Iron Ore", type: "ore", mass: 2, value: 10, legality: "legal", base_price: 50 },
+      { id: "laser_cannon", name: "Laser Cannon", type: "weapon", mass: 5, value: 500, legality: "legal", base_price: 1200 },
+      { id: "shield_gen", name: "Shield Generator", type: "shield", mass: 8, value: 800, legality: "legal", base_price: 2000 },
+      { id: "dark_matter", name: "Dark Matter", type: "contraband", mass: 1, value: 5000, legality: "illegal", base_price: 10000 },
+      { id: "scanner_mk2", name: "Deep Scanner Mk2", type: "scanner", mass: 3, value: 300, legality: "legal", base_price: 800 }
+    ] as any[]
+  });
 });
 
 afterAll(() => {
+  setCatalogForTesting(null);
   closeDb();
 });
 

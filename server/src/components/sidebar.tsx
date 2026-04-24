@@ -27,6 +27,7 @@ import {
   Users,
   Warehouse,
   RadioTower,
+  Route,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -85,6 +86,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/", label: "Dashboard", icon: LayoutDashboard },
       { href: "/fleet", label: "Fleet", icon: Warehouse },
       { href: "/activity", label: "Activity", icon: Activity },
+      { href: "/routines", label: "Routines", icon: Route },
       { href: "/alerts", label: "Alerts", icon: AlertTriangle, badgeKey: "alertCount" },
       { href: "/logs", label: "Logs", icon: ScrollText },
     ],

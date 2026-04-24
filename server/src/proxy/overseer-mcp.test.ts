@@ -45,6 +45,8 @@ function makeDeps(): { deps: OverseerMcpDeps; orders: Record<string, unknown>[] 
     stateGatherer: emptySnapshot,
     actionExecutor: executor,
     overseerAgent: new OverseerAgent("overseer"),
+    statusCache: new Map(),
+    battleCache: new Map(),
   };
 
   return { deps, orders };

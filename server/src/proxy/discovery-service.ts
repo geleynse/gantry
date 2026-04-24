@@ -1,5 +1,5 @@
 import { createLogger } from '../lib/logger.js';
-import type { HttpGameClient as GameClient } from './game-client.js';
+import type { GameTransport as GameClient } from './game-transport.js';
 import type { MockGameClient } from './mock-game-client.js';
 import { registerItem, getItem } from '../services/game-item-registry.js';
 import { registerRecipe } from '../services/recipe-registry.js';

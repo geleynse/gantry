@@ -12,21 +12,71 @@
 import { Router } from "express";
 import { getCatalog, searchCatalog } from "../../services/game-catalog.js";
 
-export function createCatalogRouter(): Router {
+type StatusCacheEntry = { data: Record<string, any>; fetchedAt: number };
+
+export function createCatalogRouter(statusCache?: Map<string, StatusCacheEntry>): Router {
   const router = Router();
 
   router.get("/", (req, res) => {
-    const type = (req.query.type as string | undefined) ?? "all";
+    let type = (req.query.type as string | undefined) ?? "all";
     const search = req.query.search as string | undefined;
     const id = req.query.id as string | undefined;
 
-    const validTypes = ["item", "recipe", "ship", "all"];
-    if (!validTypes.includes(type)) {
+    const isModuleCompat = type === "module_compat";
+    if (isModuleCompat) {
+      type = "item"; // Search items, filter later
+    }
+
+    const validTypes = ["item", "recipe", "ship", "all", "module_compat"];
+    if (!validTypes.includes(type) && !isModuleCompat) {
       return res.status(400).json({ error: `Invalid type. Must be one of: ${validTypes.join(", ")}` });
     }
 
-    const results = searchCatalog(type as "item" | "recipe" | "ship" | "all", search, id, 200);
+    let results = searchCatalog(type as "item" | "recipe" | "ship" | "all", search, id, 200);
+
+    // Compute dynamic module info
+    const equippedModuleIds = new Set<string>();
+    if (statusCache) {
+      for (const entry of statusCache.values()) {
+        const mods = entry.data?.ship?.modules;
+        if (Array.isArray(mods)) {
+          mods.forEach((m) => {
+            if (m && m.item_id) equippedModuleIds.add(String(m.item_id));
+          });
+        }
+      }
+    }
+
+    const itemsWithModuleInfo = results.items.map((item) => {
+      const isWeapon = item.type === "weapon";
+      const isShield = item.type === "shield";
+      const isScanner = item.type === "scanner";
+      const isModule = isWeapon || isShield || isScanner || equippedModuleIds.has(item.id);
+
+      const compatible_slots: string[] = [];
+      if (isWeapon) compatible_slots.push("weapon");
+      if (isShield) compatible_slots.push("defense");
+      if (isScanner) compatible_slots.push("utility");
+
+      return {
+        ...item,
+        is_module: isModule,
+        compatible_slots,
+      };
+    });
+
+    if (isModuleCompat) {
+      results.items = itemsWithModuleInfo.filter((item) => item.is_module);
+    } else {
+      results.items = itemsWithModuleInfo;
+    }
+
     const total = results.items.length + results.recipes.length + results.ships.length;
+
+    // Handle single item lookup returning 404 if not found
+    if (id && total === 0) {
+      return res.status(404).json({ error: "Not found" });
+    }
 
     return res.json({
       ...results,

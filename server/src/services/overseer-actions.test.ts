@@ -92,6 +92,53 @@ describe("ActionExecutor", () => {
       expect(deps.started).toContain("cinder-wake");
       expect(deps.stopped).toHaveLength(0);
     });
+
+    it("skips start when isAgentRunning reports agent already alive", async () => {
+      const deps = {
+        ...makeMockDeps(),
+        isAgentRunning: async () => true,
+      };
+      const executor = createActionExecutor(deps);
+
+      const results = await executor.execute([
+        { type: "start_agent", params: { agent: "cinder-wake" } },
+      ]);
+
+      expect(results[0].success).toBe(true);
+      expect(results[0].message).toMatch(/already running/i);
+      // startAgent on the agentManager must NOT be called
+      expect(deps.started).toHaveLength(0);
+    });
+
+    it("starts when isAgentRunning reports agent is dead", async () => {
+      const deps = {
+        ...makeMockDeps(),
+        isAgentRunning: async () => false,
+      };
+      const executor = createActionExecutor(deps);
+
+      const results = await executor.execute([
+        { type: "start_agent", params: { agent: "cinder-wake" } },
+      ]);
+
+      expect(results[0].success).toBe(true);
+      expect(deps.started).toContain("cinder-wake");
+    });
+
+    it("proceeds with start when isAgentRunning check throws", async () => {
+      const deps = {
+        ...makeMockDeps(),
+        isAgentRunning: async () => { throw new Error("process check failed"); },
+      };
+      const executor = createActionExecutor(deps);
+
+      const results = await executor.execute([
+        { type: "start_agent", params: { agent: "cinder-wake" } },
+      ]);
+
+      expect(results[0].success).toBe(true);
+      expect(deps.started).toContain("cinder-wake");
+    });
   });
 
   describe("stop_agent", () => {
@@ -106,6 +153,22 @@ describe("ActionExecutor", () => {
       expect(results[0].success).toBe(true);
       expect(deps.stopped).toContain("drifter-gale");
       expect(deps.started).toHaveLength(0);
+    });
+
+    it("skips stop when isAgentRunning reports agent already dead", async () => {
+      const deps = {
+        ...makeMockDeps(),
+        isAgentRunning: async () => false,
+      };
+      const executor = createActionExecutor(deps);
+
+      const results = await executor.execute([
+        { type: "stop_agent", params: { agent: "drifter-gale", reason: "test" } },
+      ]);
+
+      expect(results[0].success).toBe(true);
+      expect(results[0].message).toMatch(/already stopped/i);
+      expect(deps.stopped).toHaveLength(0);
     });
   });
 

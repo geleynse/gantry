@@ -7,7 +7,7 @@ describe('usage-parser', () => {
 
   beforeEach(() => {
     // Use spyOn instead of mock.module
-    readFileSpy = spyOn(fs, 'readFile').mockImplementation(async () => '');
+    readFileSpy = spyOn(fs, 'readFile').mockImplementation((() => Promise.resolve('')) as unknown as typeof fs.readFile);
   });
 
   afterEach(() => {

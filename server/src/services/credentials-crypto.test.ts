@@ -13,6 +13,8 @@ import {
   migrateCredentialsIfNeeded,
   getCredentialsFilePath,
   validateCredentials,
+  validateCredentialForAgent,
+  validateAllCredentials,
   type RawCredentialsFile,
   type ValidationGameClient,
 } from "./credentials-crypto.js";
@@ -440,5 +442,64 @@ describe("credentials-crypto", () => {
     expect(result.ok).toBe(true);
     expect(calledWith).not.toBeNull();
     expect((calledWith as unknown as { username: string }).username).toBe("first-user");
+  });
+
+  it("validates a requested agent entry", async () => {
+    const plain = join(TMP_DIR, "fleet-credentials.json");
+    writeFileSync(plain, JSON.stringify({
+      "first-agent": { username: "first-user", password: "pass1" },
+      "rust-vane": { username: "rust-user", password: "pass2" },
+    }));
+    migrateCredentialsIfNeeded(TMP_DIR);
+
+    let calledWith: { username: string; password: string } | null = null;
+    const captureClient: ValidationGameClient = {
+      label: "",
+      login: async (u: string, p: string) => {
+        calledWith = { username: u, password: p };
+        return { error: null };
+      },
+      logout: async () => {},
+      close: async () => {},
+    };
+
+    const result = await validateCredentialForAgent(
+      TMP_DIR,
+      "http://localhost:9999/mcp",
+      "rust-vane",
+      () => captureClient,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(calledWith).not.toBeNull();
+    expect((calledWith as unknown as { username: string }).username).toBe("rust-user");
+  });
+
+  it("validates all credential entries", async () => {
+    const plain = join(TMP_DIR, "fleet-credentials.json");
+    writeFileSync(plain, JSON.stringify({
+      "first-agent": { username: "first-user", password: "pass1" },
+      "second-agent": { username: "second-user", password: "pass2" },
+    }));
+    migrateCredentialsIfNeeded(TMP_DIR);
+
+    const seen: string[] = [];
+    const result = await validateAllCredentials(
+      TMP_DIR,
+      "http://localhost:9999/mcp",
+      () => ({
+        label: "",
+        login: async (u: string) => {
+          seen.push(u);
+          return { error: null };
+        },
+        logout: async () => {},
+        close: async () => {},
+      }),
+    );
+
+    expect(result).toHaveLength(2);
+    expect(result.every((entry) => entry.ok)).toBe(true);
+    expect(seen).toEqual(["first-user", "second-user"]);
   });
 });

@@ -14,15 +14,17 @@ interface ErrorHint {
 }
 
 const ERROR_HINTS: ErrorHint[] = [
-  { pattern: "not docked", hint: "You need to dock first. Use dock at a station." },
-  { pattern: "must be docked", hint: "You need to dock first. Use dock at a station." },
-  { pattern: "already docked", hint: "You're already docked. Use undock to leave." },
+  { pattern: "not docked", hint: "Your cached state may be stale — call get_state first to re-sync, then dock at a station before retrying." },
+  { pattern: "must be docked", hint: "Your cached state may be stale — call get_state first to re-sync, then dock at a station before retrying." },
+  { pattern: "already docked", hint: "You're already docked — this is not a failure. Call get_state to re-sync and proceed with your next step." },
+  { pattern: "already here", hint: "You're already at this destination — call get_state to re-sync location, then proceed." },
+  { pattern: "not connected", hint: "Transport disconnected — call get_state to re-sync; the next tool call will auto-reconnect if your session is still valid." },
   { pattern: "cargo full", hint: "Cargo is full. Dock and use multi_sell to sell cargo for credits. Do NOT deposit — deposits earn 0 credits." },
   { pattern: "cargo hold", hint: "Cargo is full. Dock and use multi_sell to sell cargo for credits. Do NOT deposit — deposits earn 0 credits." },
   { pattern: "not enough fuel", hint: "Low fuel. Dock at a station and refuel." },
   { pattern: "no weapon module", hint: "No weapon equipped. Buy one from view_market and install_mod." },
   { pattern: "not at a base", hint: "You're not at a base POI. Use get_system to find stations." },
-  { pattern: "already undocked", hint: "You're already in space. Use travel or jump." },
+  { pattern: "already undocked", hint: "You're already in space — this is not a failure. Call get_state to re-sync and proceed with travel or jump." },
   { pattern: "insufficient credits", hint: "Not enough credits. Mine and sell ore to earn more." },
   { pattern: "in transit", hint: "Ship is in transit. Wait for arrival before acting." },
   { pattern: "in combat", hint: "You're in combat. Fight or flee first." },
@@ -37,7 +39,7 @@ const ERROR_HINTS: ErrorHint[] = [
   { pattern: "not found", hint: "Item or target not found. Check spelling and use get_system for options." },
   { pattern: "dock_verification_failed", hint: "This POI is not a dockable station. Use get_system to find stations, then travel_to a station POI." },
   { pattern: "not a base", hint: "This POI is not a dockable station. Use get_system to find stations, then travel_to a station POI." },
-  { pattern: "no_base", hint: "This POI is not a dockable station. Use get_system to find stations, then travel_to a station POI." },
+  { pattern: "no_base", hint: "No base at your current POI — call get_state to confirm location, then get_system to find a station, then travel_to that station." },
   { pattern: "already insured", hint: "Ship already has active insurance. No action needed — skip and continue." },
   { pattern: "no_current_system", hint: "You are in hyperspace transit. Wait for arrival before acting." },
 ];

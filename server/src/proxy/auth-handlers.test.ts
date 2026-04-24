@@ -112,6 +112,7 @@ const testConfig: GantryConfig = {
   ],
   gameUrl: "https://game.test/mcp",
   gameApiUrl: "https://game.test/api/v1",
+  gameMcpUrl: "https://game.test/mcp",
   agentDeniedTools: {},
   callLimits: {},
   turnSleepMs: 90,
@@ -351,6 +352,36 @@ describe("handleLogin", () => {
     // Login still succeeds
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.error).toBeUndefined();
+  });
+
+  it("calls closeStaleTransportsForAgent after fresh login to reap stale transports", async () => {
+    const staleCleanups: Array<{ agent: string; current: string | undefined }> = [];
+    const deps = makeDeps();
+    deps.closeStaleTransportsForAgent = (agent, current) => {
+      staleCleanups.push({ agent, current });
+    };
+
+    await handleLogin(deps, "sess-new", "test-agent", "pass");
+
+    expect(staleCleanups).toHaveLength(1);
+    expect(staleCleanups[0].agent).toBe("test-agent");
+    expect(staleCleanups[0].current).toBe("sess-new");
+  });
+
+  it("calls closeStaleTransportsForAgent on session-reuse path too", async () => {
+    const staleCleanups: Array<{ agent: string; current: string | undefined }> = [];
+    const deps = makeDeps();
+    deps.closeStaleTransportsForAgent = (agent, current) => {
+      staleCleanups.push({ agent, current });
+    };
+    // Simulate an already-authenticated game client (session-reuse branch)
+    deps._client._authenticated = true;
+
+    await handleLogin(deps, "sess-reuse", "test-agent", "pass");
+
+    expect(staleCleanups).toHaveLength(1);
+    expect(staleCleanups[0].agent).toBe("test-agent");
+    expect(staleCleanups[0].current).toBe("sess-reuse");
   });
 
   it("login resets iteration count and turn start time for guardrails", async () => {

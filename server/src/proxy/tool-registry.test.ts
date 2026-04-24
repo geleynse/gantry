@@ -65,6 +65,7 @@ const testConfig: GantryConfig = {
   ],
   gameUrl: "https://game.test/mcp",
   gameApiUrl: "https://game.test/api/v1",
+  gameMcpUrl: "https://game.test/mcp",
   agentDeniedTools: {},
   callLimits: {},
   turnSleepMs: 90,

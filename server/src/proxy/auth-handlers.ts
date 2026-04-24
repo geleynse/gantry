@@ -8,24 +8,40 @@
 
 import { createLogger } from "../lib/logger.js";
 import { EventBuffer } from "./event-buffer.js";
-import type { GameEvent } from "./event-buffer.js";
+import type { GameEvent } from "./game-transport.js";
 import type { GantryConfig } from "../config.js";
 import type { SessionManager } from "./session-manager.js";
 import { SessionStore } from "./session-store.js";
 import type { AgentCallTracker, BattleState } from "./server.js";
-import { getCredentialsFilePath, decryptCredentials, type RawCredentialsFile } from "../services/credentials-crypto.js";
-import { readFileSync } from "node:fs";
+import { getCredentialsFilePath, decryptCredentials, isAuthFailureCode, type RawCredentialsFile } from "../services/credentials-crypto.js";
+import { readFileSync, statSync } from "node:fs";
 import { FLEET_DIR } from "../config.js";
+import { recordCredentialAuthFailure, recordCredentialSuccess } from "../services/credential-health.js";
 
 // Cached decrypted credentials — loaded once on first login, avoids per-request file I/O + decryption
 let _credentialsCache: RawCredentialsFile | null = null;
 let _credentialsCacheLoaded = false;
+let _credentialsCachePath: string | null = null;
+let _credentialsCacheMtimeMs: number | null = null;
 
 function getCachedCredentials(agentName: string): { username: string; password: string } | null {
-  if (!_credentialsCacheLoaded) {
+  let shouldLoad = !_credentialsCacheLoaded;
+  let credsPath = "";
+  try {
+    credsPath = getCredentialsFilePath(FLEET_DIR);
+    const mtimeMs = statSync(credsPath).mtimeMs;
+    shouldLoad = shouldLoad || credsPath !== _credentialsCachePath || mtimeMs !== _credentialsCacheMtimeMs;
+    if (shouldLoad) {
+      _credentialsCachePath = credsPath;
+      _credentialsCacheMtimeMs = mtimeMs;
+    }
+  } catch {
+    shouldLoad = !_credentialsCacheLoaded;
+  }
+
+  if (shouldLoad) {
     _credentialsCacheLoaded = true;
     try {
-      const credsPath = getCredentialsFilePath(FLEET_DIR);
       const raw = JSON.parse(readFileSync(credsPath, "utf-8")) as RawCredentialsFile;
       _credentialsCache = decryptCredentials(raw);
       log.info("fleet-credentials loaded", { agents: Object.keys(_credentialsCache).length });
@@ -65,6 +81,14 @@ export interface LoginDeps {
   createHandoff: (data: HandoffData) => void;
   marketReservations?: import("./market-reservations.js").MarketReservationCache;
   overseerEventLog?: import("../services/overseer-event-log.js").OverseerEventLog | null;
+  /**
+   * Close any MCP transports bound to this agent *other than* the provided
+   * current sessionId. Called after a successful login / session reuse to
+   * prevent stale transports from accumulating (watchdog restart loops were
+   * leaving 2-3 transports per agent for hours).
+   * Optional for backward compat — tests can omit it.
+   */
+  closeStaleTransportsForAgent?: (agentName: string, currentSessionId: string | undefined) => void;
 }
 
 export interface HandoffRecord {
@@ -141,6 +165,7 @@ export async function handleLogin(
       sessionAgentMap.set(sessionId, agentName);
       sessionStore.setSessionAgent(sessionId, agentName);
     }
+    deps.closeStaleTransportsForAgent?.(agentName, sessionId);
     resetTracker(agentName);
     // Build response from cached status — refresh if cache is empty
     let cached = statusCache.get(agentName);
@@ -389,8 +414,10 @@ export async function handleLogin(
     sessionAgentMap.set(sessionId, agentName);
     sessionStore.setSessionAgent(sessionId, agentName);
   }
+  deps.closeStaleTransportsForAgent?.(agentName, sessionId);
 
   if (!resp.error) {
+    recordCredentialSuccess(agentName, username);
     sessions.persistSessions();
     sessions.recordPoolLogin(agentName);
     resetTracker(agentName);
@@ -475,6 +502,10 @@ export async function handleLogin(
 
   logToolCall(agentName, "login", { username }, resp.error ? { error: resp.error } : { status: "ok" }, 0);
   if (resp.error) {
+    const code = (resp.error as Record<string, unknown>).code;
+    if (typeof code === "string" && isAuthFailureCode(code)) {
+      recordCredentialAuthFailure(agentName, username);
+    }
     log.error("login failed", { agent: agentName, error: resp.error });
   } else {
     log.info("login success", { agent: agentName });

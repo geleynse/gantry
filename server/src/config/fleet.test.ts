@@ -145,6 +145,18 @@ describe("Config Schemas", () => {
       const result = FleetConfigSchema.safeParse(config);
       expect(result.success).toBe(true);
     });
+
+    test("validates prayer config", () => {
+      const config = {
+        mcpGameUrl: "https://game.example.com/mcp",
+        agents: [{ name: "agent1", prayEnabled: true }],
+        prayer: { fuzzyMatchThreshold: 0.8 },
+      };
+      const result = FleetConfigSchema.safeParse(config);
+      expect(result.success).toBe(true);
+      expect(result.data?.agents[0]?.prayEnabled).toBe(true);
+      expect(result.data?.prayer?.fuzzyMatchThreshold).toBe(0.8);
+    });
   });
 });
 
@@ -228,6 +240,18 @@ describe("Config Loading (loadConfig)", () => {
     const config = loadConfig(tmpDir);
     expect(config.agents).toHaveLength(1);
     expect(config.agents[0].name).toBe("minimal");
+    cleanup();
+  });
+
+  test("loadConfig preserves prayer feature config", () => {
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [{ name: "minimal", prayEnabled: true }],
+      prayer: { fuzzyMatchThreshold: 0.75 },
+    });
+    const config = loadConfig(tmpDir);
+    expect(config.agents[0].prayEnabled).toBe(true);
+    expect(config.prayer?.fuzzyMatchThreshold).toBe(0.75);
     cleanup();
   });
 });

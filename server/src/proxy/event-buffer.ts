@@ -6,7 +6,7 @@ export enum EventPriority {
 
 export interface GameEvent {
   type: string;
-  payload: unknown;
+  payload?: unknown;
   receivedAt: number;
 }
 

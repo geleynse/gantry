@@ -59,6 +59,28 @@ export interface ParsedTurn {
   combatEvents: CombatEvent[];
 }
 
+const OPENAI_PRICING: Record<string, { input: number; cachedInput: number; output: number }> = {
+  "gpt-5.4": { input: 2.50, cachedInput: 0.25, output: 15.00 },
+  "gpt-5.4-mini": { input: 0.75, cachedInput: 0.075, output: 4.50 },
+  "gpt-5.3-codex": { input: 1.75, cachedInput: 0.175, output: 14.00 },
+  "gpt-5.2-codex": { input: 1.75, cachedInput: 0.175, output: 14.00 },
+  "gpt-5.1-codex-max": { input: 1.25, cachedInput: 0.125, output: 10.00 },
+  "gpt-5.1-codex": { input: 1.25, cachedInput: 0.125, output: 10.00 },
+  "gpt-5-codex": { input: 1.25, cachedInput: 0.125, output: 10.00 },
+  "gpt-5.1-codex-mini": { input: 0.25, cachedInput: 0.025, output: 2.00 },
+  "gpt-5-codex-mini": { input: 0.25, cachedInput: 0.025, output: 2.00 },
+};
+
+function estimateOpenAiCost(model: string | null, inputTokens: number, outputTokens: number, cacheReadTokens: number): number {
+  const rates = OPENAI_PRICING[(model ?? "").toLowerCase()] ?? OPENAI_PRICING["gpt-5.3-codex"];
+  const uncachedInputTokens = Math.max(0, inputTokens - cacheReadTokens);
+  return (
+    (uncachedInputTokens / 1_000_000) * rates.input +
+    (cacheReadTokens / 1_000_000) * rates.cachedInput +
+    (outputTokens / 1_000_000) * rates.output
+  );
+}
+
 interface PendingToolUse {
   name: string;
   action: string | null;
@@ -366,7 +388,7 @@ export function parseTurnFile(content: string): ParsedTurn {
       type?: string;
       message?: { content?: ContentBlock[] };
       total_cost_usd?: number;
-      usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
+      usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cached_input_tokens?: number };
       num_turns?: number;
       duration_ms?: number;
       model?: string;
@@ -500,6 +522,28 @@ export function parseTurnFile(content: string): ParsedTurn {
             pending.delete(block.tool_use_id ?? '');
           }
         }
+      }
+    } else if (entry.type === 'turn.completed' && entry.usage) {
+      const u = entry.usage as Record<string, unknown>;
+      const inputTokens = (u.input_tokens as number | undefined) ?? 0;
+      const outputTokens = (u.output_tokens as number | undefined) ?? 0;
+      const cacheReadTokens = (u.cached_input_tokens as number | undefined) ?? 0;
+      const cacheCreateTokens = (u.cache_creation_input_tokens as number | undefined) ?? 0;
+      const model = (entry.model as string | undefined) ?? result.summary?.model ?? null;
+      const durationMs = (entry.duration_ms as number | undefined) ?? 0;
+      const costUsd = estimateOpenAiCost(model, inputTokens, outputTokens, cacheReadTokens);
+
+      if (costUsd > 0 || !result.summary) {
+        result.summary = {
+          costUsd,
+          inputTokens,
+          outputTokens,
+          cacheReadTokens,
+          cacheCreateTokens,
+          iterations: 1,
+          durationMs,
+          model,
+        };
       }
     } else if (entry.type === 'result') {
       // Two result formats exist:

@@ -10,7 +10,7 @@ mock.module("../../services/analytics-query.js", () => ({
 }));
 
 // Mock galaxy-poi-registry module
-const mockGetPoisBySystem = mock(() => []);
+const mockGetPoisBySystem = mock((): { id: string; name: string; system: string; type?: string }[] => []);
 mock.module("../../services/galaxy-poi-registry.js", () => ({
   getPoisBySystem: mockGetPoisBySystem,
 }));

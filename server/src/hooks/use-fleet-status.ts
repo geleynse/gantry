@@ -25,6 +25,12 @@ export interface ErrorRateBreakdown {
 
 export type AgentShutdownState = 'none' | 'shutdown_waiting' | 'draining' | 'stopped' | 'stop_after_turn';
 
+export interface CredentialHealth {
+  status: 'ok' | 'auth_failed' | 'unknown';
+  lastFailureAt?: number;
+  reason?: string;
+}
+
 export interface AgentStatus {
   name: string;
   backend: string;
@@ -63,6 +69,8 @@ export interface AgentStatus {
   shutdownState?: AgentShutdownState;
   proxySessionActive?: boolean;
   lastActivityAt?: string | null;
+  // Credential health
+  credentialHealth?: CredentialHealth;
 }
 
 export interface ProxyInfo {

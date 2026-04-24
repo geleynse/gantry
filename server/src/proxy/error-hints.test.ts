@@ -165,7 +165,9 @@ describe("addErrorHint with context", () => {
     const msg = "[no_base] Cannot dock";
     const result = addErrorHint(msg);
     expect(result).toContain("Hint:");
-    expect(result).toContain("dockable station");
+    // Hint tells the agent to re-sync state and find a station
+    expect(result).toContain("get_state");
+    expect(result).toContain("station");
   });
 
   it("uses generic dock hint for dock_verification_failed without context", () => {

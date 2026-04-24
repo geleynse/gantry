@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, spyOn } from "bun:test";
+import { describe, it, expect, beforeEach, spyOn, mock } from "bun:test";
 import { createHealthMonitor } from "./health-monitor.js";
 import * as proc from "./process-manager.js";
 import * as signalsDb from "./signals-db.js";
@@ -16,6 +16,7 @@ describe("createHealthMonitor", () => {
   let mockStartAgent: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
+    mock.restore();
     mockHasSession = spyOn(proc, "hasSession").mockResolvedValue(false);
     mockHasSignal = spyOn(signalsDb, "hasSignal").mockReturnValue(false);
     mockStartAgent = spyOn(agentManager, "startAgent").mockResolvedValue({ ok: true, message: "started" });

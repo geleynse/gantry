@@ -436,6 +436,52 @@ export async function handlePassthrough(
     }
   }
 
+  // --- 1g. Idempotent state pre-flight checks for dock/undock ---
+  // After a session restart, agents frequently fire dock/undock without
+  // verifying state first, producing a flood of `already_docked` /
+  // `already_undocked` errors. These are semantically no-ops — the agent's
+  // desired state already holds. Return status=ok with a hint so the agent
+  // moves on instead of treating it as a failure.
+  if (v1ToolName === "dock" || v1ToolName === "undock") {
+    const cached = statusCache.get(agentName);
+    const player = cached?.data?.player as Record<string, unknown> | undefined;
+    const docked = player?.docked_at_base;
+    // Only short-circuit when we have definite cached state. `undefined` means
+    // "we don't know" — let the real call run and surface any genuine error.
+    if (typeof docked === "boolean") {
+      if (v1ToolName === "dock" && docked === true) {
+        if (!opts?.skipLogging) {
+          const earlyId = logToolCallStart(agentName, action, payload, { traceId });
+          logToolCallComplete(earlyId, agentName, action,
+            { status: "ok", already_docked: true, message: "Already docked — no action needed." },
+            0, { success: true });
+        }
+        return await withInjections(agentName, textResult({
+          status: "ok",
+          already_docked: true,
+          message: "Already docked at this station — no action needed. Proceed with your next step.",
+          current_system: player?.current_system,
+          current_poi: player?.current_poi,
+        }));
+      }
+      if (v1ToolName === "undock" && docked === false) {
+        if (!opts?.skipLogging) {
+          const earlyId = logToolCallStart(agentName, action, payload, { traceId });
+          logToolCallComplete(earlyId, agentName, action,
+            { status: "ok", already_undocked: true, message: "Already in space — no action needed." },
+            0, { success: true });
+        }
+        return await withInjections(agentName, textResult({
+          status: "ok",
+          already_undocked: true,
+          message: "Already undocked — you're in space. Proceed with your next step.",
+          current_system: player?.current_system,
+          current_poi: player?.current_poi,
+        }));
+      }
+    }
+  }
+
   // --- 2. Execute ---
 
   const skipLog = opts?.skipLogging === true;

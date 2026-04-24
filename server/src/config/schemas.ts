@@ -22,6 +22,7 @@ export const AgentConfigSchema = z.object({
   factionNote: z.string().optional(),
   operatingZone: z.string().optional(),
   routineMode: z.boolean().optional(),
+  prayEnabled: z.boolean().optional(),
   /**
    * Context compression mode. "full" (default) keeps the long-running Claude session.
    * "compressed" starts a fresh session per turn with a structured state summary injected
@@ -129,6 +130,9 @@ export const FleetConfigSchema = z.object({
   staggerDelay: z.number().min(0).optional(),
   agentDeniedTools: z.record(z.string(), z.record(z.string(), z.string())).optional(),
   callLimits: z.record(z.string(), z.number()).optional(),
+  prayer: z.object({
+    fuzzyMatchThreshold: z.number().min(0).max(1).optional().default(0.62),
+  }).optional(),
   mcpToolSet: z.array(z.string()).optional(),
   /**
    * MCP preset definitions: maps preset/role name → list of v2 tool names to advertise.

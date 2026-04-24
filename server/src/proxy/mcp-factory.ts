@@ -97,6 +97,7 @@ import { createOverseerMcpServer } from "./overseer-mcp.js";
 import { gatherFleetSnapshot, buildAgentConfigs } from "../services/coordinator-state.js";
 import { createActionExecutor } from "../services/overseer-actions.js";
 import { startAgent, stopAgent, stopAll as stopAllAgents } from "../services/agent-manager.js";
+import { hasSession as hasProcSession } from "../services/process-manager.js";
 import { createOrder } from "../services/comms-db.js";
 import { createFleetHealthMonitor } from "../services/fleet-health-monitor.js";
 import type { FleetHealthMonitor } from "../services/fleet-health-monitor.js";
@@ -422,9 +423,44 @@ export async function createMcpServer(config: GantryConfig) {
     logger: log,
   });
 
+  /**
+   * Close any MCP transports bound to `agentName` *other than* `currentSessionId`.
+   *
+   * Watchdog-triggered auto-restarts were leaving 2-3 stale transports per
+   * agent in memory for hours (observed: 13 transports for 4 live agents).
+   *
+   * SessionStore.setSessionAgent already expires other DB sessions for the
+   * same agent, and the 60s reaper closes the in-memory transport once the
+   * DB session is expired. But that's a 60s window in the worst case, and
+   * an agent can re-login several times during that window — so stale
+   * transports pile up faster than the reaper can close them.
+   *
+   * This runs synchronously on successful login: the transport map is
+   * walked, any transport bound to the same agent (via sessionAgentMap or
+   * DB session lookup) on a different session ID is closed immediately.
+   */
+  function closeStaleTransportsForAgent(agentName: string, currentSessionId: string | undefined): void {
+    let closed = 0;
+    // Copy entries before mutating to avoid iterator invalidation
+    for (const [sid, owner] of [...sessionAgentMap.entries()]) {
+      if (owner !== agentName) continue;
+      if (currentSessionId && sid === currentSessionId) continue;
+      const staleTransport = transports.get(sid);
+      if (staleTransport) {
+        transports.delete(sid);
+        staleTransport.close?.().catch(() => { /* ignore close errors */ });
+        closed++;
+      }
+      sessionAgentMap.delete(sid);
+    }
+    if (closed > 0) {
+      log.info("closed stale transports for agent", { agent: agentName, closed, remaining: transports.size });
+    }
+  }
+
   // Shared state passed to every server instance (v1 and v2)
   const sharedInstanceState = {
-    sessions: { active: sessions, store: sessionStore, agentMap: sessionAgentMap },
+    sessions: { active: sessions, store: sessionStore, agentMap: sessionAgentMap, closeStaleTransportsForAgent },
     cache: { status: statusCache, battle: battleCache, market: marketCache, events: eventBuffers },
     proxy: { gameTools, serverDescriptions, gameHealthRef, callTrackers, breakerRegistry, serverMetrics, transitThrottle, transitStuckDetector, navLoopDetector, overrideRegistry },
     fleet: { galaxyGraphRef, sellLog, arbitrageAnalyzer, coordinator: null as FleetCoordinator | null, marketReservations, analyzeMarketCache, overseerEventLog },
@@ -697,6 +733,15 @@ export async function createMcpServer(config: GantryConfig) {
     actionExecutor: createActionExecutor({
       agentManager: { startAgent, stopAgent },
       commsDb: { createOrder: (opts: { message: string; target_agent: string; priority?: string }) => createOrder({ ...opts, priority: (opts.priority as "normal" | "urgent") ?? "normal" }) },
+      // Authoritative liveness check — prevents redundant start/stop requests
+      // based on stale statusCache-derived isOnline readings in the snapshot.
+      isAgentRunning: async (name: string) => {
+        try {
+          return await hasProcSession(name);
+        } catch {
+          return false;
+        }
+      },
     }),
     overseerAgent,
     statusCache: sharedInstanceState.cache.status,

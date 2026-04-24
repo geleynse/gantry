@@ -124,6 +124,39 @@ describe('turn-parser', () => {
       expect(parsed.summary!.model).toBe('claude-sonnet-4-20250514');
     });
 
+    it('extracts Codex usage from turn.completed events', () => {
+      const codexJsonl = [
+        JSON.stringify({
+          type: 'turn.completed',
+          usage: {
+            input_tokens: 1_100_000,
+            cached_input_tokens: 100_000,
+            output_tokens: 100_000,
+          },
+          model: 'gpt-5.3-codex',
+        }),
+        JSON.stringify({
+          type: 'result',
+          usage: {
+            cost: 0,
+            inputTokens: 1_100_000,
+            outputTokens: 100_000,
+            cacheReadTokens: 100_000,
+            durationMs: 0,
+            numTurns: 1,
+          },
+        }),
+      ].join('\n');
+
+      const parsed = parseTurnFile(codexJsonl);
+      expect(parsed.summary).not.toBeNull();
+      expect(parsed.summary!.costUsd).toBeCloseTo(1.75 + 0.0175 + 1.4);
+      expect(parsed.summary!.inputTokens).toBe(1_100_000);
+      expect(parsed.summary!.outputTokens).toBe(100_000);
+      expect(parsed.summary!.cacheReadTokens).toBe(100_000);
+      expect(parsed.summary!.model).toBe('gpt-5.3-codex');
+    });
+
     it('extracts game state from get_status result', () => {
       const parsed = parseTurnFile(fullJsonl);
       expect(parsed.gameState).not.toBeNull();

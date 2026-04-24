@@ -213,6 +213,72 @@ export interface ValidationGameClient {
   close(): Promise<void>;
 }
 
+export function isAuthFailureCode(code: string | undefined): boolean {
+  return code === "unauthorized" || code === "forbidden" ||
+    code === "invalid_credentials" || code === "auth_failed" ||
+    code === "login_failed" || code === "bad_credentials";
+}
+
+function loadDecryptedCredentials(fleetDir: string): RawCredentialsFile {
+  const credsPath = getCredentialsFilePath(fleetDir);
+  const raw = JSON.parse(readFileSync(credsPath, "utf-8")) as RawCredentialsFile;
+  return decryptCredentials(raw);
+}
+
+async function validateCredentialEntry(
+  agentName: string,
+  username: string,
+  password: string,
+  gameMcpUrl: string,
+  clientFactory?: (mcpUrl: string) => ValidationGameClient,
+): Promise<CredentialValidationResult> {
+  const makeClient = clientFactory ?? ((mcpUrl: string) => {
+    const metrics = new MetricsWindow();
+    const c = new HttpGameClient(mcpUrl, metrics);
+    return c as ValidationGameClient;
+  });
+
+  const client = makeClient(gameMcpUrl);
+  client.label = `validate:${agentName}`;
+
+  try {
+    const resp = await client.login(username, password);
+
+    if (!resp.error) {
+      log.info(`Credentials validated (agent: ${agentName}, user: ${username})`);
+      // Discard the session — we don't need it
+      try { await client.logout(); } catch { /* best effort */ }
+      try { await client.close(); } catch { /* best effort */ }
+      return { ok: true, agentName, username };
+    }
+
+    const code = resp.error.code;
+
+    if (isAuthFailureCode(code)) {
+      log.error(
+        `\n${"=".repeat(70)}\n` +
+        `WARNING: Fleet credentials may be stale — login failed for agent "${agentName}".\n` +
+        `Username: ${username} | Error: ${code}\n` +
+        `Check fleet-credentials and update passwords before starting agents.\n` +
+        `${"=".repeat(70)}`
+      );
+      try { await client.close(); } catch { /* best effort */ }
+      return { ok: false, agentName, username, reason: "auth_failed" };
+    }
+
+    // Other error (e.g. action_pending, rate_limited, server_error) — treat as network issue
+    log.warn(`Credential validation inconclusive for agent "${agentName}" — server returned: ${code ?? "unknown error"}. Game server may be down or busy.`);
+    try { await client.close(); } catch { /* best effort */ }
+    return { ok: false, agentName, username, reason: "network_error" };
+
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`Credential validation failed for agent "${agentName}" — could not reach game server: ${msg}. This is expected if the game is offline.`);
+    try { await client.close(); } catch { /* best effort */ }
+    return { ok: false, agentName, username, reason: "network_error" };
+  }
+}
+
 /**
  * Validate fleet credentials against the game API by attempting a login.
  *
@@ -237,9 +303,7 @@ export async function validateCredentials(
   // Load and decrypt credentials
   let creds: RawCredentialsFile;
   try {
-    const credsPath = getCredentialsFilePath(fleetDir);
-    const raw = JSON.parse(readFileSync(credsPath, "utf-8")) as RawCredentialsFile;
-    creds = decryptCredentials(raw);
+    creds = loadDecryptedCredentials(fleetDir);
   } catch (err) {
     log.warn(`Credential validation skipped — could not load credentials: ${err instanceof Error ? err.message : String(err)}`);
     return { ok: false, agentName: "(unknown)", username: "(unknown)", reason: "no_credentials" };
@@ -252,53 +316,54 @@ export async function validateCredentials(
   }
 
   const [agentName, { username, password }] = entries[0];
+  return validateCredentialEntry(agentName, username, password, gameMcpUrl, clientFactory);
+}
 
-  const makeClient = clientFactory ?? ((mcpUrl: string) => {
-    const metrics = new MetricsWindow();
-    const c = new HttpGameClient(mcpUrl, metrics);
-    return c as ValidationGameClient;
-  });
-
-  const client = makeClient(gameMcpUrl);
-  client.label = `validate:${agentName}`;
-
+export async function validateCredentialForAgent(
+  fleetDir: string,
+  gameMcpUrl: string,
+  agentName: string,
+  clientFactory?: (mcpUrl: string) => ValidationGameClient,
+): Promise<CredentialValidationResult> {
+  let creds: RawCredentialsFile;
   try {
-    const resp = await client.login(username, password);
-
-    if (!resp.error) {
-      log.info(`Credentials validated (agent: ${agentName}, user: ${username})`);
-      // Discard the session — we don't need it
-      try { await client.logout(); } catch { /* best effort */ }
-      try { await client.close(); } catch { /* best effort */ }
-      return { ok: true, agentName, username };
-    }
-
-    const code = resp.error.code;
-    const isAuthFailure = code === "unauthorized" || code === "forbidden" ||
-      code === "invalid_credentials" || code === "auth_failed" ||
-      code === "login_failed" || code === "bad_credentials";
-
-    if (isAuthFailure) {
-      log.error(
-        `\n${"=".repeat(70)}\n` +
-        `WARNING: Fleet credentials may be stale — login failed for agent "${agentName}".\n` +
-        `Username: ${username} | Error: ${code}\n` +
-        `Check fleet-credentials and update passwords before starting agents.\n` +
-        `${"=".repeat(70)}`
-      );
-      try { await client.close(); } catch { /* best effort */ }
-      return { ok: false, agentName, username, reason: "auth_failed" };
-    }
-
-    // Other error (e.g. action_pending, rate_limited, server_error) — treat as network issue
-    log.warn(`Credential validation inconclusive for agent "${agentName}" — server returned: ${code ?? "unknown error"}. Game server may be down or busy.`);
-    try { await client.close(); } catch { /* best effort */ }
-    return { ok: false, agentName, username, reason: "network_error" };
-
+    creds = loadDecryptedCredentials(fleetDir);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.warn(`Credential validation failed for agent "${agentName}" — could not reach game server: ${msg}. This is expected if the game is offline.`);
-    try { await client.close(); } catch { /* best effort */ }
-    return { ok: false, agentName, username, reason: "network_error" };
+    log.warn(`Credential validation skipped — could not load credentials: ${err instanceof Error ? err.message : String(err)}`);
+    return { ok: false, agentName, username: "(unknown)", reason: "no_credentials" };
   }
+
+  const entry = creds[agentName];
+  if (!entry) {
+    log.warn(`Credential validation skipped — no credentials found for agent "${agentName}"`);
+    return { ok: false, agentName, username: "(unknown)", reason: "no_credentials" };
+  }
+
+  return validateCredentialEntry(agentName, entry.username, entry.password, gameMcpUrl, clientFactory);
+}
+
+export async function validateAllCredentials(
+  fleetDir: string,
+  gameMcpUrl: string,
+  clientFactory?: (mcpUrl: string) => ValidationGameClient,
+): Promise<CredentialValidationResult[]> {
+  let creds: RawCredentialsFile;
+  try {
+    creds = loadDecryptedCredentials(fleetDir);
+  } catch (err) {
+    log.warn(`Credential validation skipped — could not load credentials: ${err instanceof Error ? err.message : String(err)}`);
+    return [{ ok: false, agentName: "(unknown)", username: "(unknown)", reason: "no_credentials" }];
+  }
+
+  const entries = Object.entries(creds);
+  if (entries.length === 0) {
+    log.warn("Credential validation skipped — credentials file is empty");
+    return [{ ok: false, agentName: "(unknown)", username: "(unknown)", reason: "no_credentials" }];
+  }
+
+  const results: CredentialValidationResult[] = [];
+  for (const [agentName, { username, password }] of entries) {
+    results.push(await validateCredentialEntry(agentName, username, password, gameMcpUrl, clientFactory));
+  }
+  return results;
 }
