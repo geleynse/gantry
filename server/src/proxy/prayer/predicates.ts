@@ -36,7 +36,7 @@ async function computeMetric(pred: AnalyzedPredicate, state: ExecState, deps: Ex
 
   switch (pred.metric) {
     case "FUEL":
-      return numberAt(data, ["player", "fuel"]);
+      return numberAt(data, ["ship", "fuel"]);
     case "CREDITS":
       return numberAt(data, ["player", "credits"]);
     case "CARGO_PCT":

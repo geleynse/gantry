@@ -19,7 +19,7 @@ export interface DiffSnapshot {
 export function snapshotDiff(data: Record<string, unknown>): DiffSnapshot {
   return {
     credits: numberAt(data, ["player", "credits"]),
-    fuel: numberAt(data, ["player", "fuel"]),
+    fuel: numberAt(data, ["ship", "fuel"]),
     cargo: cargoByItem(data),
     docked: dockedFlag(data),
   };

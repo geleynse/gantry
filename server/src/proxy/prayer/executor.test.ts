@@ -16,7 +16,7 @@ describe("PrayerLang executor", () => {
       agentName: "test-agent",
       client: makeClient(),
       compoundActions: {},
-      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { fuel: 10, credits: 5 }, ship: { cargo: [] } } }]]),
+      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { credits: 5 }, ship: { fuel: 10, cargo: [] } } }]]),
       agentDeniedTools: {},
       handlePassthrough: async () => ({}),
       maxSteps: 10,
@@ -41,7 +41,7 @@ describe("PrayerLang executor", () => {
       statusCache: new Map([["test-agent", {
         fetchedAt: Date.now(),
         data: {
-          player: { fuel: 10, credits: 5 },
+          player: { credits: 5 },
           ship: { cargo: [{ item_id: "iron_ore", quantity: 1 }], cargo_used: 1, cargo_capacity: 10 },
         },
       }]]),
@@ -61,7 +61,7 @@ describe("PrayerLang executor", () => {
       agentName: "test-agent",
       client: makeClient(),
       compoundActions: {},
-      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { fuel: 10, credits: 5 }, ship: { cargo: [] } } }]]),
+      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { credits: 5 }, ship: { fuel: 10, cargo: [] } } }]]),
       agentDeniedTools: {},
       handlePassthrough: async (tool) => {
         calls.push(tool);
@@ -84,7 +84,7 @@ describe("PrayerLang executor", () => {
       statusCache: new Map([["test-agent", {
         fetchedAt: Date.now(),
         data: {
-          player: { fuel: 10, credits: 5 },
+          player: { credits: 5 },
           ship: {
             cargo: [
               { item_id: "iron_ore", quantity: 2 },
@@ -126,7 +126,7 @@ describe("PrayerLang executor", () => {
       agentName: "test-agent",
       client,
       compoundActions: {},
-      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { fuel: 10, credits: 5 }, ship: { cargo: [] } } }]]),
+      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { credits: 5 }, ship: { fuel: 10, cargo: [] } } }]]),
       battleCache,
       agentDeniedTools: {},
       handlePassthrough: async () => ({}),
@@ -164,7 +164,7 @@ describe("PrayerLang executor", () => {
       agentName: "test-agent",
       client,
       compoundActions: {},
-      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { fuel: 10, credits: 5 }, ship: { cargo: [] } } }]]),
+      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { credits: 5 }, ship: { fuel: 10, cargo: [] } } }]]),
       eventBuffers,
       agentDeniedTools: {},
       handlePassthrough: async () => ({}),
@@ -182,7 +182,7 @@ describe("PrayerLang executor", () => {
       agentName: "test-agent",
       client: makeClient(),
       compoundActions: {},
-      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { fuel: 10, credits: 5 }, ship: { cargo: [] } } }]]),
+      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { credits: 5 }, ship: { fuel: 10, cargo: [] } } }]]),
       battleCache: new Map(),
       eventBuffers: new Map([["test-agent", { hasEventOfType: () => false }]]),
       agentDeniedTools: {},
