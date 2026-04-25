@@ -6,6 +6,8 @@ import {
   formatDateTime,
   formatTimeShort,
   formatFullTimestamp,
+  formatAbsolute,
+  formatWithTooltip,
 } from "./time";
 
 describe("time utilities", () => {
@@ -132,6 +134,72 @@ describe("time utilities", () => {
       const input = "invalid";
       const result = formatFullTimestamp(input);
       expect(result).toContain("Invalid Date");
+    });
+  });
+
+  describe("formatAbsolute", () => {
+    test("formats as 'Mon DD HH:MM:SS'", () => {
+      const result = formatAbsolute("2026-02-24 14:30:45");
+      expect(result).toMatch(/^[A-Za-z]+ \d{1,2} \d{2}:\d{2}:\d{2}$/);
+    });
+
+    test("includes correct month abbreviation", () => {
+      const result = formatAbsolute("2026-02-24 14:30:45");
+      expect(result.startsWith("Feb")).toBe(true);
+    });
+
+    test("returns '—' for null/undefined", () => {
+      expect(formatAbsolute(null)).toBe("—");
+      expect(formatAbsolute(undefined)).toBe("—");
+    });
+
+    test("accepts Date instances", () => {
+      const d = new Date("2026-02-24T14:30:45Z");
+      expect(formatAbsolute(d)).toMatch(/^[A-Za-z]+ \d{1,2} \d{2}:\d{2}:\d{2}$/);
+    });
+
+    test("accepts epoch numbers", () => {
+      const ms = new Date("2026-02-24T14:30:45Z").getTime();
+      expect(formatAbsolute(ms)).toMatch(/^[A-Za-z]+ \d{1,2} \d{2}:\d{2}:\d{2}$/);
+    });
+  });
+
+  describe("formatWithTooltip", () => {
+    test("default puts absolute first, relative as tooltip", () => {
+      const past = new Date(Date.now() - 30 * 60 * 1000);
+      const { display, tooltip } = formatWithTooltip(past);
+      expect(display).toMatch(/^[A-Za-z]+ \d{1,2} \d{2}:\d{2}:\d{2}$/);
+      expect(tooltip).toMatch(/^\d+m ago$/);
+    });
+
+    test("relative-primary swaps display and tooltip", () => {
+      const past = new Date(Date.now() - 30 * 60 * 1000);
+      const { display, tooltip } = formatWithTooltip(past, "relative");
+      expect(display).toMatch(/^\d+m ago$/);
+      expect(tooltip).toMatch(/^[A-Za-z]+ \d{1,2} \d{2}:\d{2}:\d{2}$/);
+    });
+
+    test("handles null input", () => {
+      const { display, tooltip } = formatWithTooltip(null);
+      expect(display).toBe("—");
+      expect(tooltip).toBe("—");
+    });
+  });
+
+  describe("relativeTime extended inputs", () => {
+    test("accepts a Date instance", () => {
+      const past = new Date(Date.now() - 30 * 1000);
+      expect(relativeTime(past)).toMatch(/^\d+s ago$/);
+    });
+
+    test("accepts a number (epoch ms)", () => {
+      const past = Date.now() - 30 * 60 * 1000;
+      expect(relativeTime(past)).toMatch(/^\d+m ago$/);
+    });
+
+    test("returns '—' for null/undefined", () => {
+      expect(relativeTime(null)).toBe("—");
+      expect(relativeTime(undefined)).toBe("—");
     });
   });
 });

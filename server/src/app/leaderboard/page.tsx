@@ -4,7 +4,8 @@ import { useState } from "react";
 import { Trophy, RefreshCw } from "lucide-react";
 import { useLeaderboard } from "@/hooks/use-leaderboard";
 import { LeaderboardTable, LeaderboardSkeleton } from "@/components/leaderboard-table";
-import { AGENT_NAMES, AGENT_COLORS, relativeTime, cn } from "@/lib/utils";
+import { AGENT_COLORS, relativeTime, cn } from "@/lib/utils";
+import { useAgentNames } from "@/hooks/use-agent-names";
 import type { LeaderboardEntry, LeaderboardCategory, LeaderboardTimeRange } from "@/hooks/use-leaderboard";
 
 // ---------------------------------------------------------------------------
@@ -117,9 +118,12 @@ interface AgentBestRank {
 }
 
 function FleetSummaryPanel({ players }: { players: LeaderboardCategory }) {
+  // Live fleet roster from the shared FleetStatusProvider — replaces the
+  // (stale, empty) AGENT_NAMES constant from `lib/utils.ts`.
+  const agentNames = useAgentNames();
   const agentBests: AgentBestRank[] = [];
 
-  for (const agentSlug of AGENT_NAMES as readonly string[]) {
+  for (const agentSlug of agentNames) {
     const color = AGENT_COLORS[agentSlug] ?? "#888";
     const displayName = agentSlug
       .split("-")

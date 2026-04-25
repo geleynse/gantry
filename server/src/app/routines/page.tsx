@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, Clock3, RefreshCw, Route, Search, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, CheckCircle2, ChevronDown, Clock3, RefreshCw, Route, Search, XCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useAgentNames } from "@/hooks/use-agent-names";
+import { formatAbsolute } from "@/lib/time";
+import { abbreviateTrace, formatDuration } from "./helpers";
 
 type RoutineJobStatus = "running" | "completed" | "error";
 
@@ -32,26 +34,16 @@ interface RoutineJobsResponse {
 const STATUS_OPTIONS: Array<"all" | RoutineJobStatus> = ["all", "running", "completed", "error"];
 const STATUS_CARD_OPTIONS: RoutineJobStatus[] = ["running", "completed", "error"];
 
-function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "0s";
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${minutes}m ${remainder}s`;
-}
+// 7-column grid: Started | Agent | Trace | Routine | Summary | Status | Duration.
+// Hard-coded literal class strings so Tailwind's JIT scanner picks them up.
+const GRID_HEADER_CLASSES = "grid-cols-[140px_130px_90px_140px_1fr_110px_100px]";
+const GRID_ROW_CLASSES = "lg:grid-cols-[140px_130px_90px_140px_1fr_110px_100px]";
 
-function formatStartedAt(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
+/**
+ * Routine start times are full absolute timestamps (matches every other
+ * table on the dashboard via the shared helper).
+ */
+const formatStartedAt = formatAbsolute;
 
 function statusClasses(status: RoutineJobStatus): string {
   if (status === "running") return "border-warning/30 bg-warning/10 text-warning";
@@ -63,6 +55,78 @@ function StatusIcon({ status }: { status: RoutineJobStatus }) {
   if (status === "running") return <Clock3 className="h-4 w-4" />;
   if (status === "completed") return <CheckCircle2 className="h-4 w-4" />;
   return <XCircle className="h-4 w-4" />;
+}
+
+/**
+ * Summary cell with an expand affordance.
+ *
+ * Renders truncated text (up to ~3 lines via line-clamp). When the rendered
+ * text overflows we expose a chevron the operator can click to toggle the
+ * full multi-line text. Avoids native `title` on long text — multi-paragraph
+ * summaries don't render well in a tooltip.
+ */
+function SummaryCell({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const ref = useRef<HTMLParagraphElement | null>(null);
+
+  // Detect whether the rendered text actually overflows. Re-runs whenever
+  // the text changes; the resize/scrollHeight check is cheap.
+  useEffect(() => {
+    if (!ref.current) return;
+    const el = ref.current;
+    setTruncated(el.scrollHeight - el.clientHeight > 1);
+  }, [text]);
+
+  if (!text) {
+    return <span className="text-xs text-muted-foreground/40">—</span>;
+  }
+
+  return (
+    <div className="flex items-start gap-1.5">
+      <p
+        ref={ref}
+        className={cn(
+          "text-sm text-muted-foreground flex-1 min-w-0",
+          !expanded && "line-clamp-2"
+        )}
+      >
+        {text}
+      </p>
+      {(truncated || expanded) && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+          title={expanded ? "Collapse" : "Expand summary"}
+          aria-label={expanded ? "Collapse summary" : "Expand summary"}
+        >
+          <ChevronDown
+            className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-180")}
+          />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Trace ID cell. Shows abbreviated form; full ID surfaced on hover via
+ *  native `title` (always small, single-line — title tooltip is fine here). */
+function TraceCell({ traceId }: { traceId: string }) {
+  if (!traceId) {
+    return <span className="font-mono text-xs text-muted-foreground/40">—</span>;
+  }
+  return (
+    <span
+      className="font-mono text-xs text-muted-foreground cursor-help"
+      title={traceId}
+    >
+      {abbreviateTrace(traceId)}
+    </span>
+  );
 }
 
 export default function RoutinesPage() {
@@ -202,10 +266,17 @@ export default function RoutinesPage() {
         )}
 
         <section className="overflow-hidden border border-border">
-          <div className="grid grid-cols-[140px_150px_1fr_120px_120px] gap-3 border-b border-border bg-muted/30 px-4 py-2 text-xs uppercase tracking-wider text-muted-foreground max-lg:hidden">
+          <div
+            className={cn(
+              "grid gap-3 border-b border-border bg-muted/30 px-4 py-2 text-xs uppercase tracking-wider text-muted-foreground max-lg:hidden",
+              GRID_HEADER_CLASSES
+            )}
+          >
             <div>Started</div>
             <div>Agent</div>
+            <div>Trace</div>
             <div>Routine</div>
+            <div>Summary</div>
             <div>Status</div>
             <div className="text-right">Duration</div>
           </div>
@@ -216,30 +287,46 @@ export default function RoutinesPage() {
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">No routine jobs match the current filters.</div>
           ) : (
             <div className="divide-y divide-border">
-              {visibleJobs.map((job) => (
-                <article key={job.id} className="grid gap-3 px-4 py-4 lg:grid-cols-[140px_150px_1fr_120px_120px] lg:items-start">
-                  <div className="font-mono text-xs text-muted-foreground">{formatStartedAt(job.started_at)}</div>
-                  <div className="min-w-0 font-mono text-sm text-foreground">{job.agent}</div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-foreground">{job.routine}</span>
-                      <span className="font-mono text-xs text-muted-foreground">{job.trace_id}</span>
-                    </div>
-                    {(job.result?.summary || job.error || job.text) && (
-                      <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                        {job.error ?? job.result?.summary ?? job.text}
-                      </p>
+              {visibleJobs.map((job) => {
+                const summaryText = job.error ?? job.result?.summary ?? job.text ?? "";
+                return (
+                  <article
+                    key={job.id}
+                    className={cn(
+                      "grid gap-3 px-4 py-4 lg:items-start",
+                      GRID_ROW_CLASSES
                     )}
-                  </div>
-                  <div>
-                    <span className={cn("inline-flex items-center gap-1.5 border px-2 py-1 text-xs capitalize", statusClasses(job.status))}>
-                      <StatusIcon status={job.status} />
-                      {job.status}
-                    </span>
-                  </div>
-                  <div className="font-mono text-sm text-muted-foreground lg:text-right">{formatDuration(job.duration_ms)}</div>
-                </article>
-              ))}
+                  >
+                    <div className="font-mono text-xs text-muted-foreground">
+                      {formatStartedAt(job.started_at)}
+                    </div>
+                    <div className="min-w-0 font-mono text-sm text-foreground">{job.agent}</div>
+                    <div className="min-w-0">
+                      <TraceCell traceId={job.trace_id} />
+                    </div>
+                    <div className="min-w-0 font-medium text-foreground truncate" title={job.routine}>
+                      {job.routine}
+                    </div>
+                    <div className="min-w-0">
+                      <SummaryCell text={summaryText} />
+                    </div>
+                    <div>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1.5 border px-2 py-1 text-xs capitalize",
+                          statusClasses(job.status),
+                        )}
+                      >
+                        <StatusIcon status={job.status} />
+                        {job.status}
+                      </span>
+                    </div>
+                    <div className="font-mono text-sm text-muted-foreground lg:text-right">
+                      {formatDuration(job.duration_ms)}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           )}
         </section>

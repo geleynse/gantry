@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { cn, summarizeArgs } from "@/lib/utils";
+import { relativeTime } from "@/lib/time";
+import { formatCredits as formatCreditsFull, formatDelta } from "@/lib/format";
 import { CreditChart } from "./credit-chart";
 
 // ---------------------------------------------------------------------------
@@ -107,15 +109,7 @@ function isEconomicTool(toolName: string): boolean {
   );
 }
 
-function relativeTime(isoTimestamp: string | null | undefined): string {
-  if (!isoTimestamp) return "—";
-  const diff = Math.floor((Date.now() - new Date(isoTimestamp).getTime()) / 1000);
-  if (diff < 5) return "just now";
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
+// `relativeTime` now imported from `@/lib/time`.
 
 function toolLabel(toolName: string): string {
   const map: Record<string, string> = {
@@ -160,8 +154,7 @@ function Panel({
 /** Format a credits delta as a signed string with commas. */
 function formatCredits(delta: number | null): string {
   if (delta === null) return "";
-  const abs = Math.abs(delta).toLocaleString();
-  return delta >= 0 ? `+${abs}` : `-${abs}`;
+  return formatDelta(delta);
 }
 
 /** Build a human-readable summary line from a structured action log entry. */
@@ -362,7 +355,7 @@ function MissionCard({ mission }: { mission: Mission }) {
       </div>
       {credits != null && (
         <div className="text-muted-foreground">
-          Reward: <span className="text-foreground/80">{credits.toLocaleString()} cr</span>
+          Reward: <span className="text-foreground/80">{formatCreditsFull(credits)}</span>
         </div>
       )}
       {mission.status && (

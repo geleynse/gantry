@@ -5,7 +5,8 @@ import { Radio, Send, CheckCircle, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
-import { formatDateTime } from "@/lib/time";
+import { useAgentNames } from "@/hooks/use-agent-names";
+import { formatAbsolute, relativeTime } from "@/lib/time";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,7 +32,7 @@ interface HistoryResponse {
   history: BroadcastRecord[];
 }
 
-type Priority = "normal" | "urgent";
+type Priority = "normal" | "high" | "urgent";
 
 // ---------------------------------------------------------------------------
 // Page
@@ -39,7 +40,10 @@ type Priority = "normal" | "urgent";
 
 export default function BroadcastPage() {
   const { isAdmin } = useAuth();
-  const [agentList, setAgentList] = useState<string[]>([]);
+  // Use the same agent source as the rest of the UI so target counts match
+  // Comms, the top-bar agent counter, and the Dashboard grid. This hook
+  // already filters out "overseer" (has its own page; not a broadcast target).
+  const agentList = useAgentNames();
   const [selectedAgents, setSelectedAgents] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState("");
   const [priority, setPriority] = useState<Priority>("normal");
@@ -48,18 +52,18 @@ export default function BroadcastPage() {
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<BroadcastRecord[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
-  // Fetch agent list on mount
+  // When the agent list first loads, default to all selected. After that,
+  // respect whatever the user has (de)selected even if the fleet roster
+  // changes mid-session.
+  const [selectionInitialized, setSelectionInitialized] = useState(false);
   useEffect(() => {
-    apiFetch<{ agents: Array<{ name: string }> }>("/prompts/agents")
-      .then((res) => {
-        const names = res.agents.map((a) => a.name);
-        setAgentList(names);
-        // Default: all selected
-        setSelectedAgents(new Set(names));
-      })
-      .catch(() => {});
-  }, []);
+    if (!selectionInitialized && agentList.length > 0) {
+      setSelectedAgents(new Set(agentList));
+      setSelectionInitialized(true);
+    }
+  }, [agentList, selectionInitialized]);
 
   // Fetch history on mount
   useEffect(() => {
@@ -104,6 +108,15 @@ export default function BroadcastPage() {
       setError("Select at least one agent");
       return;
     }
+
+    // Confirmation for Urgent fleet-wide broadcasts — protects against
+    // accidental mass "wake up now" pings. Show the count so the operator
+    // knows what they're about to do.
+    if (priority === "urgent" && !confirmOpen) {
+      setConfirmOpen(true);
+      return;
+    }
+    setConfirmOpen(false);
 
     setIsSending(true);
     setResult(null);
@@ -179,13 +192,13 @@ export default function BroadcastPage() {
           </div>
         </div>
 
-        {/* Priority selector */}
+        {/* Priority selector — aligned with Comms (normal / high / urgent) */}
         <div className="flex items-center gap-3">
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground shrink-0">
             Priority
           </span>
           <div className="flex gap-2">
-            {(["normal", "urgent"] as Priority[]).map((p) => (
+            {(["normal", "high", "urgent"] as Priority[]).map((p) => (
               <button
                 key={p}
                 onClick={() => setPriority(p)}
@@ -195,6 +208,8 @@ export default function BroadcastPage() {
                   priority === p
                     ? p === "urgent"
                       ? "bg-error text-error-content"
+                      : p === "high"
+                      ? "bg-warning text-warning-content"
                       : "bg-primary text-primary-foreground"
                     : "bg-secondary text-muted-foreground hover:text-foreground",
                   (!isAdmin) && "cursor-not-allowed opacity-50"
@@ -294,6 +309,52 @@ export default function BroadcastPage() {
         )}
       </div>
 
+      {/* Urgent-broadcast confirmation modal */}
+      {confirmOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="broadcast-confirm-title"
+        >
+          <div className="bg-card border border-error/50 max-w-md w-full mx-4 p-5 space-y-4">
+            <h2
+              id="broadcast-confirm-title"
+              className="text-sm font-bold uppercase tracking-wider text-error flex items-center gap-2"
+            >
+              <Radio className="w-4 h-4" /> Confirm Urgent Broadcast
+            </h2>
+            <p className="text-xs text-foreground">
+              You are about to send an <span className="font-bold text-error">URGENT</span>{" "}
+              broadcast to <span className="font-bold">{selectedAgents.size}</span>{" "}
+              agent{selectedAgents.size === 1 ? "" : "s"}
+              {selectedAgents.size === agentList.length && agentList.length > 0
+                ? " (entire fleet)"
+                : ""}.
+            </p>
+            {message.trim() && (
+              <div className="text-[11px] font-mono bg-secondary/40 border border-border p-2 max-h-32 overflow-auto whitespace-pre-wrap break-words">
+                {message.trim()}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmOpen(false)}
+                className="px-3 py-1.5 text-[10px] uppercase tracking-wider border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSend}
+                className="px-3 py-1.5 text-[10px] uppercase tracking-wider bg-error text-error-content font-bold hover:opacity-90 transition-opacity"
+              >
+                Send Urgent
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* History */}
       <div className="bg-card border border-border">
         <div className="px-4 py-2.5 border-b border-border bg-secondary/30 text-[10px] uppercase tracking-wider font-semibold text-foreground">
@@ -315,8 +376,11 @@ export default function BroadcastPage() {
                   <p className="text-xs text-foreground font-mono leading-relaxed flex-1">
                     {record.message}
                   </p>
-                  <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
-                    {formatDateTime(record.timestamp)}
+                  <span
+                    className="text-[10px] text-muted-foreground shrink-0 tabular-nums"
+                    title={relativeTime(record.timestamp)}
+                  >
+                    {formatAbsolute(record.timestamp)}
                   </span>
                 </div>
                 <div className="flex items-center gap-3 text-[10px]">

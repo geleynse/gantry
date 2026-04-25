@@ -14,6 +14,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { formatCredits, formatNumber } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -91,13 +92,13 @@ function TooltipContent({ item }: { item: ItemData }) {
         {item.base_price != null && (
           <div className="flex justify-between gap-4">
             <span className="text-muted-foreground">Base price</span>
-            <span className="text-foreground font-mono">{item.base_price.toLocaleString()} cr</span>
+            <span className="text-foreground font-mono">{formatCredits(item.base_price)}</span>
           </div>
         )}
         {item.value != null && (
           <div className="flex justify-between gap-4">
             <span className="text-muted-foreground">Value</span>
-            <span className="text-foreground font-mono">{item.value.toLocaleString()}</span>
+            <span className="text-foreground font-mono">{formatNumber(item.value)}</span>
           </div>
         )}
         {item.mass != null && (

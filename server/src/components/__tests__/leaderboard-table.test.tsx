@@ -6,13 +6,23 @@ import { describe, it, expect, mock } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import { LeaderboardTable, LeaderboardSkeleton } from "../leaderboard-table";
 import type { LeaderboardEntry } from "@/hooks/use-leaderboard";
+import { FleetStatusProvider } from "@/hooks/use-fleet-status";
+import { MockEventSource } from "@/test/setup";
+import { createMockFleetStatus } from "@/test/mocks/agents";
+import { act } from "@testing-library/react";
+import React from "react";
 
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
+//
+// Provide the agent-color palette without touching `useAgentNames` — the
+// component now reads the live fleet roster via the FleetStatusProvider that
+// wraps each render below. We avoid `mock.module` for hooks because
+// bun:test mocks leak across the whole test process and break unrelated
+// component tests (e.g. outbound-review-ui).
 
 mock.module("@/lib/utils", () => ({
-  AGENT_NAMES: ["drifter-gale", "sable-thorn", "rust-vane", "cinder-wake", "lumen-shoal"],
   AGENT_COLORS: {
     "drifter-gale": "#88c0d0",
     "sable-thorn": "#bf616a",
@@ -23,16 +33,51 @@ mock.module("@/lib/utils", () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// Render helper — wraps the LeaderboardTable in a FleetStatusProvider and
+// pushes a mock fleet snapshot through SSE so `useAgentNames()` returns the
+// expected fleet roster.
+// ---------------------------------------------------------------------------
+
+const FLEET_AGENTS = [
+  "drifter-gale",
+  "sable-thorn",
+  "rust-vane",
+  "cinder-wake",
+  "lumen-shoal",
+];
+
+function renderWithFleet(ui: React.ReactElement) {
+  // Reset MockEventSource so we can grab the new instance unambiguously
+  MockEventSource.instances = [];
+  const result = render(<FleetStatusProvider>{ui}</FleetStatusProvider>);
+  // Push a fleet snapshot so useAgentNames() returns FLEET_AGENTS
+  act(() => {
+    const es = MockEventSource.instances[0];
+    if (es) {
+      es.simulateOpen();
+      es.simulateMessage(
+        "status",
+        createMockFleetStatus(FLEET_AGENTS.map((name) => ({ name }))),
+      );
+    }
+  });
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Fixtures — matches upstream API shape: { rank, username, empire, value }
 // ---------------------------------------------------------------------------
 
+// Real leaderboard responses key the value column by stat name (e.g.
+// "total_wealth"). Tests mirror that — the column is the same key that
+// the live API returns.
 function makeEntries(): LeaderboardEntry[] {
   return [
-    { rank: 1, username: "Drifter Gale", value: 999999 },
-    { rank: 2, username: "Sable Thorn", value: 750000 },
-    { rank: 3, username: "some_random_player", value: 500000 },
-    { rank: 4, username: "Cinder Wake", value: 300000 },
-    { rank: 5, username: "another_player", value: 100000 },
+    { rank: 1, username: "Drifter Gale", total_wealth: 999999 },
+    { rank: 2, username: "Sable Thorn", total_wealth: 750000 },
+    { rank: 3, username: "some_random_player", total_wealth: 500000 },
+    { rank: 4, username: "Cinder Wake", total_wealth: 300000 },
+    { rank: 5, username: "another_player", total_wealth: 100000 },
   ];
 }
 
@@ -43,7 +88,7 @@ function makeEntries(): LeaderboardEntry[] {
 describe("LeaderboardTable", () => {
   it("renders all entry names", () => {
     render(
-      <LeaderboardTable entries={makeEntries()} statKey="value" statLabel="Total Wealth" />
+      <LeaderboardTable entries={makeEntries()} statKey="total_wealth" statLabel="Total Wealth" />
     );
     expect(screen.getByText("Drifter Gale")).toBeInTheDocument();
     expect(screen.getByText("Sable Thorn")).toBeInTheDocument();
@@ -51,8 +96,8 @@ describe("LeaderboardTable", () => {
   });
 
   it("shows fleet pill badge for fleet agents", () => {
-    render(
-      <LeaderboardTable entries={makeEntries()} statKey="value" statLabel="Total Wealth" />
+    renderWithFleet(
+      <LeaderboardTable entries={makeEntries()} statKey="total_wealth" statLabel="Total Wealth" />
     );
     const fleetBadges = screen.getAllByText("fleet");
     expect(fleetBadges.length).toBe(3);
@@ -63,14 +108,14 @@ describe("LeaderboardTable", () => {
       { rank: 1, username: "some_random_player", value: 100 },
     ];
     render(
-      <LeaderboardTable entries={entries} statKey="value" statLabel="Total Wealth" />
+      <LeaderboardTable entries={entries} statKey="total_wealth" statLabel="Total Wealth" />
     );
     expect(screen.queryByText("fleet")).not.toBeInTheDocument();
   });
 
   it("shows rank badge for each entry", () => {
     render(
-      <LeaderboardTable entries={makeEntries()} statKey="value" statLabel="Total Wealth" />
+      <LeaderboardTable entries={makeEntries()} statKey="total_wealth" statLabel="Total Wealth" />
     );
     expect(screen.getByText("1")).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
@@ -81,31 +126,60 @@ describe("LeaderboardTable", () => {
 
   it("shows stat column header label", () => {
     render(
-      <LeaderboardTable entries={makeEntries()} statKey="value" statLabel="Total Wealth" />
+      <LeaderboardTable entries={makeEntries()} statKey="total_wealth" statLabel="Total Wealth" />
     );
     expect(screen.getByText("Total Wealth")).toBeInTheDocument();
   });
 
-  it("formats numbers with toLocaleString", () => {
+  it("formats currency stats with thousands separators and cr suffix", () => {
     const entries: LeaderboardEntry[] = [
-      { rank: 1, username: "Alice", value: 1000000 },
+      { rank: 1, username: "Alice", total_wealth: 1000000 },
     ];
     render(
-      <LeaderboardTable entries={entries} statKey="value" statLabel="Wealth" />
+      <LeaderboardTable entries={entries} statKey="total_wealth" statLabel="Total Wealth" />
     );
-    expect(screen.getByText("1,000,000")).toBeInTheDocument();
+    // Currency-keyed stats (total_wealth, ship_value, …) get a "cr" suffix appended.
+    expect(screen.getByText("1,000,000 cr")).toBeInTheDocument();
+  });
+
+  it("formats non-currency stats without cr suffix", () => {
+    const entries: LeaderboardEntry[] = [
+      { rank: 1, username: "Alice", ships_destroyed: 1234 },
+    ];
+    render(
+      <LeaderboardTable entries={entries} statKey="ships_destroyed" statLabel="Ships Destroyed" />
+    );
+    expect(screen.getByText("1,234")).toBeInTheDocument();
+  });
+
+  it("does not match partial currency keys (e.g. max_value_per_ton)", () => {
+    // Regression test for the CURRENCY_LABEL_RE regex bug — `max_value_per_ton`
+    // is NOT currency, even though "value" is in the name. The new allowlist
+    // is exact-match.
+    const entries: LeaderboardEntry[] = [
+      { rank: 1, username: "Alice", max_value_per_ton: 5000 },
+    ];
+    render(
+      <LeaderboardTable
+        entries={entries}
+        statKey="max_value_per_ton"
+        statLabel="Max Value / Ton"
+      />
+    );
+    expect(screen.getByText("5,000")).toBeInTheDocument();
+    expect(screen.queryByText("5,000 cr")).not.toBeInTheDocument();
   });
 
   it("renders 'No data available' when entries is empty", () => {
     render(
-      <LeaderboardTable entries={[]} statKey="value" statLabel="Total Wealth" />
+      <LeaderboardTable entries={[]} statKey="total_wealth" statLabel="Total Wealth" />
     );
     expect(screen.getByText("No data available")).toBeInTheDocument();
   });
 
   it("renders skeleton (not table) when loading=true and entries is empty", () => {
     render(
-      <LeaderboardTable entries={[]} statKey="value" statLabel="Total Wealth" loading />
+      <LeaderboardTable entries={[]} statKey="total_wealth" statLabel="Total Wealth" loading />
     );
     expect(screen.queryByText("No data available")).not.toBeInTheDocument();
     expect(document.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
@@ -118,7 +192,7 @@ describe("LeaderboardTable", () => {
     render(
       <LeaderboardTable
         entries={entries}
-        statKey="value"
+        statKey="total_wealth"
         statLabel="Score"
         nameKey="name"
       />
@@ -130,8 +204,8 @@ describe("LeaderboardTable", () => {
     const entries: LeaderboardEntry[] = [
       { rank: 1, username: "Drifter Gale", value: 1 },
     ];
-    render(
-      <LeaderboardTable entries={entries} statKey="value" statLabel="Wealth" />
+    renderWithFleet(
+      <LeaderboardTable entries={entries} statKey="total_wealth" statLabel="Wealth" />
     );
     expect(screen.getByText("fleet")).toBeInTheDocument();
   });

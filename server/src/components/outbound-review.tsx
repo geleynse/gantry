@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
+import { formatAbsolute, relativeTime } from "@/lib/time";
 import { CheckCircle, XCircle, Clock, Filter, RefreshCw } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -29,7 +30,13 @@ interface OutboundMessage {
 // Pending count hook — used by Sidebar for the badge
 // ---------------------------------------------------------------------------
 
-export function useOutboundPendingCount(pollIntervalMs = 30_000): number {
+/**
+ * Emit this event after any outbound-review mutation (approve/reject/approve-all)
+ * so the sidebar badge refreshes immediately instead of waiting up to poll interval.
+ */
+const OUTBOUND_REFRESH_EVENT = "outbound-review:refresh";
+
+export function useOutboundPendingCount(pollIntervalMs = 15_000): number {
   const [count, setCount] = useState(0);
 
   useEffect(() => {
@@ -44,13 +51,26 @@ export function useOutboundPendingCount(pollIntervalMs = 30_000): number {
     };
     fetchCount();
     const interval = setInterval(fetchCount, pollIntervalMs);
+    const onRefresh = () => { void fetchCount(); };
+    if (typeof window !== "undefined") {
+      window.addEventListener(OUTBOUND_REFRESH_EVENT, onRefresh);
+    }
     return () => {
       cancelled = true;
       clearInterval(interval);
+      if (typeof window !== "undefined") {
+        window.removeEventListener(OUTBOUND_REFRESH_EVENT, onRefresh);
+      }
     };
   }, [pollIntervalMs]);
 
   return count;
+}
+
+function notifyOutboundRefresh() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(OUTBOUND_REFRESH_EVENT));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -76,12 +96,10 @@ const STATUS_COLORS: Record<ReviewStatus, string> = {
   auto_approved: "text-blue-400",
 };
 
+// Outbound timestamps come from the DB without a timezone marker; coerce to
+// UTC then render via the shared canonical absolute formatter.
 function formatTimestamp(ts: string): string {
-  try {
-    return new Date(ts + "Z").toLocaleString();
-  } catch {
-    return ts;
-  }
+  return formatAbsolute(ts);
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +126,12 @@ function MessageCard({ msg, onApprove, onReject, isPending }: MessageCardProps) 
           <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium", CHANNEL_COLORS[msg.channel])}>
             {CHANNEL_LABELS[msg.channel]}
           </span>
-          <span className="text-xs text-foreground/50">{formatTimestamp(msg.timestamp)}</span>
+          <span
+            className="text-xs text-foreground/50"
+            title={relativeTime(msg.timestamp)}
+          >
+            {formatTimestamp(msg.timestamp)}
+          </span>
         </div>
         <span className="text-xs text-foreground/50">#{msg.id}</span>
       </div>
@@ -156,7 +179,14 @@ function MessageCard({ msg, onApprove, onReject, isPending }: MessageCardProps) 
         <div className="flex items-center gap-2 text-xs">
           <span className={STATUS_COLORS[msg.status]}>{msg.status.replace("_", " ")}</span>
           {msg.reviewedBy && <span className="text-foreground/50">by {msg.reviewedBy}</span>}
-          {msg.reviewedAt && <span className="text-foreground/40">{formatTimestamp(msg.reviewedAt)}</span>}
+          {msg.reviewedAt && (
+            <span
+              className="text-foreground/40"
+              title={relativeTime(msg.reviewedAt)}
+            >
+              {formatTimestamp(msg.reviewedAt)}
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -216,6 +246,7 @@ export function OutboundReviewPanel() {
     try {
       await apiFetch(`/outbound/approve/${id}`, { method: "POST" });
       await fetchPending();
+      notifyOutboundRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -228,6 +259,7 @@ export function OutboundReviewPanel() {
     try {
       await apiFetch(`/outbound/reject/${id}`, { method: "POST" });
       await fetchPending();
+      notifyOutboundRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -235,13 +267,17 @@ export function OutboundReviewPanel() {
     }
   };
 
-  const handleApproveAll = async () => {
-    if (!confirm("Approve all pending messages?")) return;
+  // Controlled confirm modal for Approve All — shows the exact count so the
+  // operator knows how many outbound messages they're about to release.
+  const [approveAllOpen, setApproveAllOpen] = useState(false);
+  const runApproveAll = async () => {
+    setApproveAllOpen(false);
     setActionLoading(true);
     try {
       const params = channelFilter ? `?channel=${channelFilter}` : "";
       await apiFetch(`/outbound/approve-all${params}`, { method: "POST" });
       await fetchPending();
+      notifyOutboundRefresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -328,11 +364,11 @@ export function OutboundReviewPanel() {
         )}
         {tab === "pending" && pending.length > 0 && (
           <button
-            onClick={handleApproveAll}
+            onClick={() => setApproveAllOpen(true)}
             disabled={actionLoading}
             className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-success/20 hover:bg-success/30 text-success border border-success/30 rounded text-sm font-medium transition-colors disabled:opacity-50"
           >
-            <CheckCircle size={14} /> Approve All
+            <CheckCircle size={14} /> Approve All ({pending.length})
           </button>
         )}
       </div>
@@ -366,6 +402,47 @@ export function OutboundReviewPanel() {
               onReject={handleReject}
             />
           ))}
+        </div>
+      )}
+
+      {/* Approve-All confirmation — prevents accidental mass approval */}
+      {approveAllOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="approve-all-title"
+        >
+          <div className="bg-card border border-success/40 max-w-md w-full mx-4 p-5 space-y-4">
+            <h3
+              id="approve-all-title"
+              className="text-sm font-bold uppercase tracking-wider text-success flex items-center gap-2"
+            >
+              <CheckCircle size={14} /> Approve All Pending
+            </h3>
+            <p className="text-xs text-foreground">
+              Approve and release <span className="font-bold">{pending.length}</span>{" "}
+              pending outbound message{pending.length === 1 ? "" : "s"}
+              {channelFilter
+                ? ` on the ${CHANNEL_LABELS[channelFilter as OutboundChannel]} channel`
+                : ""}
+              ? This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setApproveAllOpen(false)}
+                className="px-3 py-1.5 text-xs border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={runApproveAll}
+                className="px-3 py-1.5 text-xs bg-success text-success-content font-bold hover:opacity-90 transition-opacity"
+              >
+                Approve {pending.length}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

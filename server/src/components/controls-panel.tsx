@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Trash2, Plus, Send, AlertCircle, Loader2, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
+import { formatDate } from "@/lib/time";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -258,7 +259,7 @@ export function ControlsPanel({ agentName }: { agentName: string }) {
                     <PriorityBadge priority={d.priority} />
                     {d.expires_at && (
                       <span className="text-[9px] text-muted-foreground">
-                        expires {new Date(d.expires_at).toLocaleDateString()}
+                        expires {formatDate(d.expires_at)}
                       </span>
                     )}
                   </div>

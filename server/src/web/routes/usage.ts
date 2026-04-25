@@ -5,13 +5,17 @@ import { parseUsageLog, getAgentUsageSummary } from '../../services/usage-parser
 const router: Router = Router();
 
 router.get('/', async (req, res) => {
+  // Exclude overseer from the fleet-wide usage rollup — overseer cost is
+  // surfaced separately on the /overseer page (see web/routes/overseer.ts).
   const summaries = await Promise.all(
-    AGENTS.map(async (agent) => ({
-      name: agent.name,
-      backend: agent.backend,
-      model: agent.model,
-      ...(await getAgentUsageSummary(agent.name, agent.model)),
-    }))
+    AGENTS
+      .filter((agent) => agent.name !== 'overseer')
+      .map(async (agent) => ({
+        name: agent.name,
+        backend: agent.backend,
+        model: agent.model,
+        ...(await getAgentUsageSummary(agent.name, agent.model)),
+      }))
   );
   res.json(summaries);
 });

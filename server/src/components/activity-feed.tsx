@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { AGENT_COLORS, AGENT_NAMES } from "@/lib/utils";
+import { AGENT_COLORS } from "@/lib/utils";
 import { useSSE } from "@/hooks/use-sse";
+import { useAgentNames } from "@/hooks/use-agent-names";
 import { apiFetch } from "@/lib/api";
 import { formatTime } from "@/lib/time";
 import { summarizeResult } from "@/lib/summarize-result";
@@ -47,8 +48,11 @@ const TOOL_FILTERS: { id: ToolFilter; label: string }[] = [
 /** Status filter */
 type StatusFilter = "all" | "success" | "error" | "pending";
 
+// "All statuses" instead of plain "All" so users don't see two adjacent
+// "ALL" buttons (one for event type, one for status) and have to guess
+// which controls which (report #18).
 const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
-  { id: "all", label: "All" },
+  { id: "all", label: "All statuses" },
   { id: "success", label: "Success" },
   { id: "error", label: "Error" },
   { id: "pending", label: "Pending" },
@@ -60,6 +64,7 @@ const ACTION_TOOLS = new Set([
   "scan_and_attack", "batch_mine", "mine", "multi_sell", "sell", "buy",
   "dock", "undock", "repair", "refuel", "craft", "deposit_items", "withdraw_items",
   "create_sell_order", "cancel_order", "jettison", "self_destruct", "logout", "login",
+  "pray",
 ]);
 
 // Read-only query tools — classified as "queries"
@@ -329,6 +334,11 @@ function ActivityRow({
 // ---------------------------------------------------------------------------
 
 export function ActivityFeed() {
+  // Live fleet roster — drive the agent chips from this so the filter row
+  // isn't empty when the static AGENT_NAMES constant has no entries (report
+  // #18: "AGENTS: label with no chips").
+  const AGENT_NAMES = useAgentNames();
+
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [sseConnecting, setSseConnecting] = useState(true);
@@ -342,10 +352,18 @@ export function ActivityFeed() {
   const [throughput, setThroughput] = useState<string | null>(null);
   const eventTimesRef = useRef<number[]>([]);
 
-  // Agent filter toggles — all on by default
-  const [agentToggles, setAgentToggles] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(AGENT_NAMES.map((n) => [n, true])),
-  );
+  // Agent filter toggles — all on by default. When the roster changes we
+  // preserve any existing toggles and default new agents to "on".
+  const [agentToggles, setAgentToggles] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    setAgentToggles((prev) => {
+      const next = { ...prev };
+      for (const name of AGENT_NAMES) {
+        if (!(name in next)) next[name] = true;
+      }
+      return next;
+    });
+  }, [AGENT_NAMES]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAtTopRef = useRef(true);
@@ -502,7 +520,12 @@ export function ActivityFeed() {
         {/* Connection status + throughput + pause */}
         <div className="flex items-center gap-2 shrink-0">
           {throughput && connected && (
-            <span className="text-[9px] text-muted-foreground tabular-nums">{throughput}</span>
+            <span
+              className="text-[9px] text-muted-foreground tabular-nums"
+              title="Activity event rate (events per minute or per second over the last 60s)"
+            >
+              {throughput}
+            </span>
           )}
 
           <button

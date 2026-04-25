@@ -169,10 +169,31 @@ function SidebarContent({
     });
   };
 
-  const isActive = (href: string) => {
+  // Active state for a nav link. We want only the deepest-matching route in
+  // NAV_SECTIONS to highlight so that visiting /notes/search doesn't also
+  // highlight the /notes parent, and /fleet/broadcast doesn't also highlight
+  // /fleet. Strategy: find the longest matching href across all nav items and
+  // only that one counts as active.
+  const allHrefs = NAV_SECTIONS.flatMap((s) => s.items.map((i) => i.href));
+  // /outbound-review isn't in NAV_SECTIONS but has its own render below
+  allHrefs.push("/outbound-review");
+
+  const matchHref = (href: string): boolean => {
     if (href === "/") return pathname === "/";
-    return pathname.startsWith(href);
+    return pathname === href || pathname.startsWith(`${href}/`);
   };
+
+  const bestMatchHref: string | null = (() => {
+    let best: string | null = null;
+    for (const href of allHrefs) {
+      if (matchHref(href) && (best == null || href.length > best.length)) {
+        best = href;
+      }
+    }
+    return best;
+  })();
+
+  const isActive = (href: string) => href === bestMatchHref;
 
   const isAgentActive = (slug: string) => pathname === `/agent/${slug}` || pathname === `/agent/${slug}/`;
 

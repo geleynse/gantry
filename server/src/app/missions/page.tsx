@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Target, Clock, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
-import { formatDateTime } from "@/lib/time";
+import { useAgentNames } from "@/hooks/use-agent-names";
+import { formatAbsolute, relativeTime } from "@/lib/time";
+import { formatCredits } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -131,12 +133,15 @@ function MissionRow({ mission }: { mission: Mission }) {
           </span>
           {mission.reward?.credits !== undefined && mission.reward.credits > 0 && (
             <span className="text-[10px] text-muted-foreground font-mono">
-              {mission.reward.credits.toLocaleString()} cr
+              {formatCredits(mission.reward.credits)}
             </span>
           )}
           {mission.deadline && (
-            <span className="text-[10px] text-muted-foreground tabular-nums">
-              {formatDateTime(mission.deadline)}
+            <span
+              className="text-[10px] text-muted-foreground tabular-nums"
+              title={relativeTime(mission.deadline)}
+            >
+              {formatAbsolute(mission.deadline)}
             </span>
           )}
         </div>
@@ -198,18 +203,14 @@ function AgentMissionsSection({ data }: { data: AgentMissions }) {
 const AUTO_REFRESH_MS = 30_000;
 
 export default function MissionsPage() {
-  const [agentList, setAgentList] = useState<string[]>([]);
+  // Use the shared agent name hook (filters out overseer — it does not run
+  // missions) so this page agrees with the rest of the UI on fleet size.
+  const agentList = useAgentNames();
   const [agentMissions, setAgentMissions] = useState<AgentMissions[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [sortBy, setSortBy] = useState<"agent" | "active-first">("active-first");
-
-  // Fetch agent list on mount
-  useEffect(() => {
-    apiFetch<{ agents: Array<{ name: string }> }>("/prompts/agents")
-      .then((res) => setAgentList(res.agents.map((a) => a.name)))
-      .catch(() => {});
-  }, []);
+  const [showEmpty, setShowEmpty] = useState(false);
 
   const fetchMissions = useCallback(async () => {
     if (agentList.length === 0) return;
@@ -248,8 +249,16 @@ export default function MissionsPage() {
     return () => clearInterval(id);
   }, [agentList, fetchMissions]);
 
+  // Hide agents with no missions by default so a mostly-empty fleet does
+  // not render six tall empty-state cards (report #20).
+  const visibleMissions = showEmpty
+    ? agentMissions
+    : agentMissions.filter((am) => am.missions.length > 0 || !!am.error);
+
+  const hiddenCount = agentMissions.length - visibleMissions.length;
+
   // Sort
-  const sortedMissions = [...agentMissions].sort((a, b) => {
+  const sortedMissions = [...visibleMissions].sort((a, b) => {
     if (sortBy === "agent") {
       return a.agent.localeCompare(b.agent);
     }
@@ -300,10 +309,25 @@ export default function MissionsPage() {
               </button>
             ))}
           </div>
+          <button
+            onClick={() => setShowEmpty((v) => !v)}
+            className={cn(
+              "px-2.5 py-1 text-[10px] uppercase tracking-wider transition-colors border border-border",
+              showEmpty
+                ? "bg-secondary text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+            title={showEmpty ? "Hide agents with no missions" : "Show agents with no missions"}
+          >
+            {showEmpty ? "Hide Empty" : `Show Empty${hiddenCount > 0 ? ` (${hiddenCount})` : ""}`}
+          </button>
 
           {lastRefresh && (
-            <span className="text-[10px] text-muted-foreground tabular-nums">
-              Updated {formatDateTime(lastRefresh.toISOString())}
+            <span
+              className="text-[10px] text-muted-foreground tabular-nums"
+              title={formatAbsolute(lastRefresh)}
+            >
+              Updated {relativeTime(lastRefresh)}
             </span>
           )}
 

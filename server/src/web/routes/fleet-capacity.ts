@@ -88,11 +88,17 @@ export function createFleetCapacityRouter(statusCache: StatusCache, config: Gant
    * Fleet-wide capacity snapshot: per-agent stats + totals + zone coverage.
    */
   router.get("/capacity", (_req, res) => {
-    const agentConfigs = config.agents.map((a) => ({
-      name: a.name,
-      role: a.role,
-      operatingZone: a.operatingZone,
-    }));
+    // Exclude overseer — it has its own dedicated page and is not part of
+    // the operational fleet. The UI filters it out of the per-agent table;
+    // we also filter it here so totals (agentCount, onlineCount, byRole)
+    // agree with the displayed rows instead of reporting one extra agent.
+    const agentConfigs = config.agents
+      .filter((a) => a.name !== "overseer")
+      .map((a) => ({
+        name: a.name,
+        role: a.role,
+        operatingZone: a.operatingZone,
+      }));
 
     const now = Date.now();
 

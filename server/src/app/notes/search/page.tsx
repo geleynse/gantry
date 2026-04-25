@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
-import { formatDateTime } from "@/lib/time";
+import { formatAbsolute, relativeTime } from "@/lib/time";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -92,8 +92,11 @@ function ResultCard({
             </span>
           )}
         </div>
-        <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
-          {formatDateTime(result.created_at)}
+        <span
+          className="text-[10px] text-muted-foreground tabular-nums shrink-0"
+          title={relativeTime(result.created_at)}
+        >
+          {formatAbsolute(result.created_at)}
         </span>
       </div>
       <p className="text-xs text-foreground leading-relaxed font-mono whitespace-pre-wrap line-clamp-4">

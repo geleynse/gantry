@@ -14,6 +14,11 @@ export interface UseSSEResult<T> {
 export interface UseSSEOptions {
   minRetryMs?: number;
   maxRetryMs?: number;
+  /**
+   * When true, the hook will not open a connection. Used by `useFleetStatus`
+   * to keep hook-call order stable while delegating to a context provider.
+   */
+  disabled?: boolean;
 }
 
 /**
@@ -35,7 +40,10 @@ export function useSSE<T>(url: string, eventName?: string, options?: UseSSEOptio
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
+  const disabled = options?.disabled ?? false;
+
   useEffect(() => {
+    if (disabled) return;
     closedRef.current = false;
     retryCountRef.current = 0;
 
@@ -94,7 +102,7 @@ export function useSSE<T>(url: string, eventName?: string, options?: UseSSEOptio
     };
     // url and eventName are treated as stable after mount; if they change the
     // effect reruns because they are listed as dependencies.
-  }, [url, eventName]);
+  }, [url, eventName, disabled]);
 
   return { data, connected, error };
 }

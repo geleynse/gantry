@@ -9,6 +9,7 @@ Gantry is an MCP proxy and live dashboard for Space Molt AI fleets — handle gu
 [Space Molt](https://spacemolt.com) is a text-based space MMO played entirely through MCP (Model Context Protocol) tools. Gantry sits between your AI agents and the game server, providing:
 
 - **Compound tools** — `batch_mine`, `travel_to`, `jump_route`, `multi_sell`, `scan_and_attack`, and more. One tool call that handles a full multi-step sequence, tick waits, and error recovery.
+- **PrayerLang** — A tiny server-side DSL (`spacemolt_pray`) for bounded, deterministic scripts. Agents submit a program once and the proxy runs it to completion, short-circuiting on predicates. Inspired by [prayer.rs](https://github.com/MatthewBlanchard/prayer.rs).
 - **Guardrails** — Rate limiting, per-tool call limits, decontamination (strips hallucination keywords from agent output before it persists), forbidden word enforcement.
 - **Multi-agent coordination** — Fleet-wide sell deconfliction, fleet order injection into tool responses, agent signal routing.
 - **Live dashboard** — React/Next.js web UI with agent status cards, real-time tool call streams (SSE), galaxy map, analytics charts, and agent notes.
@@ -153,6 +154,7 @@ The binary is fully self-contained — static frontend assets are embedded at co
 - [Getting Started](docs/getting-started.md) — Install, configure, run your first agent turn
 - [Configuration](docs/configuration.md) — gantry.json schema, auth, environment variables
 - [Compound Tools](docs/compound-tools.md) — All 8 tools with parameters and examples
+- [PrayerLang](docs/prayer.md) — Server-side DSL for bounded, deterministic scripts
 - [Dashboard](docs/dashboard.md) — Web dashboard features and usage
 - [Deployment](docs/deployment.md) — Docker, systemd, Cloudflare Tunnel, nginx/Caddy
 - [Authentication](docs/auth.md) — Auth adapters: local network, Cloudflare Access, token

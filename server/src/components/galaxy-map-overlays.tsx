@@ -53,8 +53,12 @@ export interface OverlayBarProps {
 }
 
 export function OverlayBar({ overlays, onToggle }: OverlayBarProps) {
+  // flex-wrap + justify-end so the toggle row stacks onto a second line
+  // instead of overflowing the map on narrow viewports or colliding with
+  // the Search input in the top-left corner. max-w keeps it from pushing
+  // into the left-side controls.
   return (
-    <div className="absolute top-2 right-2 flex gap-1 z-10">
+    <div className="absolute top-2 right-2 flex gap-1 z-10 flex-wrap justify-end max-w-[60%]">
       <ToggleButton
         active={overlays.empireColors}
         onClick={() => onToggle("empireColors")}

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { cn, formatCredits, getItemName, formatModuleName } from "@/lib/utils";
+import { formatAbsolute, relativeTime } from "@/lib/time";
 import { HealthBar } from "./health-bar";
 import { ShipImage } from "./ShipImage";
 import { HealthMetricsCard } from "./health-metrics-card";
@@ -37,18 +38,8 @@ function formatSessionStart(isoTimestamp: string | null | undefined): string {
   }
 }
 
-function relativeTime(isoTimestamp: string | null | undefined): string {
-  if (!isoTimestamp) return "—";
-  const ms = new Date(isoTimestamp).getTime();
-  if (!Number.isFinite(ms)) return "—";
-  const diff = Math.floor((Date.now() - ms) / 1000);
-  if (diff < 0) return "—";
-  if (diff < 5) return "just now";
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
+// `relativeTime` now imported from `@/lib/time` — same behaviour, single
+// canonical implementation across the dashboard.
 
 // ---------------------------------------------------------------------------
 // Component
@@ -287,7 +278,7 @@ export function AgentCard({ agent, gameState, name, compact }: AgentCardProps) {
               {agent.state === 'stopped' && gameState.data_age_s !== undefined && (
                 <span
                   className="text-[9px] text-muted-foreground/60 font-mono"
-                  title={gameState.last_seen ? `Last updated: ${new Date(gameState.last_seen).toLocaleString()}` : 'Stale data'}
+                  title={gameState.last_seen ? `Last updated: ${formatAbsolute(gameState.last_seen)}` : 'Stale data'}
                 >
                   ({gameState.data_age_s < 3600
                     ? `${Math.round(gameState.data_age_s / 60)}m ago`

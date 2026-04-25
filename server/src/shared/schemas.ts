@@ -54,6 +54,7 @@ export const AgentStatusSchema = z.object({
   inBattle: z.boolean().optional(),
   proxySessionActive: z.boolean().optional(),
   lastActivityAt: z.string().nullable().optional(),
+  prayEnabled: z.boolean().optional(),
 });
 
 export type AgentStatusParsed = z.infer<typeof AgentStatusSchema>;

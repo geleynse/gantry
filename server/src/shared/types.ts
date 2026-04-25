@@ -45,6 +45,8 @@ export interface AgentStatus {
   shutdownState?: AgentShutdownState;
   proxySessionActive?: boolean;
   lastActivityAt?: string | null;
+  /** Whether PrayerLang scripting is enabled for this agent (from fleet-config.json). */
+  prayEnabled?: boolean;
 }
 
 export interface ProxyInfo {

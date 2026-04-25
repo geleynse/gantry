@@ -10,6 +10,8 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
+import { formatAbsolute, formatTimeShort } from "@/lib/time";
+import { formatCompactNumber, formatCredits as formatCreditsFull } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,31 +35,13 @@ interface ChartDataPoint {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatCredits(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
-  return String(n);
-}
+// Y-axis tick labels — compact form, no suffix (the chart label says "cr").
+const formatCredits = (n: number) => formatCompactNumber(n);
 
-function formatTimestamp(iso: string): string {
-  try {
-    const d = new Date(iso);
-    const h = d.getHours().toString().padStart(2, "0");
-    const m = d.getMinutes().toString().padStart(2, "0");
-    return `${h}:${m}`;
-  } catch {
-    return iso;
-  }
-}
-
-function formatFullTimestamp(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString();
-  } catch {
-    return iso;
-  }
-}
+// X-axis tick labels — short HH:MM via the shared helper.
+const formatTimestamp = formatTimeShort;
+// Tooltip title — canonical absolute form.
+const formatFullTimestamp = formatAbsolute;
 
 // ---------------------------------------------------------------------------
 // Custom tooltip
@@ -79,7 +63,7 @@ function CustomTooltip({ active, payload }: CustomTooltipProps) {
     >
       <div className="text-foreground">{pt.payload.fullTimestamp}</div>
       <div style={{ color: "#88c0d0" }}>
-        {pt.value.toLocaleString()} cr
+        {formatCreditsFull(pt.value)}
       </div>
       {pt.payload.system && (
         <div className="text-muted-foreground opacity-70">

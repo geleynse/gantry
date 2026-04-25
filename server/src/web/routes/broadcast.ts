@@ -26,7 +26,7 @@ function generateId(): string {
 /**
  * POST /api/fleet/broadcast
  * Send a directive to all (or selected) agents simultaneously.
- * Body: { message: string, targets?: string[], priority?: 'normal' | 'urgent' }
+ * Body: { message: string, targets?: string[], priority?: 'normal' | 'high' | 'urgent' }
  * Returns: { sent: string[], failed: string[], id: string }
  */
 router.post('/', (req, res) => {
@@ -38,13 +38,21 @@ router.post('/', (req, res) => {
     return;
   }
 
-  if (priority !== undefined && priority !== 'normal' && priority !== 'urgent') {
-    res.status(400).json({ error: 'priority must be "normal" or "urgent"' });
+  // Accept the same vocabulary as Comms (normal/high/urgent). "high" maps
+  // to a non-urgent but elevated order in createOrder.
+  const VALID_PRIORITIES = new Set(['normal', 'high', 'urgent']);
+  if (priority !== undefined && !VALID_PRIORITIES.has(priority)) {
+    res.status(400).json({ error: 'priority must be "normal", "high", or "urgent"' });
     return;
   }
 
   const config = getConfig();
-  const allAgentNames = config.agents.map((a) => a.name);
+  // Overseer has its own dedicated page and isn't a broadcast target —
+  // exclude it so "all agents" matches the operational fleet size shown
+  // everywhere else in the UI.
+  const allAgentNames = config.agents
+    .map((a) => a.name)
+    .filter((n) => n !== 'overseer');
 
   // Resolve target list — default to all agents
   let resolvedTargets: string[];

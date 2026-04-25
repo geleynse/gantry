@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useAgentNames } from "@/hooks/use-agent-names";
 import { useFleetStatus } from "@/hooks/use-fleet-status";
 import { relativeTime } from "@/lib/time";
+import { buildTimelineRows, type CommsLogEntry, type TimelineRow } from "./timeline-rows";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,13 +23,6 @@ interface Order {
   deliveries: Array<{ agent: string; delivered_at: string }>;
 }
 
-interface CommsLogEntry {
-  id: number;
-  type: string; // "order" | "delivery" | "report"
-  agent: string | null;
-  message: string;
-  created_at: string;
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -78,6 +72,7 @@ function truncate(text: string, maxLen = 80): string {
   // No space found — fall back to hard truncation
   return text.slice(0, maxLen) + "…";
 }
+
 
 // ---------------------------------------------------------------------------
 // Send Order Form
@@ -447,16 +442,27 @@ interface CommsTimelineProps {
 }
 
 function CommsTimeline({ entries, loading }: CommsTimelineProps) {
-  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
-  function toggleExpand(id: number) {
+  function toggleExpand(key: string) {
     setExpandedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
+
+  // Group ORDER + DELIVERY rows that share an order_id; everything else
+  // stays as a stand-alone row. Sort newest-first by group's latest event.
+  const rows = useMemo(() => {
+    const built = buildTimelineRows(entries);
+    return [...built].sort((a, b) => {
+      const aT = a.kind === "order_group" ? a.latestAt : a.entry.created_at;
+      const bT = b.kind === "order_group" ? b.latestAt : b.entry.created_at;
+      return aT < bT ? 1 : aT > bT ? -1 : 0;
+    });
+  }, [entries]);
 
   return (
     <div className="bg-card border border-border p-4 space-y-3 flex flex-col h-full">
@@ -468,57 +474,140 @@ function CommsTimeline({ entries, loading }: CommsTimelineProps) {
         <div className="text-xs text-muted-foreground">Loading timeline…</div>
       )}
 
-      {!loading && entries.length === 0 && (
+      {!loading && rows.length === 0 && (
         <div className="text-xs text-muted-foreground">No activity yet</div>
       )}
 
-      {!loading && entries.length > 0 && (
+      {!loading && rows.length > 0 && (
         <div className="space-y-2 overflow-y-auto flex-1 min-h-0">
-          {entries.map((entry) => {
-            const isLong = entry.message.length > 120;
-            const isExpanded = expandedIds.has(entry.id);
+          {rows.map((row) => {
+            if (row.kind === "single") {
+              const entry = row.entry;
+              const isLong = entry.message.length > 120;
+              const key = `single-${entry.id}`;
+              const isExpanded = expandedIds.has(key);
+              return (
+                <div
+                  key={key}
+                  className={cn(
+                    "border border-border bg-background p-2.5 space-y-1.5",
+                    isLong && "cursor-pointer hover:bg-secondary/30 transition-colors"
+                  )}
+                  onClick={isLong ? () => toggleExpand(key) : undefined}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={cn(
+                          "text-[10px] px-1.5 py-0.5 font-mono",
+                          eventTypeColor(entry.type)
+                        )}
+                      >
+                        {entry.type.toUpperCase()}
+                      </span>
+                      {entry.agent && (
+                        <span className="text-[10px] text-primary truncate">
+                          {entry.agent}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {isLong && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {isExpanded ? "[-]" : "[+]"}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-muted-foreground">
+                        {relativeTime(entry.created_at)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-foreground leading-tight whitespace-pre-wrap">
+                    {isExpanded ? entry.message : truncate(entry.message, 120)}
+                  </p>
+                </div>
+              );
+            }
+
+            // order_group: ORDER + its DELIVERY rows rendered as one card.
+            const order = row.order;
+            const deliveries = row.deliveries;
+            const isLong = order.message.length > 120;
+            const key = `group-${order.id}`;
+            const isExpanded = expandedIds.has(key);
+
             return (
               <div
-                key={entry.id}
+                key={key}
                 className={cn(
-                  "border border-border bg-background p-2.5 space-y-1.5",
+                  "border border-info/40 bg-background",
                   isLong && "cursor-pointer hover:bg-secondary/30 transition-colors"
                 )}
-                onClick={isLong ? () => toggleExpand(entry.id) : undefined}
+                onClick={isLong ? () => toggleExpand(key) : undefined}
               >
-                {/* Header: type badge, agent, time */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span
-                      className={cn(
-                        "text-[10px] px-1.5 py-0.5 font-mono",
-                        eventTypeColor(entry.type)
+                {/* ORDER header */}
+                <div className="p-2.5 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={cn(
+                          "text-[10px] px-1.5 py-0.5 font-mono",
+                          eventTypeColor("order")
+                        )}
+                      >
+                        ORDER
+                      </span>
+                      {order.agent && (
+                        <span className="text-[10px] text-primary truncate">
+                          → {order.agent}
+                        </span>
                       )}
-                    >
-                      {entry.type.toUpperCase()}
-                    </span>
-                    {entry.agent && (
-                      <span className="text-[10px] text-primary truncate">
-                        {entry.agent}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {isLong && (
+                      {!order.agent && (
+                        <span className="text-[10px] text-info">fleet-wide</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {deliveries.length > 0 && (
+                        <span className="text-[10px] text-success">
+                          {deliveries.length} delivered
+                        </span>
+                      )}
+                      {isLong && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {isExpanded ? "[-]" : "[+]"}
+                        </span>
+                      )}
                       <span className="text-[10px] text-muted-foreground">
-                        {isExpanded ? "[-]" : "[+]"}
+                        {relativeTime(order.created_at)}
                       </span>
-                    )}
-                    <span className="text-[10px] text-muted-foreground">
-                      {relativeTime(entry.created_at)}
-                    </span>
+                    </div>
                   </div>
+
+                  <p className="text-xs text-foreground leading-tight whitespace-pre-wrap">
+                    {isExpanded ? order.message : truncate(order.message, 120)}
+                  </p>
                 </div>
 
-                {/* Message: full when expanded, truncated otherwise */}
-                <p className="text-xs text-foreground leading-tight whitespace-pre-wrap">
-                  {isExpanded ? entry.message : truncate(entry.message, 120)}
-                </p>
+                {/* DELIVERY rows — visually connected list */}
+                {deliveries.length > 0 && (
+                  <div className="border-t border-border bg-secondary/10 px-2.5 py-1.5 space-y-0.5">
+                    {deliveries.map((d) => (
+                      <div
+                        key={`delivery-${d.id}`}
+                        className="flex items-center justify-between text-[10px] text-success"
+                      >
+                        <span>
+                          <span className="text-success/60">↳ delivered to </span>
+                          {d.agent ?? "?"}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {relativeTime(d.created_at)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}

@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { useFleetStatus } from "@/hooks/use-fleet-status";
 import { useAgentNames } from "@/hooks/use-agent-names";
 import { cn } from "@/lib/utils";
+import { formatAbsolute, relativeTime } from "@/lib/time";
 import { RateLimitPanel } from "@/components/rate-limit-panel";
 import { HealthMonitorPanel } from "@/components/health-monitor-panel";
+import { PrayerAdoptionCard } from "@/components/prayer-adoption-card";
 
 // ---------------------------------------------------------------------------
 // Sparkline — inline SVG polyline of up to 20 recent success-rate values
@@ -98,6 +100,7 @@ export default function DiagnosticsPage() {
 
       <RateLimitPanel />
       <HealthMonitorPanel />
+      <PrayerAdoptionCard />
 
       <div className="space-y-4">
         {agentNames.map((agentName) => {
@@ -168,18 +171,20 @@ export default function DiagnosticsPage() {
                   <div className="space-y-1 text-xs">
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground">Started</span>
-                      <span className="font-mono text-foreground">
-                        {agent.sessionStartedAt
-                          ? new Date(agent.sessionStartedAt).toLocaleString()
-                          : "—"}
+                      <span
+                        className="font-mono text-foreground"
+                        title={agent.sessionStartedAt ? relativeTime(agent.sessionStartedAt) : undefined}
+                      >
+                        {agent.sessionStartedAt ? formatAbsolute(agent.sessionStartedAt) : "—"}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground">Last Tool Call</span>
-                      <span className="font-mono text-foreground">
-                        {agent.lastToolCallAt
-                          ? new Date(agent.lastToolCallAt).toLocaleString()
-                          : "—"}
+                      <span
+                        className="font-mono text-foreground"
+                        title={agent.lastToolCallAt ? relativeTime(agent.lastToolCallAt) : undefined}
+                      >
+                        {agent.lastToolCallAt ? formatAbsolute(agent.lastToolCallAt) : "—"}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">

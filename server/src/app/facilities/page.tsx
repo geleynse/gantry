@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Factory, RefreshCw, ChevronDown, AlertCircle } from "lucide-react";
+import { Factory, RefreshCw, ChevronDown, AlertCircle, Radar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch, isApiError } from "@/lib/api";
 import { useAgentNames } from "@/hooks/use-agent-names";
+import { formatAbsolute, relativeTime } from "@/lib/time";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -40,6 +41,10 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "faction", label: "Faction" },
 ];
 
+// `process.env.NODE_ENV` is inlined at build time by Next.js for client
+// bundles, so this stays a simple compile-time constant.
+const IS_DEV = process.env.NODE_ENV === "development";
+
 // ---------------------------------------------------------------------------
 // Error state handling
 // ---------------------------------------------------------------------------
@@ -55,7 +60,7 @@ function classifyError(err: unknown, selectedAgent: string): ErrorState {
     if (err.status === 404) {
       return {
         kind: "not_found",
-        message: `No facilities data yet for ${selectedAgent}—have the agent call \`list_facilities\` in-game first.`,
+        message: `No facilities data yet for ${selectedAgent}.`,
         rawError: err.body,
       };
     }
@@ -152,6 +157,68 @@ function FacilityRow({ facility }: { facility: FacilityRecord }) {
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Request scan button — POSTs to /api/facilities-scan, which queues a
+// `list_facilities` directive into the fleet_orders queue.
+// ---------------------------------------------------------------------------
+
+type ScanState =
+  | { status: "idle" }
+  | { status: "pending" }
+  | { status: "ok"; message: string }
+  | { status: "error"; message: string };
+
+function RequestScanButton({ agent }: { agent: string }) {
+  const [state, setState] = useState<ScanState>({ status: "idle" });
+
+  const handleClick = useCallback(async () => {
+    if (state.status === "pending") return;
+    setState({ status: "pending" });
+    try {
+      const res = await apiFetch<{ ok: boolean; orderId: number; target: string | null }>(
+        "/facilities-scan",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent }),
+        }
+      );
+      setState({
+        status: "ok",
+        message: `Scan order #${res.orderId} queued for ${res.target ?? "fleet"}.`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setState({ status: "error", message: msg });
+    }
+  }, [agent, state.status]);
+
+  const disabled = state.status === "pending" || !agent;
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <button
+        onClick={handleClick}
+        disabled={disabled}
+        className={cn(
+          "inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] uppercase tracking-wider",
+          "text-muted-foreground hover:text-foreground border border-border hover:bg-secondary",
+          "transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        )}
+      >
+        <Radar className={cn("w-3.5 h-3.5", state.status === "pending" && "animate-pulse")} />
+        {state.status === "pending" ? "Requesting…" : "Request facility scan"}
+      </button>
+      {state.status === "ok" && (
+        <p className="text-[11px] text-success">{state.message}</p>
+      )}
+      {state.status === "error" && (
+        <p className="text-[11px] text-destructive">{state.message}</p>
       )}
     </div>
   );
@@ -255,8 +322,11 @@ export default function FacilitiesPage() {
 
       {/* Cache timestamp */}
       {data?.cachedAt && (
-        <p className="text-[10px] text-muted-foreground/50">
-          Cached {new Date(data.cachedAt).toLocaleTimeString()}
+        <p
+          className="text-[10px] text-muted-foreground/50"
+          title={formatAbsolute(data.cachedAt)}
+        >
+          Cached {relativeTime(data.cachedAt)}
         </p>
       )}
 
@@ -267,9 +337,14 @@ export default function FacilitiesPage() {
             <AlertCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
             <div className="flex-1">
               <p className="text-sm text-destructive font-medium">{error.message}</p>
+              {error.kind === "not_found" && selectedAgent && (
+                <div className="mt-3">
+                  <RequestScanButton agent={selectedAgent} />
+                </div>
+              )}
             </div>
           </div>
-          {error.rawError && (
+          {error.rawError && IS_DEV && (
             <details className="text-[11px] text-muted-foreground/70">
               <summary className="cursor-pointer hover:text-muted-foreground">
                 Debug info
@@ -283,14 +358,17 @@ export default function FacilitiesPage() {
       )}
 
       {!loading && !error && facilities.length === 0 && (
-        <div className="text-muted-foreground text-sm italic py-12 text-center">
-          {activeTab === "station"
-            ? "No station facility data — dock at a station to populate."
-            : activeTab === "owned"
-            ? "No owned facilities recorded."
-            : activeTab === "build"
-            ? "No buildable facility types in cache."
-            : "No faction facilities recorded."}
+        <div className="text-muted-foreground text-sm italic py-12 text-center space-y-4">
+          <div>
+            {activeTab === "station"
+              ? "No station facility data — dock at a station to populate."
+              : activeTab === "owned"
+              ? "No owned facilities recorded."
+              : activeTab === "build"
+              ? "No buildable facility types in cache."
+              : "No faction facilities recorded."}
+          </div>
+          {selectedAgent && <RequestScanButton agent={selectedAgent} />}
         </div>
       )}
 

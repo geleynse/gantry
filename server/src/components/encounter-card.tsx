@@ -1,5 +1,7 @@
 "use client";
 
+import { formatAbsolute, relativeTime } from "@/lib/time";
+
 // ---------------------------------------------------------------------------
 // EncounterCard — collapsed/expanded view of a combat encounter
 // ---------------------------------------------------------------------------
@@ -92,8 +94,10 @@ function eventTypeLabel(eventType: CombatEvent["event_type"]) {
   return <span className="text-red-400 text-xs font-mono">died</span>;
 }
 
+// Combat events can fire several per second within a single encounter, so
+// we keep seconds precision (formatAbsolute is HH:MM:SS-aware).
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString();
+  return formatAbsolute(iso);
 }
 
 function hullBarColor(pct: number): string {
@@ -141,8 +145,11 @@ export function EncounterCard({ encounter, expanded, onToggle, events }: Encount
         </span>
 
         {/* Timestamp */}
-        <span className="text-xs font-mono text-muted-foreground shrink-0 whitespace-nowrap">
-          {new Date(encounter.started_at).toLocaleString()}
+        <span
+          className="text-xs font-mono text-muted-foreground shrink-0 whitespace-nowrap"
+          title={relativeTime(encounter.started_at)}
+        >
+          {formatAbsolute(encounter.started_at)}
         </span>
 
         {/* Damage */}

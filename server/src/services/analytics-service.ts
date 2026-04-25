@@ -73,5 +73,12 @@ export async function getAnalytics(agentName: string): Promise<Analytics> {
 }
 
 export async function getAllAnalytics(): Promise<Analytics[]> {
-  return Promise.all(AGENTS.map(a => getAnalytics(a.name)));
+  // Exclude overseer from fleet-wide analytics — it's a supervisor, not a
+  // trader/combat agent. Its cost/turn metrics live on the dedicated
+  // /overseer page (see web/routes/overseer.ts).
+  return Promise.all(
+    AGENTS
+      .filter((a) => a.name !== 'overseer')
+      .map((a) => getAnalytics(a.name)),
+  );
 }

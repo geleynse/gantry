@@ -16,6 +16,7 @@
  */
 
 import { cn } from "@/lib/utils";
+import { formatNumber, formatDelta } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -89,7 +90,7 @@ function DeltaRow({ stat }: { stat: StatDelta }) {
       <div className="flex items-center gap-1.5 font-mono text-[11px]">
         {/* Current value */}
         <span className="text-foreground/70">
-          {stat.current != null ? stat.current.toLocaleString() : "—"}
+          {stat.current != null ? formatNumber(stat.current) : "—"}
         </span>
 
         {/* Arrow + target */}
@@ -97,7 +98,7 @@ function DeltaRow({ stat }: { stat: StatDelta }) {
           <>
             <span className="text-muted-foreground/50">→</span>
             <span className="text-foreground">
-              {stat.target.toLocaleString()}
+              {formatNumber(stat.target)}
             </span>
           </>
         )}
@@ -111,7 +112,7 @@ function DeltaRow({ stat }: { stat: StatDelta }) {
               downgrade && "text-destructive bg-destructive/10",
             )}
           >
-            {improved ? "+" : ""}{stat.delta.toLocaleString()}
+            {formatDelta(stat.delta)}
           </span>
         )}
         {stat.delta === 0 && (

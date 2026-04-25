@@ -7,13 +7,18 @@ export function cn(...inputs: ClassValue[]) {
 
 /**
  * Canonical agent name → color mapping for known agents.
- * NOTE: Used by leaderboard to identify fleet agents among all players.
+ * NOTE: Used by leaderboard to colorize fleet entries among all players.
  * Do NOT use this for UI rendering of agent lists — use useAgentNames() hook instead.
  */
 export const AGENT_COLORS: Record<string, string> = {
   // Populated at runtime from fleet config. Add custom colors here if desired.
   // Example: 'my-agent': '#88c0d0',
 };
+
+// AGENT_NAMES (formerly an empty array left over from the pre-multi-agent
+// refactor) was removed. Use `useAgentNames()` from `@/hooks/use-agent-names`
+// for the live roster, or `AGENTS`/`AGENT_NAMES` from `@/config/fleet` on
+// the server side.
 
 /**
  * Returns a color for the given agent name.
@@ -32,17 +37,14 @@ export function getAgentColor(name: string): string {
 }
 
 /**
- * All fleet agent names (hardcoded).
- * NOTE: Used by leaderboard/leaderboard-table to identify fleet agents among
- * all players. Do NOT use this for UI rendering of agent lists — use the
- * useAgentNames() hook instead so Gantry works with any fleet-config.
+ * Format a number as credits with K/M suffixes and null safety.
+ *
+ * NOTE: This is the legacy compact format used by agent cards and the
+ * fleet capacity panel — kept for backwards compatibility. New code should
+ * use the canonical helpers in `@/lib/format`:
+ *   - `formatCredits`        → full precision ("1,234,567 cr")
+ *   - `formatCreditsCompact` → 3-sig-fig compact ("1.23M cr")
  */
-export const AGENT_NAMES = [
-  // Populated at runtime from fleet config.
-  // The leaderboard uses this to distinguish fleet agents from other players.
-] as const;
-
-/** Format a number as credits with K/M suffixes and null safety */
 export function formatCredits(n: number | null | undefined): string {
   if (n == null) return "---";
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M cr`;

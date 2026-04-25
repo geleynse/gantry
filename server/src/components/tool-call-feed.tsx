@@ -11,7 +11,9 @@ import { cn } from "@/lib/utils";
 import { useSSE } from "@/hooks/use-sse";
 import { apiFetch } from "@/lib/api";
 import { formatTime, formatDateTime } from "@/lib/time";
+import { formatNumber } from "@/lib/format";
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Pickaxe, DollarSign, Navigation } from "lucide-react";
+import { PrayerRow } from "@/components/prayer-row";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -69,6 +71,7 @@ const COMPOUND_TOOL_DESCRIPTIONS: Record<string, string> = {
   loot_wrecks: "Loot multiple wrecks at current location",
   battle_readiness: "Check combat readiness status",
   flee: "Emergency escape from combat",
+  pray: "Execute a bounded PrayerLang script",
 };
 
 const COMPOUND_TOOL_NAMES = new Set(Object.keys(COMPOUND_TOOL_DESCRIPTIONS));
@@ -629,7 +632,7 @@ function getCompletionSummary(toolName: string, resultSummary: string | null): s
       const credits = Number(result.total_credits ?? result.credits_earned ?? result.revenue);
       if (Number.isFinite(items) && items > 0) {
         const credStr = Number.isFinite(credits) && credits > 0
-          ? ` for ${credits.toLocaleString()} credits`
+          ? ` for ${formatNumber(credits)} credits`
           : "";
         return `Sold ${items} item${items !== 1 ? "s" : ""}${credStr}`;
       }
@@ -1133,6 +1136,22 @@ export function ToolCallFeed({ agentName }: { agentName: string }) {
                 groupRecords={groupRecords}
                 isGroupExpanded={expandedGroups.has(record.id)}
                 onToggle={() => toggleGroupExpand(record.id)}
+              />
+            );
+          }
+
+          // PrayerLang scripts get violet-themed row with script/diff/subcall detail.
+          // Grouped pray rows (count > 1) keep the violet theme + script preview;
+          // PrayerRow renders a "Nx" badge next to the tool name in that case.
+          if (record.tool_name === "pray") {
+            return (
+              <PrayerRow
+                key={record.id}
+                record={record}
+                agentName={agentName}
+                isGroupExpanded={expandedGroups.has(record.id)}
+                onToggle={() => toggleGroupExpand(record.id)}
+                count={count}
               />
             );
           }

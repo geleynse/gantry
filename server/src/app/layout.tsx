@@ -3,7 +3,7 @@ import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
 import { TopBar } from "@/components/top-bar";
 import { AuthProvider } from "@/components/auth-provider";
-import { ClientLayout } from "@/components/client-layout";
+import { ClientLayout, ClientProviders } from "@/components/client-layout";
 
 export const metadata: Metadata = {
   title: "Gantry",
@@ -26,23 +26,25 @@ export default function RootLayout({
       </head>
       <body className="min-h-screen bg-background text-foreground antialiased">
         <AuthProvider>
-          <div className="flex h-screen overflow-hidden">
-            {/* Sidebar — hidden on mobile, visible on md+ */}
-            <Sidebar />
+          <ClientProviders>
+            <div className="flex h-screen overflow-hidden">
+              {/* Sidebar — hidden on mobile, visible on md+ */}
+              <Sidebar />
 
-            {/* Right-hand column: top bar + scrollable content */}
-            <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-              {/* Top bar — fixed at top of content column */}
-              <TopBar />
+              {/* Right-hand column: top bar + scrollable content */}
+              <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+                {/* Top bar — fixed at top of content column */}
+                <TopBar />
 
-              {/* Main content — scrolls independently */}
-              <main className="flex-1 overflow-auto min-h-0">
-                <ClientLayout>
-                  <div className="p-3 md:p-6">{children}</div>
-                </ClientLayout>
-              </main>
+                {/* Main content — scrolls independently */}
+                <main className="flex-1 overflow-auto min-h-0">
+                  <ClientLayout>
+                    <div className="p-3 md:p-6">{children}</div>
+                  </ClientLayout>
+                </main>
+              </div>
             </div>
-          </div>
+          </ClientProviders>
         </AuthProvider>
       </body>
     </html>

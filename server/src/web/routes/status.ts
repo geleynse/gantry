@@ -91,6 +91,7 @@ async function buildAgentStatus(agent: typeof AGENTS[number]): Promise<AgentStat
       llmRunning,
       proxySessionActive,
       lastActivityAt,
+      prayEnabled: agent.prayEnabled === true,
     };
   }
 
@@ -124,6 +125,7 @@ async function buildAgentStatus(agent: typeof AGENTS[number]): Promise<AgentStat
     llmRunning: running,
     proxySessionActive,
     lastActivityAt,
+    prayEnabled: agent.prayEnabled === true,
   };
 }
 

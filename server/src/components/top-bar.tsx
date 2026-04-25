@@ -17,12 +17,17 @@ export function TopBar() {
       ? Object.values(gameStates).reduce((sum, gs) => sum + (gs.credits ?? 0), 0)
       : null;
 
+  // Exclude overseer from fleet agent counts — it has its own banner + page
+  // and is not part of the operational fleet. Keeps the top-bar count
+  // consistent with the Dashboard, Fleet page, Comms, etc.
+  const fleetAgents = fleetStatus?.agents.filter((a) => a.name !== "overseer");
+
   const runningCount =
-    fleetStatus != null
-      ? fleetStatus.agents.filter((a) => a.state === "running").length
+    fleetAgents != null
+      ? fleetAgents.filter((a) => a.state === "running").length
       : null;
 
-  const totalCount = fleetStatus?.agents.length ?? null;
+  const totalCount = fleetAgents?.length ?? null;
 
   const proxyHealthy = fleetStatus?.actionProxy?.healthy ?? null;
 

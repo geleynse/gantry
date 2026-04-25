@@ -70,16 +70,38 @@ function buildTimeClause(filter: TimeFilter, tableAlias: string = 't'): { where:
   return { where, params };
 }
 
+/**
+ * Append `agent != 'overseer'` to a built WHERE clause so per-agent fleet
+ * aggregates exclude the overseer (which is a supervisor agent, not a
+ * trader/combat agent — its turns are recorded by turn-ingestor like any
+ * other Claude Code agent, but it would otherwise pollute fleet-wide
+ * cost / efficiency / comparison rollups).
+ *
+ * Pass-through when the caller has already filtered to a specific agent
+ * (`filter.agent` set), since the overseer would never match a fleet-agent
+ * name anyway.
+ */
+function withoutOverseer(
+  where: string,
+  tableAlias: string = 't',
+  filter?: TimeFilter,
+): string {
+  if (filter?.agent) return where;
+  const clause = `${tableAlias}.agent != 'overseer'`;
+  return where ? `${where} AND ${clause}` : `WHERE ${clause}`;
+}
+
 // --- Query Functions ---
 
 export function getCostOverTime(filter: TimeFilter): CostDataPoint[] {
   const db = getDb();
   const { where, params } = buildTimeClause(filter);
+  const whereWithoutOverseer = withoutOverseer(where, 't', filter);
 
   const rows = db.prepare(`
     SELECT agent, started_at, cost_usd, iterations, duration_ms, input_tokens, output_tokens
     FROM turns t
-    ${where}
+    ${whereWithoutOverseer}
     ORDER BY t.started_at ASC
   `).all(...params) as Array<{
     agent: string;
@@ -154,7 +176,10 @@ export function getCreditsOverTime(filter: TimeFilter): CreditsDataPoint[] {
 export function getHullShieldOverTime(filter: TimeFilter): HullShieldDataPoint[] {
   const db = getDb();
   const { where, params } = buildTimeClause(filter);
-  const hullFilter = where ? `${where} AND gs.hull IS NOT NULL` : 'WHERE gs.hull IS NOT NULL';
+  const whereWithoutOverseer = withoutOverseer(where, 't', filter);
+  const hullFilter = whereWithoutOverseer
+    ? `${whereWithoutOverseer} AND gs.hull IS NOT NULL`
+    : 'WHERE gs.hull IS NOT NULL';
 
   const rows = db.prepare(`
     SELECT gs.agent, t.started_at, gs.hull, gs.hull_max, gs.shield, gs.shield_max
@@ -184,6 +209,7 @@ export function getHullShieldOverTime(filter: TimeFilter): HullShieldDataPoint[]
 export function getAgentComparison(filter: TimeFilter): AgentComparisonEntry[] {
   const db = getDb();
   const { where, params } = buildTimeClause(filter);
+  const whereWithoutOverseer = withoutOverseer(where, 't', filter);
 
   // Get per-agent turn stats
   const turnStats = db.prepare(`
@@ -195,7 +221,7 @@ export function getAgentComparison(filter: TimeFilter): AgentComparisonEntry[] {
       SUM(t.iterations) as total_iterations,
       AVG(t.duration_ms) as avg_duration_ms
     FROM turns t
-    ${where}
+    ${whereWithoutOverseer}
     GROUP BY t.agent
   `).all(...params) as Array<{
     agent: string;
@@ -469,6 +495,7 @@ export interface AgentEfficiencyEntry {
 export function getEfficiencyMetrics(filter: TimeFilter): AgentEfficiencyEntry[] {
   const db = getDb();
   const { where, params } = buildTimeClause(filter);
+  const whereWithoutOverseer = withoutOverseer(where, 't', filter);
 
   const rows = db.prepare(`
     SELECT
@@ -480,7 +507,7 @@ export function getEfficiencyMetrics(filter: TimeFilter): AgentEfficiencyEntry[]
       SUM(t.cache_read_tokens) as total_cache_read,
       SUM(t.input_tokens) as total_input
     FROM turns t
-    ${where}
+    ${whereWithoutOverseer}
     GROUP BY t.agent
   `).all(...params) as Array<{
     agent: string;

@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Play, Square, Eye, RotateCw, List, LayoutGrid, Shield, ShieldOff } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { formatCredits as formatCreditsFull } from "@/lib/format";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { useFleetStatus } from "@/hooks/use-fleet-status";
@@ -267,7 +268,7 @@ export default function DashboardPage() {
               Fleet Credits
             </span>
             <span className="font-mono text-foreground">
-              {totalCredits !== null ? totalCredits.toLocaleString() + " cr" : "—"}
+              {totalCredits !== null ? formatCreditsFull(totalCredits) : "—"}
             </span>
           </div>
 
@@ -279,9 +280,11 @@ export default function DashboardPage() {
             <span className="font-mono text-muted-foreground">$0.00</span>
           </div>
 
-          {/* Agent state summary */}
+          {/* Agent state summary — exclude overseer (has its own banner/page) */}
           {fleetStatus && (
-            <FleetStatusSummary agents={fleetStatus.agents} />
+            <FleetStatusSummary
+              agents={fleetStatus.agents.filter((a) => a.name !== "overseer")}
+            />
           )}
           {isConnecting && (
             <span className="text-muted-foreground font-mono text-[10px]">—</span>

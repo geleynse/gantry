@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { AlertTriangle, RefreshCw, CheckCheck, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
-import { relativeTime } from "@/lib/time";
+import { relativeTime, formatAbsolute } from "@/lib/time";
 import { getSeverityClasses, sortAlerts, filterAlerts } from "./helpers";
 import type { Severity } from "./helpers";
 
@@ -272,8 +272,11 @@ export default function AlertsPage() {
           )}
 
           {lastRefresh && (
-            <span className="text-[10px] text-muted-foreground tabular-nums">
-              {lastRefresh.toLocaleTimeString()}
+            <span
+              className="text-[10px] text-muted-foreground tabular-nums"
+              title={relativeTime(lastRefresh)}
+            >
+              {formatAbsolute(lastRefresh)}
             </span>
           )}
 

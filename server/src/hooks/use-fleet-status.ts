@@ -1,6 +1,7 @@
 "use client";
 
-import { useSSE } from './use-sse';
+import { createContext, createElement, useContext, type ReactNode } from 'react';
+import { useSSE, type UseSSEResult } from './use-sse';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,6 +72,8 @@ export interface AgentStatus {
   lastActivityAt?: string | null;
   // Credential health
   credentialHealth?: CredentialHealth;
+  /** Whether PrayerLang scripting is enabled for this agent (from fleet-config.json). */
+  prayEnabled?: boolean;
 }
 
 export interface ProxyInfo {
@@ -108,20 +111,57 @@ export interface ToolCallEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Hooks
+// Provider + hooks
 // ---------------------------------------------------------------------------
 
 /**
- * Subscribes to the fleet-wide status SSE stream and returns typed
- * FleetStatus data, connection state, and any error message.
+ * Context for the shared fleet-status SSE subscription. When the provider is
+ * mounted, every `useFleetStatus()` call within the tree shares one EventSource
+ * — preventing duplicate subscriptions racing during reconnect, which used to
+ * cause Dashboard / Fleet / Agent Detail to disagree on the same agent's
+ * health score.
+ *
+ * The default `null` value indicates no provider; consumers fall back to
+ * opening their own subscription so unit tests can render hooks standalone.
  */
-export function useFleetStatus() {
-  return useSSE<FleetStatus>('/api/status/stream', 'status');
+const FleetStatusContext = createContext<UseSSEResult<FleetStatus> | null>(null);
+
+/**
+ * Mount once at the app root (see `app/layout.tsx`). Owns the single
+ * `/api/status/stream` SSE subscription for the fleet-status event so all
+ * consumers see identical health-score values, including the staleness
+ * adjustment computed server-side in `health-scorer.ts` (slow:* / stale:*
+ * issues + score penalty).
+ */
+export function FleetStatusProvider({ children }: { children: ReactNode }) {
+  const value = useSSE<FleetStatus>('/api/status/stream', 'status');
+  return createElement(FleetStatusContext.Provider, { value }, children);
+}
+
+/**
+ * Returns the shared fleet-status data published by `FleetStatusProvider`.
+ *
+ * If no provider is mounted (e.g. unit tests rendering the hook in
+ * isolation), this opens its own subscription as a fallback so the hook
+ * remains usable standalone.
+ */
+export function useFleetStatus(): UseSSEResult<FleetStatus> {
+  const ctx = useContext(FleetStatusContext);
+  // Always call the fallback hook so React's hook-call order stays stable
+  // across renders, but disable its EventSource when a provider is present.
+  const fallback = useSSE<FleetStatus>('/api/status/stream', 'status', {
+    disabled: ctx !== null,
+  });
+  return ctx ?? fallback;
 }
 
 /**
  * Subscribes to the same SSE stream but filters for `toolCall` events,
  * providing a real-time feed of the most recent tool invocation.
+ *
+ * This is a separate subscription on the same endpoint because EventSource
+ * splits handlers by event-name; the underlying browser HTTP/2 connection
+ * is shared.
  */
 export function useToolCallStream() {
   return useSSE<ToolCallEvent>('/api/status/stream', 'toolCall');

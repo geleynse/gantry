@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Play, Square, RotateCw, Power, Settings, Save, Loader2 } from "lucide-react";
 import { cn, formatModuleName, formatCredits } from "@/lib/utils";
+import { formatNumber } from "@/lib/format";
 import { getAgentDisplayState } from "@/lib/agent-display-state";
 import { getProxyStatusText } from "@/lib/proxy-status";
 import { apiFetch } from "@/lib/api";
@@ -23,6 +24,7 @@ import { GalaxyMap } from "@/components/galaxy-map";
 import { StatusBadge } from "@/components/status-badge";
 import { ControlsPanel } from "@/components/controls-panel";
 import { AgentControls as AgentControlsPanel } from "@/components/agent-controls";
+import { PrayerPanel } from "@/components/prayer-panel";
 import { SurvivabilityPanel } from "@/components/survivability-panel";
 import { LifetimeStatsPanel } from "../lifetime-stats";
 
@@ -30,13 +32,14 @@ import { LifetimeStatsPanel } from "../lifetime-stats";
 // Tab definitions
 // ---------------------------------------------------------------------------
 
-type TabId = "ship" | "modules" | "economy" | "activity" | "logs" | "prompt" | "map" | "thoughts" | "survivability" | "lifetime-stats" | "config" | "controls";
+type TabId = "ship" | "modules" | "economy" | "activity" | "prayer" | "logs" | "prompt" | "map" | "thoughts" | "survivability" | "lifetime-stats" | "config" | "controls";
 
-const TABS: { id: TabId; label: string; adminOnly?: boolean }[] = [
+const TABS: { id: TabId; label: string; adminOnly?: boolean; requiresPrayer?: boolean }[] = [
   { id: "ship", label: "Ship & Loadout" },
   { id: "modules", label: "Modules" },
   { id: "economy", label: "Economy" },
   { id: "activity", label: "Activity" },
+  { id: "prayer", label: "Prayer", requiresPrayer: true },
   { id: "logs", label: "Logs & Diary" },
   { id: "thoughts", label: "Thoughts" },
   { id: "prompt", label: "Prompt" },
@@ -187,7 +190,7 @@ function ModulesPanel({ gameState }: { gameState: import("@/hooks/use-game-state
                   </div>
                   {xpToNext > 0 && (
                     <div className="text-[9px] text-muted-foreground text-right mt-1">
-                      {xp.toLocaleString()} / {xpToNext.toLocaleString()} XP
+                      {formatNumber(xp)} / {formatNumber(xpToNext)} XP
                     </div>
                   )}
                 </div>
@@ -563,6 +566,10 @@ function PlaceholderTab({ label }: { label: string }) {
 
 function AgentControls({ name, agent }: { name: string; agent: import("@/hooks/use-fleet-status").AgentStatus | null }) {
   const [busy, setBusy] = useState<string | null>(null);
+  // Explicit confirmation before initiating shutdown. Previously the red
+  // SHUTDOWN button fired immediately on click, with only the color as a
+  // visual hint — easy to click by accident.
+  const [shutdownConfirmOpen, setShutdownConfirmOpen] = useState(false);
 
   const isRunning = agent?.llmRunning ?? false;
   const llmRunning = isRunning;
@@ -614,7 +621,7 @@ function AgentControls({ name, agent }: { name: string; agent: import("@/hooks/u
         </button>
         {shutdownState === "none" && llmRunning && (
           <button
-            onClick={() => doAction("shutdown", "POST", { reason: "User initiated" })}
+            onClick={() => setShutdownConfirmOpen(true)}
             disabled={busy !== null}
             className="flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded border border-error/30 bg-error/5 text-error hover:bg-error hover:text-white hover:border-error transition-all shadow-sm ml-1"
             title="Initiate graceful shutdown"
@@ -625,6 +632,44 @@ function AgentControls({ name, agent }: { name: string; agent: import("@/hooks/u
         )}
       </div>
 
+      {shutdownConfirmOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="shutdown-confirm-title"
+        >
+          <div className="bg-card border border-error/50 max-w-md w-full mx-4 p-5 space-y-4">
+            <h2
+              id="shutdown-confirm-title"
+              className="text-sm font-bold uppercase tracking-wider text-error flex items-center gap-2"
+            >
+              <Power className="w-4 h-4" /> Shutdown {name}?
+            </h2>
+            <p className="text-xs text-foreground">
+              Initiates a graceful shutdown. The agent will finish its
+              current turn, dock, and exit. Restart manually when ready.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShutdownConfirmOpen(false)}
+                className="px-3 py-1.5 text-[10px] uppercase tracking-wider border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShutdownConfirmOpen(false);
+                  void doAction("shutdown", "POST", { reason: "User initiated" });
+                }}
+                className="px-3 py-1.5 text-[10px] uppercase tracking-wider bg-error text-error-content font-bold hover:opacity-90 transition-opacity"
+              >
+                Shut Down
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -784,7 +829,7 @@ export function AgentDetailClient() {
         }}
       >
         <div className="flex gap-0 border-b border-border min-w-max">
-          {TABS.filter(t => !t.adminOnly || isAdmin).map((tab) => (
+          {TABS.filter(t => (!t.adminOnly || isAdmin) && (!t.requiresPrayer || agent?.prayEnabled === true)).map((tab) => (
             <button
               key={tab.id}
               onClick={() => switchTab(tab.id)}
@@ -812,6 +857,7 @@ export function AgentDetailClient() {
         {activeTab === "modules" && <ModulesPanel gameState={gameState} />}
         {activeTab === "economy" && <EconomyPanel agentName={name} />}
         {activeTab === "activity" && <ToolCallFeed key={name} agentName={name} />}
+        {activeTab === "prayer" && agent?.prayEnabled === true && <PrayerPanel agentName={name} />}
         {activeTab === "logs" && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-auto md:h-[calc(100vh-350px)]">
             <div className="h-[50vh] md:h-full">

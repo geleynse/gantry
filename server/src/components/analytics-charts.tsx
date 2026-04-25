@@ -15,7 +15,14 @@ import {
 } from "recharts";
 import { apiFetch } from "@/lib/api";
 import { AGENT_COLORS, getAgentColor } from "@/lib/utils";
-import { formatTimeShort, formatFullTimestamp } from "@/lib/time";
+import { formatTimeShort, formatAbsolute, relativeTime } from "@/lib/time";
+import {
+  formatCompactNumber,
+  formatCreditsCompact,
+  formatCreditsDeltaCompact,
+  formatCredits as formatCreditsFull,
+  formatNumber,
+} from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,7 +41,9 @@ interface CostDataPoint {
 interface ChartCostPoint {
   time: string;
   fullTimestamp: string;
-  [key: string]: number | string; // agent costs
+  /** Truthy on the first tick of a new local day — drives the X-axis date label. */
+  dayStart?: string;
+  [key: string]: number | string | undefined; // agent costs
 }
 
 interface ToolFrequencyEntry {
@@ -70,16 +79,30 @@ function formatCost(n: number): string {
   return `$${n.toFixed(4)}`;
 }
 
+/**
+ * Y-axis tick formatter — compact form with `$` prefix and 2-sig-fig
+ * decimals so adjacent ticks read consistently. Replaces the previous
+ * `.toFixed(N)` ladder which produced uneven precision across the axis.
+ */
+function formatCostAxis(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  if (abs === 0) return "$0.00";
+  if (abs >= 1_000) return `${sign}$${formatCompactNumber(abs)}`;
+  // Two decimal places at the dollar level — "$2.60", "$0.65", "$0.05".
+  return `${sign}$${abs.toFixed(2)}`;
+}
+
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatCredits(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
-  return String(n);
-}
+// Local compact-credits shim — keeps existing call sites working while
+// pointing at the canonical helper. Drop "M" / "k" / raw is now handled
+// uniformly in lib/format.
+const formatCredits = (n: number) => formatCompactNumber(n);
 
 // ---------------------------------------------------------------------------
 // Custom Tooltips
@@ -135,6 +158,58 @@ function ToolTooltip({ active, payload }: ToolTooltipProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Cost X-axis tick — adds a day-boundary date label
+// ---------------------------------------------------------------------------
+
+// Recharts passes an internal tick props shape; we only need x / y / payload.
+// Recharts types it loosely (x can be string | number for some charts), so
+// we accept the wider shape and coerce.
+interface CostXAxisTickProps {
+  x?: number | string;
+  y?: number | string;
+  payload?: { value?: string; index?: number };
+  data: ChartCostPoint[];
+}
+
+/**
+ * Renders the X-axis tick label, plus a faint date label below for the
+ * first tick of each day. Avoids the silent midnight crossing where
+ * adjacent ticks read "…21:54 11:49 12:07…" with no date context.
+ */
+function CostXAxisTick({ x = 0, y = 0, payload, data }: CostXAxisTickProps) {
+  const idx = payload?.index;
+  const point = typeof idx === "number" ? data[idx] : undefined;
+  const dayLabel = point?.dayStart;
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text
+        x={0}
+        y={0}
+        dy={12}
+        textAnchor="middle"
+        fill="#8892a8"
+        fontSize={10}
+      >
+        {payload?.value}
+      </text>
+      {dayLabel && (
+        <text
+          x={0}
+          y={0}
+          dy={24}
+          textAnchor="middle"
+          fill="#8892a8"
+          fontSize={9}
+          opacity={0.7}
+        >
+          {dayLabel}
+        </text>
+      )}
+    </g>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CostChart Component
 // ---------------------------------------------------------------------------
 
@@ -167,7 +242,7 @@ export function CostChart({ hours }: CostChartProps) {
           if (!grouped[pt.timestamp]) {
             grouped[pt.timestamp] = {
               agents: {},
-              fullTs: formatFullTimestamp(pt.timestamp),
+              fullTs: formatAbsolute(pt.timestamp),
             };
           }
           grouped[pt.timestamp].agents[pt.agent] = pt.cost;
@@ -181,15 +256,29 @@ export function CostChart({ hours }: CostChartProps) {
           step = Math.ceil(entries.length / MAX_POINTS);
         }
 
-        setData(
-          entries
-            .filter((_, i) => i % step === 0 || i === entries.length - 1)
-            .map(([ts, { agents, fullTs }]) => ({
-              time: formatTimeShort(ts),
-              fullTimestamp: fullTs,
-              ...agents,
-            }))
+        // Build points; mark each row with the local-date string so we can
+        // emit a "day boundary" tick label when the date changes from the
+        // previous point. Without this the X-axis silently crosses
+        // midnight (…21:54 → 11:49 → 12:07…) with no date context.
+        const filtered = entries.filter(
+          (_, i) => i % step === 0 || i === entries.length - 1,
         );
+        let prevDate: string | null = null;
+        const points: ChartCostPoint[] = filtered.map(([ts, { agents, fullTs }]) => {
+          const d = new Date(ts.includes("T") ? ts : ts.replace(" ", "T") + "Z");
+          const localDate = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+          const isDayStart = prevDate !== null && localDate !== prevDate;
+          prevDate = localDate;
+          const dayLabel = `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()}`;
+          return {
+            time: formatTimeShort(ts),
+            fullTimestamp: fullTs,
+            // First point of a new day → "Apr 24 00:00"; otherwise undefined.
+            dayStart: isDayStart ? dayLabel : undefined,
+            ...agents,
+          };
+        });
+        setData(points);
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to load cost data");
@@ -238,13 +327,18 @@ export function CostChart({ hours }: CostChartProps) {
           />
           <XAxis
             dataKey="time"
-            tick={{ fill: "#8892a8", fontSize: 10 }}
+            // Recharts' tick prop accepts a render function; we feed a custom
+            // component so we can layer the day-boundary date label below.
+            tick={(props: object) => (
+              <CostXAxisTick {...(props as CostXAxisTickProps)} data={data} />
+            )}
             tickLine={false}
             axisLine={{ stroke: "#3b4252" }}
             interval="preserveStartEnd"
+            height={32}
           />
           <YAxis
-            tickFormatter={formatCost}
+            tickFormatter={formatCostAxis}
             tick={{ fill: "#8892a8", fontSize: 10 }}
             tickLine={false}
             axisLine={{ stroke: "#3b4252" }}
@@ -257,7 +351,15 @@ export function CostChart({ hours }: CostChartProps) {
             height={20}
           />
           {/* Derive agent list from data keys (AGENT_COLORS is empty at runtime) */}
-          {Array.from(new Set(data.flatMap((pt) => Object.keys(pt).filter((k) => k !== "time" && k !== "fullTimestamp")))).map((agent) => {
+          {Array.from(
+            new Set(
+              data.flatMap((pt) =>
+                Object.keys(pt).filter(
+                  (k) => k !== "time" && k !== "fullTimestamp" && k !== "dayStart",
+                ),
+              ),
+            ),
+          ).map((agent) => {
             const color = getAgentColor(agent);
             return (
               <Line
@@ -266,9 +368,13 @@ export function CostChart({ hours }: CostChartProps) {
                 dataKey={agent}
                 stroke={color}
                 strokeWidth={1.5}
-                dot={false}
+                // Show a small dot so isolated points (no neighbours to
+                // connect to) are still visible — without this the chart
+                // looks empty for sparse-cost agents.
+                dot={{ r: 1.5, fill: color, strokeWidth: 0 }}
                 activeDot={{ r: 3, fill: color }}
                 connectNulls={true}
+                isAnimationActive={false}
               />
             );
           })}
@@ -480,8 +586,11 @@ export function AgentComparisonTable({ hours }: AgentComparisonTableProps) {
               <td className="text-right px-2 py-2 font-mono text-foreground/80">
                 {formatDuration(row.avgDurationMs)}
               </td>
-              <td className="text-right px-2 py-2 font-mono text-foreground/80 whitespace-nowrap">
-                {row.latestCredits != null ? formatCredits(row.latestCredits) : "—"}
+              <td
+                className="text-right px-2 py-2 font-mono text-foreground/80 whitespace-nowrap"
+                title={row.latestCredits != null ? formatCreditsFull(row.latestCredits) : undefined}
+              >
+                {row.latestCredits != null ? formatCreditsCompact(row.latestCredits) : "—"}
               </td>
               <td
                 className={`text-right px-2 py-2 font-mono whitespace-nowrap ${
@@ -489,9 +598,9 @@ export function AgentComparisonTable({ hours }: AgentComparisonTableProps) {
                     ? "text-success"
                     : "text-error"
                 }`}
+                title={formatCreditsFull(row.creditsChange)}
               >
-                {row.creditsChange >= 0 ? "+" : ""}
-                {formatCredits(row.creditsChange)}
+                {formatCreditsDeltaCompact(row.creditsChange)}
               </td>
             </tr>
           ))}
@@ -620,7 +729,7 @@ export function ExpensiveTurnsTable({ hours, limit = 10 }: ExpensiveTurnsTablePr
                   {row.turnNumber}
                 </td>
                 <td className="px-2 py-2 font-mono text-foreground/60 text-[10px] whitespace-nowrap">
-                  {formatFullTimestamp(row.startedAt)}
+                  {formatAbsolute(row.startedAt)}
                 </td>
                 <td className="text-right px-2 py-2 font-mono font-semibold text-foreground">
                   {formatCost(row.costUsd)}
@@ -706,7 +815,8 @@ export function EconomyPnlPanel({ hours }: { hours?: number }) {
   if (loading) return <div className="h-[200px] flex items-center justify-center text-xs text-muted-foreground">Loading...</div>;
   if (!data || data.agents.length === 0) return <div className="h-[200px] flex items-center justify-center text-xs text-muted-foreground italic">No economy data</div>;
 
-  const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(0)}k` : n.toFixed(0);
+  // Economy panel cells are dense and read at a glance — compact form.
+  const fmt = (n: number) => formatCompactNumber(n);
 
   return (
     <div className="space-y-4">
@@ -885,8 +995,9 @@ export function SessionPnlPanel({ agents }: { agents?: string[] }) {
   }, [selectedAgent]);
 
   const availableAgents = agents ?? Object.keys(AGENT_COLORS);
-  const fmt = (n: number) =>
-    n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(0)}k` : n.toFixed(0);
+  // Compact form throughout the session table — it's a dense column
+  // already; full precision lives in the expanded breakdown.
+  const fmt = (n: number) => formatCompactNumber(n);
 
   return (
     <div className="space-y-3">
@@ -950,10 +1061,10 @@ export function SessionPnlPanel({ agents }: { agents?: string[] }) {
                         </span>
                       </td>
                       <td className="px-2 py-2 font-mono text-foreground/60 text-[10px] whitespace-nowrap">
-                        {formatFullTimestamp(row.sessionStart)}
+                        {formatAbsolute(row.sessionStart)}
                       </td>
                       <td className="px-2 py-2 font-mono text-foreground/60 text-[10px] whitespace-nowrap">
-                        {formatFullTimestamp(row.sessionEnd)}
+                        {formatAbsolute(row.sessionEnd)}
                       </td>
                       <td className="text-right px-2 py-2 font-mono text-foreground/80 whitespace-nowrap">
                         {fmt(row.creditsStart)} → {fmt(row.creditsEnd)}
@@ -1222,13 +1333,7 @@ export function SessionCreditChart() {
             interval="preserveStartEnd"
           />
           <YAxis
-            tickFormatter={(v) =>
-              Math.abs(v) >= 1_000_000
-                ? `${(v / 1_000_000).toFixed(1)}M`
-                : Math.abs(v) >= 1_000
-                ? `${(v / 1_000).toFixed(0)}k`
-                : String(v)
-            }
+            tickFormatter={(v) => formatCompactNumber(v)}
             tick={{ fill: "#8892a8", fontSize: 10 }}
             tickLine={false}
             axisLine={{ stroke: "#3b4252" }}
@@ -1238,7 +1343,9 @@ export function SessionCreditChart() {
             formatter={(value, name) => {
               const v = typeof value === "number" ? value : 0;
               const n = typeof name === "string" ? name : "";
-              return [v >= 0 ? `+${v.toLocaleString()} cr` : `${v.toLocaleString()} cr`, n];
+              // Tooltip is dense — full precision so operators can copy
+              // exact figures.
+              return [v >= 0 ? `+${formatNumber(v)} cr` : `-${formatNumber(Math.abs(v))} cr`, n];
             }}
             contentStyle={{ background: "#3b4252", border: "1px solid #4c566a", fontSize: 11 }}
             labelStyle={{ color: "#d8dee9", fontSize: 10 }}

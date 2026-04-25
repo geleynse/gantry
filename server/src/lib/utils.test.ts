@@ -1,23 +1,31 @@
 import { describe, test, expect } from "bun:test";
-import { AGENT_COLORS, AGENT_NAMES, cn, formatCredits, relativeTime } from "./utils";
+import { AGENT_COLORS, cn, formatCredits, getAgentColor, relativeTime } from "./utils";
 
 describe("utils", () => {
-  describe("AGENT_COLORS and AGENT_NAMES", () => {
-    test("AGENT_COLORS has all AGENT_NAMES as keys", () => {
-      for (const name of AGENT_NAMES) {
-        expect(AGENT_COLORS).toHaveProperty(name);
-        expect(typeof AGENT_COLORS[name]).toBe("string");
-      }
-    });
-
-    test("AGENT_NAMES is a valid array", () => {
-      expect(AGENT_NAMES.length).toBeGreaterThanOrEqual(0);
-    });
-
-    test("AGENT_COLORS are valid hex colors", () => {
+  describe("AGENT_COLORS", () => {
+    test("AGENT_COLORS values are valid hex colors", () => {
       for (const color of Object.values(AGENT_COLORS)) {
         expect(color).toMatch(/^#[0-9a-f]{6}$/i);
       }
+    });
+  });
+
+  describe("getAgentColor()", () => {
+    test("returns canonical color for a known agent", () => {
+      // Seed AGENT_COLORS with a known entry then read it back.
+      AGENT_COLORS["test-known-agent"] = "#abcdef";
+      try {
+        expect(getAgentColor("test-known-agent")).toBe("#abcdef");
+      } finally {
+        delete AGENT_COLORS["test-known-agent"];
+      }
+    });
+
+    test("returns a deterministic hsl fallback for unknown agents", () => {
+      const a = getAgentColor("unknown-agent-x");
+      const b = getAgentColor("unknown-agent-x");
+      expect(a).toMatch(/^hsl\(\d+,/);
+      expect(a).toBe(b);
     });
   });
 

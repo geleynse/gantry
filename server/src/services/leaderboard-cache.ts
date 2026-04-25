@@ -13,7 +13,11 @@ export interface LeaderboardEntry {
   name?: string;
   tag?: string;
   empire?: string;
-  value: number;
+  value?: number;
+  // Categories store the stat under its own key (e.g. total_wealth) in
+  // addition to or instead of `value`. The table component reads
+  // entry[statKey] dynamically.
+  [statKey: string]: string | number | undefined;
 }
 
 /** Each category maps stat keys to ranked entry arrays */

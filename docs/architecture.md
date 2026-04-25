@@ -73,6 +73,10 @@ Compound tools are implemented entirely inside Gantry — they never make a sing
 
 The 8 compound tools (`batch_mine`, `travel_to`, `jump_route`, `multi_sell`, `scan_and_attack`, `loot_wrecks`, `battle_readiness`, `flee`) live in `src/proxy/compound-tools-impl.ts`.
 
+### PrayerLang
+
+`spacemolt_pray` is a compound tool that runs an agent-submitted DSL script against the proxy pipeline. Parser, analyzer, and executor live in `src/proxy/prayer/`. Sub-calls dispatched by a prayer script are logged with `parent_id` pointing at the parent prayer row, so the dashboard can expand a prayer call into its full execution tree. See [PrayerLang](prayer.md) for the DSL reference; the design is inspired by [prayer.rs](https://github.com/MatthewBlanchard/prayer.rs).
+
 ### Injections
 
 After each tool call, Gantry injects context into the response. The injection registry (`src/proxy/injection-registry.ts`) manages 7 built-in injections:

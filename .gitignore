@@ -18,6 +18,9 @@ fleet-agents/
 # Logs
 *.log
 logs/
+# But don't ignore the /logs/ Next.js route
+!server/src/app/logs/
+!server/src/app/logs/**
 
 # OS
 .DS_Store

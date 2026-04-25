@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatNumber } from "@/lib/format";
 import type { LifetimeStats } from "@/hooks/use-game-state";
 
 // ---------------------------------------------------------------------------
@@ -104,7 +105,7 @@ function formatKey(key: string): string {
 
 function formatValue(val: number | string): string {
   if (typeof val === "number") {
-    if (Number.isInteger(val)) return val.toLocaleString();
+    if (Number.isInteger(val)) return formatNumber(val);
     return val.toFixed(2);
   }
   return String(val);

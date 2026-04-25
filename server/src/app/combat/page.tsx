@@ -7,6 +7,7 @@ import { EncounterCard, tierBadge } from "@/components/encounter-card";
 import type { Encounter, CombatEvent } from "@/components/encounter-card";
 import { groupEncounters } from "@/lib/combat-grouping";
 import type { GroupBy } from "@/lib/combat-grouping";
+import { formatDate } from "@/lib/time";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -168,8 +169,36 @@ function OverviewTab({
     { encounters: 0, deaths: 0, damage: 0, insurance: 0 }
   );
 
+  // Flag agents with significant combat activity and 0% survival so the
+  // operator can't miss a wiped-out ship. Threshold kept low (3 encounters)
+  // so we catch newly destroyed agents early, but not zero-encounter noise.
+  const criticalAgents = summary.filter(
+    (s) => s.total_encounters >= 3 && s.total_deaths >= s.total_encounters,
+  );
+
   return (
     <div className="space-y-6">
+      {criticalAgents.length > 0 && (
+        <div
+          role="alert"
+          className="border border-error/50 bg-error/10 text-error text-xs p-3 flex items-start gap-2"
+        >
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <div className="font-semibold uppercase tracking-wider">
+              Combat alert — 0% survival
+            </div>
+            <div>
+              {criticalAgents.map((a) => (
+                <span key={a.agent} className="inline-block mr-3 font-mono">
+                  {a.agent}: {a.total_deaths} deaths / {a.total_encounters} encounters
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Fleet-wide stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard icon={Swords} label="Encounters" value={totals.encounters} />
@@ -676,9 +705,9 @@ function dotSize(encounters: number): number {
 }
 
 function formatDateShort(date: string): string {
-  // date is "YYYY-MM-DD"
-  const d = new Date(date + "T00:00:00");
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  // `date` is a YYYY-MM-DD bucket key; anchor to local midnight then defer
+  // to the canonical short-date helper for "Mon DD" output.
+  return formatDate(date + "T00:00:00");
 }
 
 function VisualTimeline({ dots, agents }: { dots: TimelineDot[]; agents: string[] }) {

@@ -95,6 +95,11 @@ router.get('/systems', (req, res) => {
     ? `AND datetime(created_at) >= datetime('now', '-${hours} hours')`
     : '';
 
+  // Include systems that have deaths *or* encounters. The previous HAVING
+  // required encounter_count > 0, which silently hid death-only rows (e.g.
+  // an agent died from non-pirate damage in a system we otherwise had no
+  // encounter events for). Operator report #5: 58 deaths across the fleet
+  // but "No data" in High-Risk Systems.
   const rows = queryAll<{
     system: string;
     encounter_count: number;
@@ -110,8 +115,10 @@ router.get('/systems', (req, res) => {
     WHERE (system IS NOT NULL AND system != '')
       ${timeClause}
     GROUP BY system
-    HAVING COUNT(CASE WHEN event_type IN ('pirate_combat', 'pirate_warning') THEN 1 END) > 0
-    ORDER BY encounter_count DESC
+    HAVING
+      COUNT(CASE WHEN event_type IN ('pirate_combat', 'pirate_warning') THEN 1 END) > 0
+      OR COUNT(CASE WHEN event_type = 'player_died' THEN 1 END) > 0
+    ORDER BY death_count DESC, encounter_count DESC
     LIMIT 10
   `);
 

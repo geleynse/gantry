@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { relativeTime } from "@/lib/utils";
+import { formatAbsolute } from "@/lib/time";
 import { apiFetch } from "@/lib/api";
 import { useOverseerStatus, useOverseerDecisions } from "@/hooks/use-overseer";
 import { useFleetStatus } from "@/hooks/use-fleet-status";
@@ -337,7 +338,7 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
         {/* Timestamp */}
         <span
           className="shrink-0 text-[10px] text-muted-foreground/60 font-mono"
-          title={new Date(decision.created_at).toLocaleString()}
+          title={formatAbsolute(decision.created_at)}
         >
           {relativeTime(decision.created_at)}
         </span>
@@ -382,8 +383,8 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
             </div>
             <div>
               <span className="text-muted-foreground/60">at </span>
-              <span className="text-foreground">
-                {new Date(decision.created_at).toLocaleString()}
+              <span className="text-foreground" title={relativeTime(decision.created_at)}>
+                {formatAbsolute(decision.created_at)}
               </span>
             </div>
           </div>
@@ -605,10 +606,11 @@ function StatusPanel() {
           </button>
         </div>
 
+        {/* Retain last-known values during refresh instead of flashing
+            "Loading..." / em-dashes every poll. Only show the skeleton
+            on the very first fetch. */}
         {error ? (
           <p className="text-xs text-error font-mono">{error}</p>
-        ) : loading ? (
-          <p className="text-xs text-muted-foreground italic">Loading...</p>
         ) : data ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div className="space-y-0.5">
@@ -618,6 +620,17 @@ function StatusPanel() {
             <div className="space-y-0.5">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70">Cost Today</p>
               <p className="font-mono text-lg font-semibold text-foreground">{formatCost(data.costToday)}</p>
+            </div>
+          </div>
+        ) : loading ? (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4" aria-busy="true">
+            <div className="space-y-1">
+              <div className="h-2.5 w-20 bg-secondary animate-pulse" />
+              <div className="h-6 w-12 bg-secondary animate-pulse" />
+            </div>
+            <div className="space-y-1">
+              <div className="h-2.5 w-20 bg-secondary animate-pulse" />
+              <div className="h-6 w-12 bg-secondary animate-pulse" />
             </div>
           </div>
         ) : null}
@@ -658,11 +671,18 @@ function DecisionTimeline() {
         <p className="text-xs text-error font-mono">{error}</p>
       )}
 
-      {loading && (
-        <div className="flex items-center gap-1 py-6 justify-center">
-          <span className="w-1.5 h-1.5 bg-primary animate-bounce [animation-delay:0ms]" />
-          <span className="w-1.5 h-1.5 bg-primary animate-bounce [animation-delay:150ms]" />
-          <span className="w-1.5 h-1.5 bg-primary animate-bounce [animation-delay:300ms]" />
+      {/* Skeleton rows on first load so the operator sees structure instead
+          of a dots-spinner that can hang for a few seconds before the
+          timeline populates. */}
+      {loading && !data && (
+        <div className="space-y-1" aria-busy="true" aria-live="polite">
+          {[0, 1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="border border-border/50 bg-card/50 h-16 animate-pulse"
+              style={{ opacity: 1 - i * 0.15 }}
+            />
+          ))}
         </div>
       )}
 

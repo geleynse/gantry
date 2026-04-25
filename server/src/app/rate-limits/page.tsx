@@ -2,6 +2,7 @@
 
 import { Timer } from "lucide-react";
 import { useRateLimits } from "@/hooks/use-rate-limits";
+import { useAgentNames } from "@/hooks/use-agent-names";
 import { getAgentColor, relativeTime } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import type { IpStats } from "@/hooks/use-rate-limits";
@@ -157,6 +158,11 @@ function IpCard({ label, stats }: { label: string; stats: IpStats }) {
 
 export default function RateLimitsPage() {
   const { data, loading, error } = useRateLimits();
+  // Pull live counts so the subheader doesn't drift from reality as the
+  // fleet grows/shrinks or proxies go up/down.
+  const agentNames = useAgentNames();
+  const agentCount = agentNames.length;
+  const exitIpCount = data ? Object.keys(data.by_ip).length : 0;
 
   return (
     <div className="space-y-6">
@@ -167,7 +173,9 @@ export default function RateLimitsPage() {
           Rate Limits
         </h1>
         <span className="text-xs text-muted-foreground ml-2">
-          Game limit: {GAME_LIMIT} req/min/IP · 5 agents · 3 exit IPs
+          Game limit: {GAME_LIMIT} req/min/IP
+          {agentCount > 0 && ` · ${agentCount} agents`}
+          {exitIpCount > 0 && ` · ${exitIpCount} exit IP${exitIpCount === 1 ? "" : "s"}`}
         </span>
       </div>
 

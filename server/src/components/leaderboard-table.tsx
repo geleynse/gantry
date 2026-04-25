@@ -1,6 +1,8 @@
 "use client";
 
-import { AGENT_NAMES, AGENT_COLORS } from "@/lib/utils";
+import { AGENT_COLORS } from "@/lib/utils";
+import { formatCredits, formatNumber } from "@/lib/format";
+import { useAgentNames } from "@/hooks/use-agent-names";
 import type { LeaderboardEntry } from "@/hooks/use-leaderboard";
 
 // ---------------------------------------------------------------------------
@@ -12,9 +14,9 @@ function displayNameToSlug(name: string): string {
   return name.toLowerCase().replace(/\s+/g, "-");
 }
 
-function isFleetAgent(username: string): boolean {
+function isFleetAgent(username: string, agentNames: readonly string[]): boolean {
   const slug = displayNameToSlug(username);
-  return (AGENT_NAMES as readonly string[]).includes(slug);
+  return agentNames.includes(slug);
 }
 
 function getAgentColor(username: string): string | undefined {
@@ -98,6 +100,26 @@ interface LeaderboardTableProps {
   nameKey?: string;
 }
 
+// Currency-denominated stat keys — explicit allowlist so we don't get
+// false positives like `max_value_per_ton` being matched by "value".
+//
+// Sourced from PLAYER_TABS / FACTION_TABS / EXCHANGE_TABS in
+// app/leaderboard/page.tsx. Add new keys here when introducing a new
+// currency-typed leaderboard stat.
+const CURRENCY_STAT_KEYS = new Set<string>([
+  // Player economy
+  "total_wealth",
+  "credits_earned",
+  "credits_spent",
+  // Player assets
+  "ship_value",
+  "facility_investment",
+  "storage_value",
+  // Exchange
+  "sell_order_value",
+  "escrow_value",
+]);
+
 export function LeaderboardTable({
   entries,
   statKey,
@@ -105,6 +127,10 @@ export function LeaderboardTable({
   loading = false,
   nameKey = "username",
 }: LeaderboardTableProps) {
+  // Live fleet roster from the shared FleetStatusProvider — used to flag
+  // entries that belong to one of our agents (highlight + "fleet" pill).
+  const agentNames = useAgentNames();
+
   if (loading && entries.length === 0) {
     return <LeaderboardSkeleton />;
   }
@@ -129,13 +155,16 @@ export function LeaderboardTable({
           ) : (
             entries.map((entry, idx) => {
               const displayName = String(entry[nameKey as keyof LeaderboardEntry] ?? "");
-              const fleet = isFleetAgent(displayName);
+              const fleet = isFleetAgent(displayName, agentNames);
               const agentColor = fleet ? getAgentColor(displayName) : undefined;
               const rank = entry.rank ?? idx + 1;
               const value = entry[statKey as keyof LeaderboardEntry];
+              const isCurrency = CURRENCY_STAT_KEYS.has(statKey);
               const formattedValue =
                 typeof value === "number"
-                  ? value.toLocaleString()
+                  ? isCurrency
+                    ? formatCredits(value)
+                    : formatNumber(value)
                   : value != null
                   ? String(value)
                   : "—";

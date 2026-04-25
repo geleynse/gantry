@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
-import { formatDateTime, relativeTime } from "@/lib/time";
+import { formatAbsolute, relativeTime } from "@/lib/time";
 
 interface DiaryViewerProps {
   agentName: string;
@@ -162,7 +162,7 @@ export function DiaryViewer({ agentName }: DiaryViewerProps) {
                       onClick={isLong ? () => toggleEntry(entry.id) : undefined}
                     >
                       <div className="flex items-center gap-2 text-muted-foreground mb-1.5">
-                        <span className="text-[10px]">{formatDateTime(entry.created_at)}</span>
+                        <span className="text-[10px]">{formatAbsolute(entry.created_at)}</span>
                         <span className="text-[9px] opacity-60">{relativeTime(entry.created_at)}</span>
                       </div>
                       <div className="text-foreground whitespace-pre-wrap break-words leading-relaxed">

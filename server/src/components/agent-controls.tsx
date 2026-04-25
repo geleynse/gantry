@@ -5,6 +5,7 @@ import { Play, Square, RotateCw, Power, Send, Loader2, CheckCircle, AlertCircle,
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import type { AgentStatus } from "@/hooks/use-fleet-status";
+import { PrayerCanaryButton } from "./prayer-canary-button";
 
 // ---------------------------------------------------------------------------
 // Process Controls
@@ -328,9 +329,31 @@ function TriggerRoutineSection({ agentName }: { agentName: string }) {
 // ---------------------------------------------------------------------------
 
 export function AgentControls({ agentName, agent }: { agentName: string; agent: AgentStatus | null }) {
+  const isRunning = agent?.llmRunning ?? false;
+  const prayEnabled = agent?.prayEnabled === true;
+
+  // useFleetStatus is SSE-only with no manual refetch, so after the canary
+  // POST returns there is a short window before the server pushes the
+  // updated isRunning. Hold the button disabled during that window so the
+  // user can't double-click and trigger a "agent already running" reject.
+  const [canaryCooldown, setCanaryCooldown] = useState(false);
+  useEffect(() => {
+    if (!canaryCooldown) return;
+    const id = setTimeout(() => setCanaryCooldown(false), 5000);
+    return () => clearTimeout(id);
+  }, [canaryCooldown]);
+
   return (
     <div className="space-y-4">
       <ProcessControls agentName={agentName} agent={agent} />
+      {prayEnabled && (
+        <PrayerCanaryButton
+          agentName={agentName}
+          isRunning={isRunning || canaryCooldown}
+          prayEnabled={prayEnabled}
+          onCanaryStarted={() => setCanaryCooldown(true)}
+        />
+      )}
       <SendOrderSection agentName={agentName} />
       <TriggerRoutineSection agentName={agentName} />
     </div>

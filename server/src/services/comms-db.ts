@@ -3,7 +3,7 @@ import { getDb, queryAll, queryRun, queryInsert } from "./database.js";
 interface CreateOrderInput {
   message: string;
   target_agent?: string;
-  priority?: "normal" | "urgent";
+  priority?: "low" | "normal" | "high" | "urgent" | "critical";
   expires_at?: string;
 }
 
@@ -83,7 +83,12 @@ export function getPendingOrders(agentName: string): Order[] {
         SELECT order_id FROM fleet_order_deliveries WHERE agent = ?
       )
     ORDER BY
-      CASE o.priority WHEN 'urgent' THEN 0 ELSE 1 END,
+      CASE o.priority
+        WHEN 'urgent'   THEN 0
+        WHEN 'critical' THEN 0
+        WHEN 'high'     THEN 1
+        ELSE 2
+      END,
       o.created_at ASC
   `, agentName, agentName);
 }
@@ -93,7 +98,12 @@ export function getAllPendingOrders(): Order[] {
     SELECT * FROM fleet_orders
     WHERE (expires_at IS NULL OR expires_at > datetime('now'))
     ORDER BY
-      CASE priority WHEN 'urgent' THEN 0 ELSE 1 END,
+      CASE priority
+        WHEN 'urgent'   THEN 0
+        WHEN 'critical' THEN 0
+        WHEN 'high'     THEN 1
+        ELSE 2
+      END,
       created_at ASC
   `);
 }

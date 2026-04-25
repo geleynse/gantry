@@ -4,8 +4,9 @@ import { useState, useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
-import { formatDateTime } from "@/lib/time";
+import { formatAbsolute } from "@/lib/time";
 import { RefreshCw, Search } from "lucide-react";
+import { ResizableSplitter, useColumnWidths } from "./_components/resizable-splitter";
 
 // ---------------------------------------------------------------------------
 // Types (AgentName is dynamic — populated from fleet config at runtime)
@@ -186,7 +187,7 @@ export default function NotesPage() {
         );
         setContent(
           res.entries
-            .map((e) => `[${formatDateTime(e.created_at)}]\n${e.entry}`)
+            .map((e) => `[${formatAbsolute(e.created_at)}]\n${e.entry}`)
             .reverse()
             .join("\n\n---\n\n")
         );
@@ -257,10 +258,26 @@ export default function NotesPage() {
   const docTypeLabel =
     DOC_TYPES.find((t) => t.id === selectedDocType)?.label || selectedDocType;
 
+  // Three-column resizable layout (desktop only). Mobile keeps the original
+  // stacked flex layout. Widths are persisted to localStorage via the
+  // `useColumnWidths` hook.
+  const { widths, setLeft, setRight } = useColumnWidths("notes:column-widths", {
+    left: 200,
+    right: 250,
+  });
+  // Until the hook has read from localStorage, fall back to the defaults so
+  // SSR / first paint matches the previous layout exactly.
+  const leftPx = widths?.left ?? 200;
+  const rightPx = widths?.right ?? 250;
+  const desktopGrid = `${leftPx}px 4px minmax(0, 1fr) 4px ${rightPx}px`;
+
   return (
-    <div className="flex flex-col md:flex-row h-auto md:h-[calc(100vh-96px)] gap-0 overflow-hidden">
+    <div
+      className="flex flex-col h-auto md:h-[calc(100vh-96px)] gap-0 overflow-hidden md:grid"
+      style={{ gridTemplateColumns: desktopGrid }}
+    >
       {/* Left Sidebar — Agent & Doc Type Selector */}
-      <div className="w-full md:w-[200px] bg-card border-b md:border-b-0 md:border-r border-border overflow-y-auto flex flex-col shrink-0">
+      <div className="w-full bg-card border-b md:border-b-0 md:border-r border-border overflow-y-auto flex flex-col shrink-0 min-w-0">
         {/* Mobile: horizontal agent + doc type selectors */}
         <div className="md:hidden p-3 space-y-2">
           <div className="text-[10px] uppercase tracking-wider font-semibold text-foreground">
@@ -349,8 +366,18 @@ export default function NotesPage() {
         </div>
       </div>
 
+      {/* Splitter between left sidebar and content viewer (desktop only) */}
+      <ResizableSplitter
+        getLeftWidth={() => leftPx}
+        setLeftWidth={setLeft}
+        min={140}
+        max={400}
+        className="hidden md:block bg-border/40"
+        ariaLabel="Resize agent/doc-type sidebar"
+      />
+
       {/* Center — Content Viewer/Editor */}
-      <div className="flex-1 flex flex-col bg-background overflow-hidden min-h-[50vh] md:min-h-0">
+      <div className="flex flex-col bg-background overflow-hidden min-h-[50vh] md:min-h-0 min-w-0">
         {/* Header */}
         <div className="flex items-center justify-between px-3 md:px-4 py-3 border-b border-border bg-card shrink-0">
           <h1 className="text-xs uppercase tracking-wider font-semibold text-primary truncate">
@@ -420,8 +447,18 @@ export default function NotesPage() {
         </div>
       </div>
 
+      {/* Splitter between content viewer and search panel (desktop only) */}
+      <ResizableSplitter
+        getLeftWidth={() => rightPx}
+        setLeftWidth={setRight}
+        min={180}
+        max={500}
+        className="hidden md:block bg-border/40"
+        ariaLabel="Resize search panel"
+      />
+
       {/* Right Sidebar — Search Panel (hidden on mobile) */}
-      <div className="hidden md:flex w-[250px] bg-card border-l border-border overflow-y-auto flex-col">
+      <div className="hidden md:flex bg-card border-l border-border overflow-y-auto flex-col min-w-0">
         <div className="px-3 py-2 border-b border-border bg-secondary/30 text-[10px] uppercase tracking-wider font-semibold text-foreground sticky top-0 z-10">
           Fleet Search
         </div>

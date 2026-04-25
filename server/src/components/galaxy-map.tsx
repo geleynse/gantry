@@ -423,6 +423,28 @@ export function GalaxyMap({
     [mapData, positions]
   );
 
+  // Zoom-to-fit once after the graph has nodes. react-force-graph starts at
+  // an arbitrary zoom level that often crops to just a handful of systems
+  // (report #4: "only 2-3 systems visible though 505 exist"). Run once per
+  // mount; operator can still pan/zoom manually afterward.
+  const hasFitRef = useRef(false);
+  useEffect(() => {
+    if (hasFitRef.current) return;
+    if (!graphData || graphData.nodes.length === 0) return;
+    // Defer one tick so the force-graph layout has a chance to compute bounds.
+    const timer = setTimeout(() => {
+      if (graphRef.current && typeof graphRef.current.zoomToFit === "function") {
+        try {
+          graphRef.current.zoomToFit(400, 60);
+          hasFitRef.current = true;
+        } catch {
+          // Non-fatal — fall back to default zoom.
+        }
+      }
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [graphData]);
+
   // Build node lookup by id AND name for trail rendering
   // (trails use system names like "Mimosa", graph uses IDs like "mimosa")
   const nodeById = useMemo(() => {
@@ -751,8 +773,9 @@ export function GalaxyMap({
       {/* Overlay toggle bar — top-right */}
       <OverlayBar overlays={overlays} onToggle={toggleOverlay} />
 
-      {/* Search input — top-left (Task 1) */}
-      <div className="absolute top-2 left-2 z-10 flex flex-col gap-1">
+      {/* Search input — top-left (Task 1). max-w-[40%] so the OverlayBar on
+          the right has room on narrow viewports (report #4: overlap). */}
+      <div className="absolute top-2 left-2 z-10 flex flex-col gap-1 max-w-[40%]">
         <div className="flex items-center gap-1">
           <input
             type="text"
@@ -760,7 +783,7 @@ export function GalaxyMap({
             onChange={handleSearchChange}
             onKeyDown={handleSearchKeyDown}
             placeholder="Search system..."
-            className="w-40 px-2 py-1 text-xs font-mono bg-card/90 border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+            className="w-32 sm:w-40 px-2 py-1 text-xs font-mono bg-card/90 border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
           />
           {searchQuery && (
             <button

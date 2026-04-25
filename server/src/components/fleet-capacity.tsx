@@ -219,15 +219,20 @@ function AgentTable({ agents }: { agents: AgentCapacity[] }) {
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="border-b border-border">
-            <th className="py-2 pr-4 text-left"><ThButton label="Agent" sortK="name" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
-            <th className="py-2 pr-4 text-left"><ThButton label="Status" sortK="online" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
-            <th className="py-2 pr-4 text-left">Role</th>
-            <th className="py-2 pr-4 text-left"><ThButton label="Zone" sortK="zone" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
-            <th className="py-2 pr-4 text-left">System</th>
-            <th className="py-2 pr-4 text-right"><ThButton label="Credits" sortK="credits" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
-            <th className="py-2 pr-4 text-right"><ThButton label="Cargo" sortK="cargo" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
-            <th className="py-2 pr-4 text-right">Hull</th>
-            <th className="py-2 text-right"><ThButton label="Last Active" sortK="lastActive" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
+            <th className="py-2 pr-4 text-left"><ThButton label="AGENT" sortK="name" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
+            <th className="py-2 pr-4 text-left"><ThButton label="STATUS" sortK="online" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
+            <th className="py-2 pr-4 text-left text-[10px] uppercase tracking-wider text-muted-foreground">ROLE</th>
+            <th className="py-2 pr-4 text-left"><ThButton label="ZONE" sortK="zone" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
+            <th className="py-2 pr-4 text-left text-[10px] uppercase tracking-wider text-muted-foreground">SYSTEM</th>
+            <th className="py-2 pr-4 text-right"><ThButton label="CREDITS" sortK="credits" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
+            <th className="py-2 pr-4 text-right"><ThButton label="CARGO" sortK="cargo" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
+            {/*
+              "SHIP HP" not "HEALTH" — this is the in-game ship hull-integrity
+              percentage (`hullPercent`), distinct from the agent operational
+              `healthScore` shown on the Dashboard / Agent Detail pages.
+            */}
+            <th className="py-2 pr-4 text-right text-[10px] uppercase tracking-wider text-muted-foreground">SHIP HP</th>
+            <th className="py-2 text-right"><ThButton label="LAST ACTIVE" sortK="lastActive" activeSortKey={sortKey} asc={asc} onSort={handleSort} /></th>
           </tr>
         </thead>
         <tbody>

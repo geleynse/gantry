@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
+import { formatAbsolute, relativeTime } from "@/lib/time";
 
 interface CredentialStatus {
   name: string;
@@ -222,9 +223,12 @@ export function CredentialDashboard() {
                   <span className="text-xs font-bold text-foreground">
                     Agent <span className="text-primary font-mono">{event.agent_name}</span> {event.action.replace(/_/g, " ")}
                   </span>
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                  <div
+                    className="flex items-center gap-1.5 text-[10px] text-muted-foreground"
+                    title={relativeTime(event.timestamp)}
+                  >
                     <Clock className="w-3 h-3" />
-                    {new Date(event.timestamp).toLocaleString()}
+                    {formatAbsolute(event.timestamp)}
                   </div>
                 </div>
                 <div className="flex items-center gap-4 text-[10px]">
