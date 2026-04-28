@@ -55,4 +55,35 @@ describe("PrayerLang parser", () => {
       /PrayerLang uses bare identifiers, not quoted strings/,
     );
   });
+
+  test("parses jump command with system identifier", () => {
+    const prog = parsePrayerScript("jump solara;");
+    expect(prog.statements).toHaveLength(1);
+    const stmt = prog.statements[0];
+    expect(stmt.kind).toBe("command");
+    if (stmt.kind === "command") {
+      expect(stmt.name).toBe("jump");
+      expect(stmt.args).toHaveLength(1);
+      expect(stmt.args[0].kind).toBe("ident");
+      if (stmt.args[0].kind === "ident") {
+        expect(stmt.args[0].name).toBe("solara");
+      }
+    }
+  });
+
+  test("pretty-prints jump command", () => {
+    const prog = parsePrayerScript("jump nexus; dock;");
+    expect(formatPrayerProgram(prog)).toBe("jump nexus;\ndock;");
+  });
+
+  test("jump does not conflict with go (go is in-system only)", () => {
+    const prog = parsePrayerScript("go haven; jump solara;");
+    expect(prog.statements).toHaveLength(2);
+    if (prog.statements[0].kind === "command") {
+      expect(prog.statements[0].name).toBe("go");
+    }
+    if (prog.statements[1].kind === "command") {
+      expect(prog.statements[1].name).toBe("jump");
+    }
+  });
 });

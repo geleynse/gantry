@@ -47,15 +47,21 @@ describe("navigate_home routine", () => {
   describe("run", () => {
     it("travels, docks, refuels, repairs, and sells", async () => {
       const toolsCalled: string[] = [];
+      let traveled = false;
       const ctx = mockContext(async (tool) => {
         toolsCalled.push(tool);
         if (tool === "get_status") return {
           result: {
-            player: { current_system: "sol", current_poi: "sol_belt", docked_at_base: null, credits: 1000 },
+            player: {
+              current_system: "sol",
+              current_poi: traveled ? "nexus_core" : "sol_belt",
+              docked_at_base: traveled ? "nexus_base" : null,
+              credits: 1000,
+            },
             ship: { fuel: 50, fuel_max: 100, hull: 70, hull_max: 100 },
           },
         };
-        if (tool === "travel_to") return { result: { status: "completed" } };
+        if (tool === "travel_to") { traveled = true; return { result: { status: "completed" } }; }
         if (tool === "dock") return { result: { status: "docked" } };
         if (tool === "refuel") return { result: { fuel_after: 100 } };
         if (tool === "repair") return { result: { hull_after: 100 } };
@@ -80,16 +86,22 @@ describe("navigate_home routine", () => {
 
     it("jumps when cross-system travel needed", async () => {
       const toolsCalled: string[] = [];
+      let traveled = false;
       const ctx = mockContext(async (tool) => {
         toolsCalled.push(tool);
         if (tool === "get_status") return {
           result: {
-            player: { current_system: "sol", current_poi: "sol_belt", docked_at_base: null, credits: 500 },
+            player: {
+              current_system: "sol",
+              current_poi: traveled ? "nexus_core" : "sol_belt",
+              docked_at_base: traveled ? "nexus_base" : null,
+              credits: 500,
+            },
             ship: { fuel: 90, fuel_max: 100, hull: 95, hull_max: 100 },
           },
         };
         if (tool === "jump_route") return { result: { status: "arrived" } };
-        if (tool === "travel_to") return { result: { status: "completed" } };
+        if (tool === "travel_to") { traveled = true; return { result: { status: "completed" } }; }
         if (tool === "dock") return { result: { status: "docked" } };
         if (tool === "get_cargo") return { result: { used: 0, capacity: 50 } };
         return { result: {} };
@@ -173,6 +185,27 @@ describe("navigate_home routine", () => {
       const result = await navigateHomeRoutine.run(ctx, { station: "nexus_core", system: "central" });
       expect(result.status).toBe("handoff");
       expect(result.summary).toContain("Jump");
+    });
+
+    it("hands off when travel succeeds but ship doesn't actually arrive", async () => {
+      // Simulates the bug: travel_to returns 'completed' but the ship is still at the origin
+      // (game-side glitch, stale cache, or partial failure). Routine must NOT report 'completed'.
+      const ctx = mockContext(async (tool) => {
+        if (tool === "get_status") return {
+          result: {
+            // current_poi never updates — ship didn't arrive
+            player: { current_system: "sol", current_poi: "sol_belt", docked_at_base: null, credits: 1000 },
+            ship: { fuel: 50, fuel_max: 100, hull: 70, hull_max: 100 },
+          },
+        };
+        if (tool === "travel_to") return { result: { status: "completed" } };
+        if (tool === "dock") return { result: { status: "docked" } };
+        return { result: {} };
+      });
+
+      const result = await navigateHomeRoutine.run(ctx, { station: "nexus_core" });
+      expect(result.status).toBe("handoff");
+      expect(result.handoffReason).toContain("not at nexus_core");
     });
   });
 });

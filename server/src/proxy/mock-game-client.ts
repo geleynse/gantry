@@ -386,6 +386,16 @@ export class MockGameClient implements GameTransport {
       case "read_doc":     return this.handleReadDoc();
       case "write_diary":  return this.handleWriteDiary();
       case "write_doc":    return this.handleWriteDoc();
+      // Tier-2 stateful handlers (Batch 10)
+      case "jump":              return this.handleJump(payload);
+      case "dock":              return this.handleDock(payload);
+      case "undock":            return this.handleUndock();
+      case "sell":              return this.handleSell(payload);
+      case "buy":               return this.handleBuy(payload);
+      case "repair":            return this.handleRepair(payload);
+      case "get_notifications": return this.handleGetNotifications();
+      case "view_market":       return this.handleViewMarket();
+      case "view_storage":      return this.handleViewStorage();
       default:             return this.handleDefault(command);
     }
   }
@@ -717,6 +727,261 @@ export class MockGameClient implements GameTransport {
 
   private handleWriteDoc(): Record<string, unknown> {
     return this.getCannedResponse("write_doc") ?? { status: "ok" };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tier-2 stateful handlers (Batch 10)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * jump — move to a different star system.
+   * Accepts any target_system without validating adjacency (no galaxy graph in Tier 2).
+   * Deducts a fixed 10-unit fuel cost.
+   */
+  private handleJump(payload: Record<string, unknown>): Record<string, unknown> {
+    const targetSystem = (payload.target_system as string | undefined) ?? "kepler_sector";
+    const FUEL_COST = 10;
+
+    if (this.state.fuel < FUEL_COST) {
+      return { status: "error", error: { code: "insufficient_fuel", message: `Not enough fuel. Need ${FUEL_COST}, have ${this.state.fuel}.` } };
+    }
+
+    const prevSystem = this.state.location;
+    this.state.location = targetSystem;
+    this.state.fuel -= FUEL_COST;
+    this.state.dockedAt = null;
+    this.state.poi = null;
+    this.state.tick++;
+
+    this.log(`jump: ${prevSystem} → ${targetSystem} (fuel: ${this.state.fuel})`);
+    return {
+      status: "completed",
+      system: targetSystem,
+      fuel: this.state.fuel,
+      tick: this.state.tick,
+    };
+  }
+
+  /**
+   * dock — dock at a station/POI in the current system.
+   * Sets dockedAt and poi.
+   */
+  private handleDock(payload: Record<string, unknown>): Record<string, unknown> {
+    const stationId = (payload.station_id as string | undefined) ?? `${this.state.location}_station`;
+
+    this.state.dockedAt = stationId;
+    this.state.poi = stationId;
+    this.state.tick++;
+
+    this.log(`dock: ${stationId}`);
+    return {
+      status: "docked",
+      station_id: stationId,
+      tick: this.state.tick,
+    };
+  }
+
+  /**
+   * undock — leave the current station.
+   * Clears dockedAt; agent is now in space within the system.
+   */
+  private handleUndock(): Record<string, unknown> {
+    const prevStation = this.state.dockedAt;
+    this.state.dockedAt = null;
+    this.state.tick++;
+
+    this.log(`undock: left ${prevStation}`);
+    return {
+      status: "undocked",
+      location: this.state.location,
+      tick: this.state.tick,
+    };
+  }
+
+  /**
+   * sell — single-item sell (complement to multi_sell).
+   * Deducts from cargo and adds credits at canned price.
+   */
+  private handleSell(payload: Record<string, unknown>): Record<string, unknown> {
+    if (!this.state.dockedAt) {
+      return { status: "error", error: { code: "not_docked", message: "Must be docked at a station to sell." } };
+    }
+
+    const itemId = (payload.item_id as string | undefined) ?? "";
+    const qty = typeof payload.quantity === "number" ? payload.quantity : 1;
+
+    if (!itemId) {
+      return { status: "error", error: { code: "missing_item_id", message: "item_id is required." } };
+    }
+
+    const PRICE_TABLE: Record<string, number> = { iron_ore: 12, steel_plate: 45, copper_ore: 10 };
+    const price = PRICE_TABLE[itemId] ?? 8;
+    const actual = removeCargo(this.state, itemId, qty);
+
+    if (actual === 0) {
+      return { status: "error", error: { code: "item_not_in_cargo", message: `${itemId} not found in cargo.` } };
+    }
+
+    const earned = actual * price;
+    this.state.credits += earned;
+    this.state.tick++;
+
+    return {
+      status: "sold",
+      item_id: itemId,
+      quantity: actual,
+      price_per_unit: price,
+      credits_earned: earned,
+      credits: this.state.credits,
+      tick: this.state.tick,
+    };
+  }
+
+  /**
+   * buy — purchase an item at the current station.
+   * Deducts credits and adds to cargo.
+   */
+  private handleBuy(payload: Record<string, unknown>): Record<string, unknown> {
+    if (!this.state.dockedAt) {
+      return { status: "error", error: { code: "not_docked", message: "Must be docked at a station to buy." } };
+    }
+
+    const itemId = (payload.item_id as string | undefined) ?? "";
+    const qty = typeof payload.quantity === "number" ? payload.quantity : 1;
+
+    if (!itemId) {
+      return { status: "error", error: { code: "missing_item_id", message: "item_id is required." } };
+    }
+
+    const PRICE_TABLE: Record<string, number> = { iron_ore: 12, steel_plate: 45, copper_ore: 10, fuel_cell: 5 };
+    const price = PRICE_TABLE[itemId] ?? 10;
+    const totalCost = qty * price;
+
+    if (this.state.credits < totalCost) {
+      return { status: "error", error: { code: "insufficient_credits", message: `Not enough credits. Need ${totalCost}, have ${this.state.credits}.` } };
+    }
+
+    const spaceAvailable = this.state.cargoCapacity - cargoUsed(this.state.cargo);
+    const actualQty = Math.min(qty, spaceAvailable);
+    if (actualQty <= 0) {
+      return { status: "error", error: { code: "cargo_full", message: "Cargo is full." } };
+    }
+
+    const actualCost = actualQty * price;
+    this.state.credits -= actualCost;
+    addCargo(this.state, itemId, actualQty);
+    this.state.tick++;
+
+    return {
+      status: "bought",
+      item_id: itemId,
+      quantity: actualQty,
+      price_per_unit: price,
+      credits_spent: actualCost,
+      credits: this.state.credits,
+      cargo_used: cargoUsed(this.state.cargo),
+      cargo_capacity: this.state.cargoCapacity,
+      tick: this.state.tick,
+    };
+  }
+
+  /**
+   * repair — restore hull at docked station, costs credits.
+   * Uses a fixed rate of 5 credits per hull point.
+   */
+  private handleRepair(payload: Record<string, unknown>): Record<string, unknown> {
+    if (!this.state.dockedAt) {
+      return { status: "error", error: { code: "not_docked", message: "Must be docked at a station to repair." } };
+    }
+
+    const REPAIR_COST_PER_HP = 5;
+    const hullMissing = 100 - this.state.hull;
+    if (hullMissing <= 0) {
+      return { status: "ok", message: "Hull is already at full integrity.", hull: this.state.hull };
+    }
+
+    const requestedHp = typeof payload.amount === "number" ? Math.min(payload.amount, hullMissing) : hullMissing;
+    const cost = Math.ceil(requestedHp * REPAIR_COST_PER_HP);
+
+    if (this.state.credits < cost) {
+      const affordable = Math.floor(this.state.credits / REPAIR_COST_PER_HP);
+      if (affordable <= 0) {
+        return { status: "error", error: { code: "insufficient_credits", message: "Not enough credits to repair." } };
+      }
+      const actualCost = affordable * REPAIR_COST_PER_HP;
+      const hullBefore = this.state.hull;
+      this.state.hull = Math.min(100, this.state.hull + affordable);
+      this.state.credits -= actualCost;
+      return {
+        status: "repaired",
+        hull_before: hullBefore,
+        hull_after: this.state.hull,
+        credits_spent: actualCost,
+        credits: this.state.credits,
+      };
+    }
+
+    const hullBefore = this.state.hull;
+    this.state.hull = Math.min(100, this.state.hull + requestedHp);
+    this.state.credits -= cost;
+
+    return {
+      status: "repaired",
+      hull_before: hullBefore,
+      hull_after: this.state.hull,
+      credits_spent: cost,
+      credits: this.state.credits,
+    };
+  }
+
+  /**
+   * get_notifications — return empty notifications list.
+   * Prevents parser errors when agents check for events.
+   */
+  private handleGetNotifications(): Record<string, unknown> {
+    return {
+      status: "ok",
+      notifications: [],
+    };
+  }
+
+  /**
+   * view_market — return a canned item list for the current station.
+   * Uses mock-responses.json if a "view_market" entry exists.
+   */
+  private handleViewMarket(): Record<string, unknown> {
+    const canned = this.getCannedResponse("view_market");
+    if (canned) return canned;
+
+    const stationId = this.state.dockedAt ?? `${this.state.location}_station`;
+    return {
+      status: "ok",
+      station_id: stationId,
+      items: [
+        { item_id: "iron_ore",   name: "Iron Ore",   price_buy: 15, price_sell: 12, quantity_available: 500, demand: "high" },
+        { item_id: "steel_plate", name: "Steel Plate", price_buy: 55, price_sell: 45, quantity_available: 200, demand: "high" },
+        { item_id: "copper_ore", name: "Copper Ore", price_buy: 14, price_sell: 10, quantity_available: 300, demand: "medium" },
+        { item_id: "fuel_cell",  name: "Fuel Cell",  price_buy: 8,  price_sell: 5,  quantity_available: 100, demand: "low" },
+      ],
+    };
+  }
+
+  /**
+   * view_storage — return canned storage contents at the current station.
+   * Uses mock-responses.json if a "view_storage" entry exists.
+   */
+  private handleViewStorage(): Record<string, unknown> {
+    const canned = this.getCannedResponse("view_storage");
+    if (canned) return canned;
+
+    const stationId = this.state.dockedAt ?? `${this.state.location}_station`;
+    return {
+      status: "ok",
+      station_id: stationId,
+      items: [],
+      storage_used: 0,
+      storage_capacity: 100,
+    };
   }
 
   // ---------------------------------------------------------------------------

@@ -241,6 +241,10 @@ export async function jumpRoute(
         fuel: fuelRemaining,
         elapsed_ms: Date.now() - tJumpStart,
       });
+      // Game may have moved the ship even though the jump returned an error (e.g. timeout).
+      // Force a status refresh so the cache reflects authoritative game state before returning.
+      // This prevents a stale "from" location from causing adjacency-check failures on retry.
+      await client.waitForTick();
       break;
     }
     jumps.push({ system: systemId, result: "ok" });

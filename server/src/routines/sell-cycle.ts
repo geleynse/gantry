@@ -96,7 +96,25 @@ async function run(ctx: RoutineContext, params: SellCycleParams): Promise<Routin
     const allCargo = parseCargoItems(cargoResp.result);
     if (allCargo.length > 0) {
       const demandItems = extractDemandItems(marketResp.result);
-      itemsToSell = demandItems.size === 0 ? allCargo : allCargo.filter((c) => demandItems.has(c.item_id));
+      // Early-abort: if the market has zero demand for ANY of our cargo
+      // items, do NOT call multi_sell. Previously fell back to selling
+      // everything anyway, which produced a string of "0 credits earned"
+      // handoffs at zero-demand stations. Hand off so the agent re-routes.
+      if (demandItems.size === 0) {
+        phases.push(completePhase(phase("multi_sell"), { skipped: "no_demand" }));
+        const cargoIds = allCargo.map((c) => c.item_id);
+        return handoff(
+          `No demand at ${params.station} for any cargo items — travel to a different station before retrying sell_cycle`,
+          {
+            station: params.station,
+            cargo_items: cargoIds,
+            items_sold: 0,
+            reason: "no_demand",
+          },
+          phases,
+        );
+      }
+      itemsToSell = allCargo.filter((c) => demandItems.has(c.item_id));
     }
   }
 

@@ -77,6 +77,13 @@ export const PORT = parseInt(process.env.PORT || process.env.GANTRY_PORT || "310
 export const GANTRY_ENV = process.env.GANTRY_ENV;
 export const LOG_LEVEL = process.env.LOG_LEVEL || "DEBUG"; // Default to DEBUG for detailed testing logs
 
+/**
+ * GANTRY_MOCK=1 activates mock mode without editing gantry.json.
+ * Use for CI / local dev iteration without live game credentials.
+ * Precedence: mockMode in gantry.json wins; this is the env-var fallback.
+ */
+export const GANTRY_MOCK = process.env.GANTRY_MOCK === "1";
+
 // Timing intervals (envInt handles NaN and correctly allows 0)
 export const MARKET_SCAN_INTERVAL_MS = envInt("MARKET_SCAN_INTERVAL_MS", 300000);
 export const MARKET_PRUNE_INTERVAL_MS = envInt("MARKET_PRUNE_INTERVAL_MS", 600000);

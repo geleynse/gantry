@@ -58,7 +58,7 @@ async function run(ctx: RoutineContext, params: ExploreSystemParams): Promise<Ro
   const cached = ctx.statusCache.get(ctx.agentName);
   const player = cached?.data?.player as Record<string, unknown> | undefined;
   const currentSystem = player?.current_system as string | undefined;
-  const alreadyInTarget = currentSystem?.includes(params.target_system) ?? false;
+  const alreadyInTarget = currentSystem === params.target_system;
   phases.push(completePhase(initPhase, { currentSystem, alreadyInTarget }));
 
   ctx.log("info", `explore_system: starting in ${currentSystem ?? "unknown"}, target=${params.target_system}`);
@@ -89,7 +89,7 @@ async function run(ctx: RoutineContext, params: ExploreSystemParams): Promise<Ro
   phases.push(completePhase(surveyPhase, surveyResult));
 
   const pois = (Array.isArray(surveyResult?.pois) ? surveyResult.pois : []) as Array<{ id: string; name?: string }>;
-  ctx.log("info", `explore_system: discovered ${pois.length} POIs`);
+  ctx.log(pois.length === 0 ? "warn" : "info", `explore_system: discovered ${pois.length} POIs`);
 
   // --- Phase 4: Scan POIs ---
   const scanPhase = phase("scan_pois");

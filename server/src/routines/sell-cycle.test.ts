@@ -222,6 +222,45 @@ describe("sell_cycle routine", () => {
       expect(result.summary).toContain("No items to sell");
     });
 
+    it("early-aborts with handoff when no demand for any cargo item (no multi_sell call)", async () => {
+      const toolsCalled: string[] = [];
+      const ctx = mockContext(
+        async (tool) => {
+          toolsCalled.push(tool);
+          // Market returns no demand for anything
+          if (tool === "analyze_market") return { result: { demand: [] } };
+          // Cargo holds items the agent wants to sell
+          if (tool === "get_cargo") return {
+            result: {
+              cargo: [
+                { item_id: "iron_ore", quantity: 50 },
+                { item_id: "copper_ore", quantity: 30 },
+              ],
+            },
+          };
+          // multi_sell should never be called — fail loudly if it is
+          if (tool === "multi_sell") {
+            throw new Error("multi_sell must NOT be called when demand is zero");
+          }
+          return { result: {} };
+        },
+        { player: { current_poi: "sol_station", docked_at_base: "sol_station_base", credits: 10000 } },
+      );
+
+      const result = await sellCycleRoutine.run(ctx, { station: "sol_station" });
+      expect(result.status).toBe("handoff");
+      expect(result.handoffReason).toContain("No demand at sol_station");
+      expect(result.handoffReason).toContain("travel to a different station");
+      expect(result.data.station).toBe("sol_station");
+      expect(result.data.reason).toBe("no_demand");
+      expect(result.data.items_sold).toBe(0);
+      // Cargo items list should be present so the agent can route
+      expect(Array.isArray(result.data.cargo_items)).toBe(true);
+      expect(result.data.cargo_items).toEqual(["iron_ore", "copper_ore"]);
+      // multi_sell must not have been invoked
+      expect(toolsCalled).not.toContain("multi_sell");
+    });
+
     it("sells specific items when provided", async () => {
       let sellItems: unknown;
       const ctx = mockContext(

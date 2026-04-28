@@ -24,6 +24,7 @@ interface TestDeps extends FleetHealthMonitorDeps {
   _errorRate: number;
   _transportCount: number;
   _activeAgents: string[];
+  _configuredFleetSize: number;
 }
 
 function makeDeps(overrides: Partial<FleetHealthMonitorDeps> = {}): TestDeps {
@@ -38,9 +39,11 @@ function makeDeps(overrides: Partial<FleetHealthMonitorDeps> = {}): TestDeps {
     _errorRate: 0,
     _transportCount: 2,
     _activeAgents: ["drifter-gale", "sable-thorn"],
+    _configuredFleetSize: 2,
 
     getAgentHealth: (name: string) => agentHealthMap.get(name) ?? null,
     getActiveAgents: () => deps._activeAgents,
+    getConfiguredFleetSize: () => deps._configuredFleetSize,
     getErrorRate: () => deps._errorRate,
     getTransportCount: () => deps._transportCount,
     stopAgent: async (name: string) => {
@@ -88,39 +91,61 @@ describe("createFleetHealthMonitor", () => {
       expect(snapshot.reconnects_per_minute["sable-thorn"]).toBe(0);
     });
 
-    it("detects session leak when transports exceed 3x active agents", () => {
+    it("detects session leak when transports exceed 3x configured fleet size", () => {
       const deps = makeDeps();
       deps._activeAgents = ["drifter-gale", "sable-thorn"];
-      deps._transportCount = 20; // 20 transports for 2 agents = 10x
+      deps._configuredFleetSize = 2;
+      deps._transportCount = 20; // 20 transports for fleet of 2 = 10x
 
       const monitor = createFleetHealthMonitor(deps);
       expect(monitor.getSnapshot().session_leak).toBe(true);
     });
 
-    it("no session leak at 3x agents", () => {
+    it("no session leak at 3x configured fleet size", () => {
       const deps = makeDeps();
       deps._activeAgents = ["drifter-gale", "sable-thorn"];
+      deps._configuredFleetSize = 2;
       deps._transportCount = 6; // exactly 3x = not leaking
 
       const monitor = createFleetHealthMonitor(deps);
       expect(monitor.getSnapshot().session_leak).toBe(false);
     });
 
-    it("no session leak with zero agents and count below 10", () => {
+    it("no session leak with zero configured fleet size and count below 10", () => {
       const deps = makeDeps();
       deps._activeAgents = [];
+      deps._configuredFleetSize = 0;
       deps._transportCount = 5; // below floor of max(0*3, 10) = 10
 
       const monitor = createFleetHealthMonitor(deps);
       expect(monitor.getSnapshot().session_leak).toBe(false);
     });
 
-    it("session leak with zero agents and count above 10", () => {
+    it("session leak with zero configured fleet size and count above 10", () => {
       const deps = makeDeps();
       deps._activeAgents = [];
+      deps._configuredFleetSize = 0;
       deps._transportCount = 11;
 
       const monitor = createFleetHealthMonitor(deps);
+      expect(monitor.getSnapshot().session_leak).toBe(true);
+    });
+
+    it("session_leak threshold is stable when active count drops during reconnect cascade", () => {
+      // Configured fleet of 6 agents. Transports = 18 = 3x configured size,
+      // so should be at the boundary (NOT leaking). Even if active count drops
+      // to 1 (active.length*3=3 < 18 → would falsely flag as leak), the
+      // configured-size baseline keeps the threshold stable.
+      const deps = makeDeps();
+      deps._configuredFleetSize = 6;
+      deps._activeAgents = ["drifter-gale"]; // only 1 active during cascade
+      deps._transportCount = 18; // 3x of 6 = 18, exactly at threshold
+
+      const monitor = createFleetHealthMonitor(deps);
+      expect(monitor.getSnapshot().session_leak).toBe(false);
+
+      // Bumping by one transport tips into leak territory (18 > 18 is false; 19 > 18 is true)
+      deps._transportCount = 19;
       expect(monitor.getSnapshot().session_leak).toBe(true);
     });
 

@@ -64,7 +64,7 @@ export interface AnalyzedCommand {
   loc: SourceLoc;
 }
 
-export type PredicateName = "FUEL" | "CREDITS" | "CARGO_PCT" | "CARGO" | "MINED";
+export type PredicateName = "FUEL" | "CREDITS" | "CARGO_PCT" | "CARGO" | "MINED" | "STASHED" | "STASH" | "MISSION_ACTIVE";
 
 export interface AnalyzedPredicate {
   metric: PredicateName;
@@ -132,6 +132,17 @@ export interface ExecutorDeps {
   maxSteps: number;
   maxLoopIters: number;
   maxWallClockMs: number;
+  /**
+   * Optional callback invoked on each step boundary with the current state.
+   * Used for checkpoint/resume — best-effort, errors swallowed by caller.
+   */
+  onCheckpoint?: (state: ExecState) => void;
+  /**
+   * Optional pre-built ExecState to resume from (e.g. loaded from a
+   * checkpoint). When provided, the executor uses this instead of building
+   * a fresh state at the start of the run.
+   */
+  initialState?: ExecState;
 }
 
 export interface PrayDiff {

@@ -78,4 +78,13 @@ function dedupeById<T extends { id: string }>(items: T[]): T[] {
 }
 
 export { parsePrayerScript, formatPrayerProgram, analyzePrayerProgram };
-export type { PrayResult } from "./types.js";
+export {
+  serialize as serializeExecState,
+  deserialize as deserializeExecState,
+  saveCheckpoint,
+  loadCheckpoint,
+  clearCheckpoint,
+  setPrayerStateDir,
+  getPrayerStateDir,
+} from "./checkpoint.js";
+export type { PrayResult, ExecState } from "./types.js";

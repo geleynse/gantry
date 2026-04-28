@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { createMcpServer, OUR_SCHEMA_PARAMS } from "./mcp-factory.js";
+import { createMcpServer, OUR_SCHEMA_PARAMS, pruneStaleAndOrphanTransports, validateToolCallName } from "./mcp-factory.js";
 import { STATIC_GAME_TOOLS } from "./server.js";
 import { getToolsForRolePreset } from "../config.js";
 import { SessionStore } from "./session-store.js";
@@ -515,5 +515,252 @@ describe("getToolsForRolePreset — additional edge cases", () => {
     const tools = getToolsForRolePreset(FACTORY_PRESETS, "explorer")!;
     const standard = getToolsForRolePreset(FACTORY_PRESETS, "standard")!;
     expect(new Set(tools)).toEqual(new Set(standard));
+  });
+});
+
+describe("validateToolCallName", () => {
+  it("returns null for valid tools/call", () => {
+    const body = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "mine", arguments: {} } };
+    expect(validateToolCallName(body)).toBeNull();
+  });
+
+  it("returns null for non-tools/call requests", () => {
+    expect(validateToolCallName({ jsonrpc: "2.0", id: 1, method: "tools/list" })).toBeNull();
+    expect(validateToolCallName({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })).toBeNull();
+  });
+
+  it("rejects empty name", () => {
+    const body = { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "", arguments: {} } };
+    const err = validateToolCallName(body);
+    expect(err).not.toBeNull();
+    expect(err!.error.code).toBe(-32602);
+    expect(err!.error.message).toContain("missing or empty");
+    expect(err!.id).toBe(7);
+  });
+
+  it("rejects whitespace-only name", () => {
+    const body = { jsonrpc: "2.0", id: 8, method: "tools/call", params: { name: "   ", arguments: {} } };
+    const err = validateToolCallName(body);
+    expect(err).not.toBeNull();
+    expect(err!.error.message).toContain("missing or empty");
+  });
+
+  it("rejects missing name", () => {
+    const body = { jsonrpc: "2.0", id: 9, method: "tools/call", params: { arguments: {} } };
+    const err = validateToolCallName(body);
+    expect(err).not.toBeNull();
+    expect(err!.error.code).toBe(-32602);
+  });
+
+  it("rejects null name", () => {
+    const body = { jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: null, arguments: {} } };
+    const err = validateToolCallName(body);
+    expect(err).not.toBeNull();
+    expect(err!.error.message).toContain("missing or empty");
+  });
+
+  it("rejects non-string name (number)", () => {
+    const body = { jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: 42, arguments: {} } };
+    const err = validateToolCallName(body);
+    expect(err).not.toBeNull();
+    expect(err!.error.message).toContain("missing or empty");
+  });
+
+  it("rejects missing params", () => {
+    const body = { jsonrpc: "2.0", id: 12, method: "tools/call" };
+    const err = validateToolCallName(body);
+    expect(err).not.toBeNull();
+    expect(err!.error.message).toContain("params missing");
+  });
+
+  it("preserves request id in the error envelope (or null when absent)", () => {
+    const withId = validateToolCallName({ jsonrpc: "2.0", id: "req-abc", method: "tools/call", params: { name: "" } });
+    expect(withId!.id).toBe("req-abc");
+    const withoutId = validateToolCallName({ jsonrpc: "2.0", method: "tools/call", params: { name: "" } });
+    expect(withoutId!.id).toBe(null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pruneStaleAndOrphanTransports — pre-login orphan + same-agent churn
+// ---------------------------------------------------------------------------
+
+describe("pruneStaleAndOrphanTransports", () => {
+  type FakeTransport = { close: () => Promise<void>; closed: boolean };
+  function fakeTransport(): FakeTransport {
+    const t: FakeTransport = {
+      closed: false,
+      close: async () => { t.closed = true; },
+    };
+    return t;
+  }
+
+  function fakeStore(records: Record<string, { agent?: string; createdAt: string }>): {
+    getSession(id: string): { agent?: string; createdAt: string } | null;
+  } {
+    return {
+      getSession(id: string) {
+        return records[id] ?? null;
+      },
+    };
+  }
+
+  function silentLogger() {
+    const calls: { level: string; msg: string; data?: unknown }[] = [];
+    return {
+      calls,
+      info: (msg: string, data?: unknown) => calls.push({ level: "info", msg, data }),
+      warn: (msg: string, data?: unknown) => calls.push({ level: "warn", msg, data }),
+    };
+  }
+
+  it("closes pre-login orphan transports older than 120s", () => {
+    const NOW = 1_700_000_000_000;
+    const orphanSid = "orphan-sid-old";
+    const orphan = fakeTransport();
+    const transports = new Map<string, FakeTransport>();
+    transports.set(orphanSid, orphan);
+    const sessionAgentMap = new Map<string, string | undefined>();
+
+    const sessionStore = fakeStore({
+      [orphanSid]: { agent: undefined, createdAt: new Date(NOW - 121_000).toISOString() },
+    });
+    const logger = silentLogger();
+
+    const result = pruneStaleAndOrphanTransports({
+      agentName: "anyone",
+      currentSessionId: undefined,
+      transports: transports as Map<string, { close?: () => Promise<void> | void }>,
+      sessionAgentMap,
+      sessionStore,
+      logger,
+      now: NOW,
+    });
+
+    expect(result.closedOrphans).toBe(1);
+    expect(orphan.closed).toBe(true);
+    expect(transports.has(orphanSid)).toBe(false);
+    expect(logger.calls.find(c => c.msg.includes("pre-login orphan"))).toBeTruthy();
+  });
+
+  it("does NOT close pre-login orphans younger than 120s", () => {
+    const NOW = 1_700_000_000_000;
+    const youngSid = "orphan-sid-young";
+    const young = fakeTransport();
+    const transports = new Map<string, FakeTransport>();
+    transports.set(youngSid, young);
+    const sessionAgentMap = new Map<string, string | undefined>();
+
+    const sessionStore = fakeStore({
+      [youngSid]: { agent: undefined, createdAt: new Date(NOW - 30_000).toISOString() },
+    });
+
+    const result = pruneStaleAndOrphanTransports({
+      agentName: "anyone",
+      currentSessionId: undefined,
+      transports: transports as Map<string, { close?: () => Promise<void> | void }>,
+      sessionAgentMap,
+      sessionStore,
+      logger: silentLogger(),
+      now: NOW,
+    });
+
+    expect(result.closedOrphans).toBe(0);
+    expect(young.closed).toBe(false);
+    expect(transports.has(youngSid)).toBe(true);
+  });
+
+  it("does NOT close transports already bound to a different agent at DB level", () => {
+    const NOW = 1_700_000_000_000;
+    const sid = "bound-sid";
+    const t = fakeTransport();
+    const transports = new Map<string, FakeTransport>();
+    transports.set(sid, t);
+    const sessionAgentMap = new Map<string, string | undefined>();
+    // Not in agent map but bound at DB level — not an orphan
+    const sessionStore = fakeStore({
+      [sid]: { agent: "rust-vane", createdAt: new Date(NOW - 600_000).toISOString() },
+    });
+
+    const result = pruneStaleAndOrphanTransports({
+      agentName: "drifter-gale",
+      currentSessionId: undefined,
+      transports: transports as Map<string, { close?: () => Promise<void> | void }>,
+      sessionAgentMap,
+      sessionStore,
+      logger: silentLogger(),
+      now: NOW,
+    });
+
+    expect(result.closedOrphans).toBe(0);
+    expect(t.closed).toBe(false);
+  });
+
+  it("first pass closes same-agent stale transports on different sids", () => {
+    const NOW = 1_700_000_000_000;
+    const fresh = "current-sid";
+    const stale1 = "stale-sid-1";
+    const stale2 = "stale-sid-2";
+    const tFresh = fakeTransport();
+    const tStale1 = fakeTransport();
+    const tStale2 = fakeTransport();
+    const transports = new Map<string, FakeTransport>();
+    transports.set(fresh, tFresh);
+    transports.set(stale1, tStale1);
+    transports.set(stale2, tStale2);
+
+    const sessionAgentMap = new Map<string, string | undefined>();
+    sessionAgentMap.set(fresh, "drifter-gale");
+    sessionAgentMap.set(stale1, "drifter-gale");
+    sessionAgentMap.set(stale2, "drifter-gale");
+
+    const sessionStore = fakeStore({
+      [fresh]: { agent: "drifter-gale", createdAt: new Date(NOW - 5_000).toISOString() },
+      [stale1]: { agent: "drifter-gale", createdAt: new Date(NOW - 600_000).toISOString() },
+      [stale2]: { agent: "drifter-gale", createdAt: new Date(NOW - 600_000).toISOString() },
+    });
+
+    const result = pruneStaleAndOrphanTransports({
+      agentName: "drifter-gale",
+      currentSessionId: fresh,
+      transports: transports as Map<string, { close?: () => Promise<void> | void }>,
+      sessionAgentMap,
+      sessionStore,
+      logger: silentLogger(),
+      now: NOW,
+    });
+
+    expect(result.closedForAgent).toBe(2);
+    expect(tFresh.closed).toBe(false);
+    expect(tStale1.closed).toBe(true);
+    expect(tStale2.closed).toBe(true);
+    expect(transports.has(fresh)).toBe(true);
+    expect(transports.has(stale1)).toBe(false);
+    expect(transports.has(stale2)).toBe(false);
+  });
+
+  it("does not close the current session even if it appears as an orphan candidate", () => {
+    const NOW = 1_700_000_000_000;
+    const current = "current-pre-login";
+    const transports = new Map<string, FakeTransport>();
+    const tCurrent = fakeTransport();
+    transports.set(current, tCurrent);
+    const sessionAgentMap = new Map<string, string | undefined>();
+    const sessionStore = fakeStore({
+      [current]: { agent: undefined, createdAt: new Date(NOW - 600_000).toISOString() },
+    });
+
+    const result = pruneStaleAndOrphanTransports({
+      agentName: "drifter-gale",
+      currentSessionId: current,
+      transports: transports as Map<string, { close?: () => Promise<void> | void }>,
+      sessionAgentMap,
+      sessionStore,
+      logger: silentLogger(),
+      now: NOW,
+    });
+
+    expect(result.closedOrphans).toBe(0);
+    expect(tCurrent.closed).toBe(false);
   });
 });

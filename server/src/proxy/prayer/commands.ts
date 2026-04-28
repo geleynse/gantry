@@ -34,7 +34,7 @@ export const COMMANDS: Record<string, CommandSpec> = {
     argTypes: ["integer"],
     dispatcher: {
       kind: "native",
-      handler: async (args, state, deps) => {
+      handler: async (args, _state, deps) => {
         const ticks = Math.max(1, intArg(args, 0, 1));
         for (let i = 0; i < ticks; i++) {
           await deps.client.waitForTick();
@@ -62,6 +62,19 @@ export const COMMANDS: Record<string, CommandSpec> = {
       kind: "compound",
       tool: "travel_to",
       argMapper: (args) => ({ destination: stringArg(args, 0) }),
+    },
+  },
+  jump: {
+    name: "jump",
+    backingTool: "jump_route",
+    arity: [1, 1],
+    // Accepts a bare system identifier (e.g. 'jump solara; jump home')
+    // Mapped to jump_route compound action with system_ids array.
+    argTypes: ["any"],
+    dispatcher: {
+      kind: "compound",
+      tool: "jump_route",
+      argMapper: (args) => ({ system_ids: [String(args[0] ?? "")] }),
     },
   },
   dock: {
@@ -142,6 +155,57 @@ export const COMMANDS: Record<string, CommandSpec> = {
       },
     },
   },
+  survey: {
+    name: "survey",
+    backingTool: "survey_system",
+    arity: [0, 0],
+    argTypes: [],
+    dispatcher: { kind: "passthrough", tool: "survey_system", argMapper: () => undefined },
+  },
+  retrieve: {
+    name: "retrieve",
+    backingTool: "withdraw_items",
+    arity: [1, 2],
+    argTypes: ["item", "integer"],
+    dispatcher: {
+      kind: "native",
+      handler: async (args, state, deps) => {
+        const itemId = stringArg(args, 0);
+        const quantity = args.length >= 2 ? intArg(args, 1, 1) : 1;
+        if (quantity <= 0) {
+          throw new PrayerRuntimeError("skip_no_items", "Quantity must be positive for retrieve");
+        }
+        const item = { item_id: itemId, quantity };
+        const started = Date.now();
+        const result = await deps.handlePassthrough("withdraw_items", item);
+        const durationMs = Date.now() - started;
+        state.log.push({ tool: "withdraw_items", args: item, result, durationMs, ok: true });
+        deps.logSubTool?.("pray:withdraw_items", item, result, durationMs);
+      },
+    },
+  },
+  buy: {
+    name: "buy",
+    backingTool: "buy",
+    arity: [2, 2],
+    argTypes: ["item", "integer"],
+    dispatcher: {
+      kind: "passthrough",
+      tool: "buy",
+      argMapper: (args) => ({ item_id: stringArg(args, 0), quantity: intArg(args, 1, 1) }),
+    },
+  },
+  accept_mission: {
+    name: "accept_mission",
+    backingTool: "accept_mission",
+    arity: [1, 1],
+    argTypes: ["any"],
+    dispatcher: {
+      kind: "passthrough",
+      tool: "accept_mission",
+      argMapper: (args) => ({ mission_id: stringArg(args, 0) }),
+    },
+  },
 };
 
 export const UNSUPPORTED_COMMANDS = new Set([
@@ -160,6 +224,9 @@ export const UNSUPPORTED_COMMANDS = new Set([
   "decline_mission",
   "use_item",
   "set_home",
+  // craft deliberately blocked — too consequential for blind pre-turn execution;
+  // requires RECIPE_AVAILABLE + CRAFT_PROFITABLE predicates before unblocking.
+  "craft",
 ]);
 
 export function resolveSpecialDestination(value: string, data: Record<string, unknown>): string {

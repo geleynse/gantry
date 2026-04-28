@@ -220,6 +220,7 @@ export function gatherFleetSnapshot(deps: StateGathererDeps): FleetSnapshot {
        FROM fleet_orders o
        LEFT JOIN fleet_order_deliveries d ON d.order_id = o.id
        WHERE d.id IS NULL
+         AND o.created_at > datetime('now', '-30 minutes')
        ORDER BY o.created_at DESC`,
     );
   } catch {

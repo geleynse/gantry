@@ -123,9 +123,10 @@ async function networkFirstWithOfflineFallback(request) {
 
     // Minimal fallback if offline page not cached yet
     return new Response(
-      '<html><body style="background:#1a1e26;color:#d8dee9;font-family:monospace;padding:2rem">' +
+      '<!doctype html><html><head><meta charset="utf-8"></head>' +
+      '<body style="background:#1a1e26;color:#d8dee9;font-family:monospace;padding:2rem">' +
       '<h1>Gantry — Offline</h1><p>No network connection. The dashboard is unavailable.</p></body></html>',
-      { headers: { 'Content-Type': 'text/html' } }
+      { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
     );
   }
 }

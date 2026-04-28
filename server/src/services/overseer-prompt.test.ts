@@ -210,11 +210,11 @@ describe("buildUserPrompt", () => {
     expect(prompt).not.toContain("Recently Delivered Orders");
   });
 
-  it("shows TRANSIT STUCK for online agent with status data but no location", () => {
+  it("shows TRANSIT IDLE (not STUCK) for online agent in transit with cargo", () => {
     const snapshot = makeSnapshot({
       agents: [
         {
-          name: "stuck-agent",
+          name: "transit-agent",
           role: "Trader",
           credits: 5000,
           system: undefined,
@@ -229,7 +229,55 @@ describe("buildUserPrompt", () => {
       ],
     });
     const prompt = buildUserPrompt(snapshot, []);
-    expect(prompt).toContain("TRANSIT STUCK");
+    expect(prompt).toContain("TRANSIT IDLE");
+    expect(prompt).toContain("Do NOT stop_agent");
+    expect(prompt).not.toContain("TRANSIT STUCK");
     expect(prompt).not.toContain("AWAITING STATUS");
+  });
+
+  it("shows TRANSIT STUCK for online agent in transit with no cargo", () => {
+    const snapshot = makeSnapshot({
+      agents: [
+        {
+          name: "empty-agent",
+          role: "Trader",
+          credits: 5000,
+          system: undefined,
+          poi: undefined,
+          cargoUsed: 0,
+          cargoMax: 50,
+          fuel: 80,
+          fuelMax: 100,
+          isOnline: true,
+          isInCombat: false,
+        },
+      ],
+    });
+    const prompt = buildUserPrompt(snapshot, []);
+    expect(prompt).toContain("TRANSIT STUCK");
+    expect(prompt).not.toContain("TRANSIT IDLE");
+  });
+
+  it("shows TRANSIT STUCK when cargoUsed is undefined (no cargo data)", () => {
+    const snapshot = makeSnapshot({
+      agents: [
+        {
+          name: "no-cargo-data",
+          role: "Trader",
+          credits: 5000,
+          system: undefined,
+          poi: undefined,
+          cargoUsed: undefined,
+          cargoMax: undefined,
+          fuel: 80,
+          fuelMax: 100,
+          isOnline: true,
+          isInCombat: false,
+        },
+      ],
+    });
+    const prompt = buildUserPrompt(snapshot, []);
+    expect(prompt).toContain("TRANSIT STUCK");
+    expect(prompt).not.toContain("TRANSIT IDLE");
   });
 });

@@ -39,7 +39,15 @@ export async function flee(
 
   // Step 1: Get current battle status
   const battleStatusResp = await client.execute("get_battle_status");
-  if (battleStatusResp.error) {
+
+  // The game returns error.code === "not_in_battle" instead of a result when no battle exists.
+  // Treat that as "no active battle" rather than an opaque failure.
+  const errObj = battleStatusResp.error && typeof battleStatusResp.error === "object"
+    ? (battleStatusResp.error as Record<string, unknown>) : null;
+  const errCode = typeof errObj?.code === "string" ? (errObj.code as string) : null;
+  const isNotInBattleErr = errCode === "not_in_battle";
+
+  if (battleStatusResp.error && !isNotInBattleErr) {
     log.warn("flee: get_battle_status failed", { agent: agentName, error: battleStatusResp.error });
     return {
       status: "error",
@@ -52,8 +60,45 @@ export async function flee(
   const currentBattle = battleStatus?.status as string | undefined;
 
   // Check if actually in battle
-  if (!currentBattle || currentBattle === "none" || currentBattle === "ended") {
-    log.info("flee: not in battle", { agent: agentName, battle_status: currentBattle });
+  if (isNotInBattleErr || !currentBattle || currentBattle === "none" || currentBattle === "ended") {
+    // Caller invoked flee but the game reports no active battle.
+    // Probe for phantom in_battle: server's in_combat flag stuck despite battle ending.
+    // Symptom: dock/travel/undock return ERROR: in_combat while get_battle_status says not_in_battle.
+    // Recovery requires logout+login to resync server state (lumen-shoal 2026-04-27).
+    log.info("flee: no active battle reported; probing for phantom in_combat state", {
+      agent: agentName, battle_status: currentBattle ?? "not_in_battle_err",
+    });
+
+    const dockProbe = await client.execute("dock", undefined, { noRetry: true });
+    const probeErrStr = dockProbe.error
+      ? (typeof dockProbe.error === "string" ? dockProbe.error : JSON.stringify(dockProbe.error))
+      : "";
+    const phantomDetected = /in_combat/i.test(probeErrStr);
+
+    if (phantomDetected) {
+      log.warn("flee: PHANTOM in_combat detected — server flag stuck despite no active battle", {
+        agent: agentName, dock_error: dockProbe.error,
+      });
+      upsertNote(
+        agentName,
+        "phantom_battle",
+        `PHANTOM in_combat detected at ${new Date().toISOString()}. ` +
+          `dock returned in_combat but get_battle_status returned not_in_battle. ` +
+          `Recovery requires logout() then login() to resync server state.`,
+      );
+      // Clear local battle cache as defense-in-depth.
+      persistBattleState(agentName, null);
+      return {
+        status: "phantom_in_battle",
+        escaped: false,
+        message:
+          "PHANTOM in_combat: server flag stuck despite no active battle. " +
+          "Recovery: call logout() then login() to resync.",
+        recovery: "logout_then_login",
+        detected_via: { dock_error: dockProbe.error },
+      };
+    }
+
     return {
       status: "not_in_battle",
       escaped: false,

@@ -34,12 +34,13 @@ describe("SessionShutdownManager", () => {
       expect(tools).toContain("write_report");
       expect(tools).toContain("read_report");
       expect(tools).toContain("search_memory");
+      expect(tools).toContain("search_captain_logs");
       expect(tools).toContain("logout");
     });
 
-    it("returns 10 allowed tools", () => {
+    it("returns 11 allowed tools", () => {
       const tools = manager.getAllowedToolsDuringShutdown();
-      expect(tools.length).toBe(10);
+      expect(tools.length).toBe(11);
     });
 
     it("returns a new array each call (not shared reference)", () => {

@@ -536,6 +536,71 @@ export async function handlePassthrough(
     }
   }
 
+  // --- 2c. Nav-cache refresh on jump error/timeout ---
+  // When a jump or jump_route times out, the game server may have moved the ship even though
+  // the HTTP response was an error. waitForNavCacheUpdate is gated on !resp.error (below) so
+  // it never runs on timeout. Force a status refresh here so the cache reflects authoritative
+  // game state — otherwise the next adjacency check uses a stale "from" location and rejects
+  // all subsequent jumps from the agent's actual position.
+  //
+  // Cap the refresh at 15s (separate from the underlying client's COMMAND_TIMEOUT_MS=90s).
+  // If the refresh itself stalls or fails to update the cache, mutate the error response
+  // to include _nav_cache_stale:true so the agent knows to call get_status before the next
+  // jump rather than retrying blind on a stale "from" location (which produced already_here
+  // loops in the 2026-04-28 stability investigation).
+  if (resp.error && isNavTool && (v1ToolName === "jump" || v1ToolName === "jump_route")) {
+    const REFRESH_TIMEOUT_MS = 15_000;
+    const cachedFetchedAtBefore = statusCache.get(agentName)?.fetchedAt ?? 0;
+    let refreshTimedOut = false;
+    let refreshFailed = false;
+
+    try {
+      await Promise.race([
+        client.waitForTick(),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => {
+            refreshTimedOut = true;
+            reject(new Error("nav-cache refresh exceeded 15s cap"));
+          }, REFRESH_TIMEOUT_MS),
+        ),
+      ]);
+    } catch (err) {
+      refreshFailed = true;
+      log.warn("nav-tool error: post-timeout cache refresh failed", {
+        agent: agentName,
+        tool: v1ToolName,
+        timed_out: refreshTimedOut,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // Even if waitForTick resolved without throwing, the cache might not have
+    // been updated (refreshStatus returned null). Detect that by checking
+    // whether fetchedAt advanced. If not, treat as a refresh failure.
+    const cachedFetchedAtAfter = statusCache.get(agentName)?.fetchedAt ?? 0;
+    const cacheUpdated = cachedFetchedAtAfter > cachedFetchedAtBefore;
+
+    if (refreshFailed || !cacheUpdated) {
+      // Mutate error response so the agent knows the cache is unreliable.
+      // Defensive: only mutate if error is a plain object we can extend.
+      if (resp.error && typeof resp.error === "object" && !Array.isArray(resp.error)) {
+        (resp.error as Record<string, unknown>)._nav_cache_stale = true;
+      }
+      log.warn("nav-tool error: nav cache may be stale after refresh attempt", {
+        agent: agentName,
+        tool: v1ToolName,
+        refresh_failed: refreshFailed,
+        cache_updated: cacheUpdated,
+      });
+    } else {
+      log.info("nav-tool error: forced status refresh to resync nav cache", {
+        agent: agentName,
+        tool: v1ToolName,
+        error: JSON.stringify(resp.error).slice(0, 120),
+      });
+    }
+  }
+
   // --- 3. State-changing tick wait ---
 
   if (!resp.error && stateChangingTools.has(v1ToolName)) {
@@ -918,7 +983,13 @@ export async function handlePassthrough(
 
     const errorMsg = addErrorHint(`[${code}] ${message}`, context);
     completeLog(pendingId, agentName, action, errorMsg, elapsed, { success: false, errorCode: String(code) });
-    return await withInjections(agentName, textResult({ error: errorMsg }));
+    // Surface nav-cache staleness to the agent. The flag is set on resp.error
+    // by the post-timeout refresh path above when the cache could not be
+    // refreshed successfully — agents should call get_status before retrying.
+    const navCacheStale = (resp.error as Record<string, unknown> | null | undefined)?._nav_cache_stale === true;
+    const errorPayload: Record<string, unknown> = { error: errorMsg };
+    if (navCacheStale) errorPayload._nav_cache_stale = true;
+    return await withInjections(agentName, textResult(errorPayload));
   }
 
   // --- 5. Success path ---
@@ -1430,6 +1501,68 @@ export async function handlePassthrough(
       }
     } catch (err) {
       log.debug("insurance cache clear failed (non-fatal)", { error: String(err) });
+    }
+  }
+
+  // --- Storage cache wiring for PrayerLang STASHED/STASH predicates ---
+  // view_storage / view_faction_storage results are merged into statusCache so
+  // predicates.ts can evaluate STASHED(item) and STASH(poi, item) against real
+  // game data. Without this, both predicates always returned 0.
+  //
+  // view_storage response shape: { station_id?: string, items: Array<{ item_id, quantity, ... }> }
+  // view_faction_storage response shape: same shape but for faction storage.
+  //   Assumption: view_faction_storage uses the same { items: [...] } envelope as
+  //   view_storage (no summarizer exists; shape inferred from predicate test fixtures
+  //   which expect { item_id, quantity, poi_id } records, and from schema-drift listing
+  //   it alongside view_storage). Entries may include faction_id on the record.
+  //
+  // We replace records for the current POI only — records from other POIs
+  // cached in earlier calls are preserved.
+  if (v1ToolName === "view_storage" || v1ToolName === "view_faction_storage") {
+    try {
+      const cached = statusCache.get(agentName);
+      if (cached?.data) {
+        const playerData = cached.data.player as Record<string, unknown> | undefined;
+        const currentPoi = playerData?.current_poi as string | undefined;
+
+        const rawResult = result as Record<string, unknown> | null;
+        // Items may be at top-level (array response) or under .items key
+        const rawItems = Array.isArray(rawResult?.items)
+          ? rawResult.items
+          : Array.isArray(rawResult)
+          ? rawResult
+          : [];
+
+        // Map API records to { item_id, quantity, poi_id } with poi_id from the
+        // cache if not already present in the record.
+        const newRecords = (rawItems as Array<Record<string, unknown>>)
+          .filter((i) => !!i && typeof i === "object" && !Array.isArray(i))
+          .map((i) => ({
+            ...i,
+            poi_id: (i.poi_id ?? i.poi ?? currentPoi ?? "") as string,
+          }));
+
+        const cacheKey = v1ToolName === "view_storage" ? "personal_storage" : "faction_storage";
+        const existing = Array.isArray(cached.data[cacheKey])
+          ? (cached.data[cacheKey] as Array<Record<string, unknown>>)
+          : [];
+
+        // Keep records for other POIs; replace records for currentPoi
+        const retained = currentPoi
+          ? existing.filter((r) => {
+              const recPoi = String(r.poi_id ?? r.poi ?? r.station_id ?? r.location ?? "");
+              return recPoi !== currentPoi;
+            })
+          : existing;
+
+        cached.data[cacheKey] = [...retained, ...newRecords];
+        statusCache.set(agentName, { data: cached.data, fetchedAt: cached.fetchedAt });
+      }
+    } catch (err) {
+      log.warn(`${v1ToolName} storage cache merge failed`, {
+        agent: agentName,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

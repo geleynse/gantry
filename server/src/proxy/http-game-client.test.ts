@@ -387,4 +387,40 @@ describe("HttpGameClient - auto-re-login on not_logged_in", () => {
     expect(resp.error).toBeDefined();
     expect(resp.error!.code).toBe("not_logged_in");
   });
+
+  it("increments reconnectCount on successful auto-re-login", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pass");
+    expect(client.getConnectionHealth().totalReconnects).toBe(0);
+
+    // Command returns not_logged_in
+    pushMcpToolResult(JSON.stringify({ code: "not_logged_in", message: "Not logged in" }), true);
+    // Re-init + login
+    pushInitSequence();
+    pushMcpToolResult(JSON.stringify({ message: "Welcome back!" }));
+    // Retry command
+    pushMcpToolResult(JSON.stringify({ status: "ok" }));
+
+    const resp = await client.execute("get_status");
+    expect(resp.error).toBeUndefined();
+    expect(client.getConnectionHealth().totalReconnects).toBe(1);
+  });
+
+  it("does not increment reconnectCount when re-login fails", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pass");
+
+    // Command returns not_logged_in
+    pushMcpToolResult(JSON.stringify({ code: "not_logged_in", message: "Not logged in" }), true);
+    // Re-init fails
+    fetchResponses.push({
+      status: 500,
+      body: JSON.stringify({ error: "server error" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const resp = await client.execute("get_status");
+    expect(resp.error).toBeDefined();
+    expect(client.getConnectionHealth().totalReconnects).toBe(0);
+  });
 });

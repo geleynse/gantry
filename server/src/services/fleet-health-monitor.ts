@@ -37,6 +37,8 @@ export interface FleetHealthSnapshot {
   reconnects_per_minute: Record<string, number>;
   avg_connection_duration_ms: Record<string, number | null>;
   rapid_disconnects: Record<string, number>;
+  /** Total game-server-initiated session losses and successful auto-reconnects per agent. */
+  total_reconnects: Record<string, number>;
   session_leak: boolean;
   auto_shutdown_reason: string | null;
 }
@@ -51,6 +53,15 @@ export interface FleetHealthMonitorDeps {
 
   /** Get the names of currently active agents (running game sessions). */
   getActiveAgents: () => string[];
+
+  /**
+   * Get the configured fleet size (count of agents in fleet-config).
+   * Stable input — does NOT dip during reconnect cascades. Used as the
+   * baseline for the session_leak threshold so the alert fires when
+   * transports actually leak rather than when active count temporarily
+   * drops during reconnects.
+   */
+  getConfiguredFleetSize: () => number;
 
   /** Get the current fleet-wide error rate (0..1) from instability metrics. */
   getErrorRate: () => number;
@@ -212,6 +223,7 @@ export function createFleetHealthMonitor(deps: FleetHealthMonitorDeps): FleetHea
     const reconnects_per_minute: Record<string, number> = {};
     const avg_connection_duration_ms: Record<string, number | null> = {};
     const rapid_disconnects: Record<string, number> = {};
+    const total_reconnects: Record<string, number> = {};
 
     for (const name of activeAgents) {
       const health = deps.getAgentHealth(name);
@@ -219,20 +231,27 @@ export function createFleetHealthMonitor(deps: FleetHealthMonitorDeps): FleetHea
         reconnects_per_minute[name] = health.reconnectsPerMinute;
         avg_connection_duration_ms[name] = health.connectionDurationMs;
         rapid_disconnects[name] = health.rapidDisconnects;
+        total_reconnects[name] = health.totalReconnects;
       } else {
         reconnects_per_minute[name] = 0;
         avg_connection_duration_ms[name] = null;
         rapid_disconnects[name] = 0;
+        total_reconnects[name] = 0;
       }
     }
 
-    // Session leak: more than 3x active agents worth of transports (min 10)
-    const session_leak = transportCount > Math.max(activeAgents.length * 3, 10);
+    // Session leak: more than 3x configured fleet size worth of transports (min 10).
+    // Using configured size (not active count) prevents the threshold from dipping
+    // during reconnect cascades, which previously made the alert fire spuriously
+    // when active agents temporarily dropped to 1-2.
+    const fleetSize = deps.getConfiguredFleetSize();
+    const session_leak = transportCount > Math.max(fleetSize * 3, 10);
 
     return {
       reconnects_per_minute,
       avg_connection_duration_ms,
       rapid_disconnects,
+      total_reconnects,
       session_leak,
       auto_shutdown_reason: autoShutdownReason,
     };

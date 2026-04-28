@@ -55,9 +55,12 @@ import { TransitStuckDetector } from "./transit-stuck-detector.js";
 import { NavLoopDetector } from "./nav-loop-detector.js";
 import { OverrideRegistry, BUILT_IN_RULES, createOverrideInjection } from "./override-system.js";
 import { StateHintEngine, createStateHintInjection } from "./state-hints.js";
-import { ResourceKnowledge, recordMarketResources } from "../services/resource-knowledge.js";
+import { ResourceKnowledge } from "../services/resource-knowledge.js";
 import { searchCatalog } from "../services/game-catalog.js";
-import { runPrayerScript } from "./prayer/index.js";
+import { searchCaptainsLogs } from "../services/captains-logs-db.js";
+import { runPrayerScript, loadCheckpoint, saveCheckpoint, clearCheckpoint } from "./prayer/index.js";
+import { queryRecentSnapshot, listSnapshotDates, getSnapshotCoverage } from "../services/external-snapshot-fetcher.js";
+import { findCraftChains } from "../services/crafting-profit.js";
 
 // ---------------------------------------------------------------------------
 // Rate limit tracking helper
@@ -578,6 +581,12 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
         setTimeout(() => reject(new Error(`Prayer script exceeded timeout_ticks (${timeoutTicks})`)), timeoutTicks * PRAYER_TICK_TIMEOUT_MS),
       );
 
+      // Load prior checkpoint for resume across server restarts (best-effort).
+      const initialState = loadCheckpoint(agentName) ?? undefined;
+      if (initialState) {
+        log.info(`[${agentName}] pray RESUME from checkpoint (steps: ${initialState.stepsExecuted}) | trace: ${traceId}`);
+      }
+
       const result = await Promise.race([
         runPrayerScript(script, {
           agentName,
@@ -591,6 +600,8 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
           maxSteps,
           maxLoopIters: 200,
           maxWallClockMs: 10 * 60 * 1000,
+          initialState,
+          onCheckpoint: (state) => saveCheckpoint(agentName, state),
           handlePassthrough: async (tool, passthroughArgs) => {
             const mcpResult = await handlePassthrough(
               passthroughDeps,
@@ -638,6 +649,12 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
         durationMs,
         { isCompound: true, success: result.status !== "error" },
       );
+
+      // Clear checkpoint only on clean completion — halted/interrupted/error
+      // prayers keep their checkpoint so they can resume across server restarts.
+      if (result.status === "completed") {
+        clearCheckpoint(agentName);
+      }
 
       return await withInjections(agentName, textResult(result));
     } catch (err) {
@@ -1132,6 +1149,61 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
           const result = handleFindLocalRoute(shared.fleet.galaxyGraphRef.current, fromStr, toStr);
           return textResult(result);
         }
+        if (action === "recent_snapshot") {
+          const itemId = typeof args.id === "string" ? args.id : undefined;
+          if (!itemId) return textResult({ error: "id (item_id) is required for recent_snapshot" });
+          try {
+            const rows = queryRecentSnapshot(itemId);
+            const dates = listSnapshotDates().slice(0, 5);
+            if (rows.length === 0) {
+              const coverage = getSnapshotCoverage();
+              return textResult({
+                item_id: itemId,
+                rows: [],
+                note: `No snapshot data found for item_id="${itemId}". Available dates: ${dates.join(", ") || "none yet"}. Coverage: ${coverage.items_covered} items across ${coverage.dates_available} dates.`,
+              });
+            }
+            return textResult({
+              item_id: itemId,
+              rows,
+              note: `STALE community data from mkryo59-afk — single station (Grand Exchange) only. Verify before trading.`,
+            });
+          } catch (e) {
+            return textResult({ error: `recent_snapshot failed: ${e instanceof Error ? e.message : String(e)}` });
+          }
+        }
+        if (action === "snapshot_coverage") {
+          try {
+            const coverage = getSnapshotCoverage();
+            return textResult(coverage);
+          } catch (e) {
+            return textResult({ error: `snapshot_coverage failed: ${e instanceof Error ? e.message : String(e)}` });
+          }
+        }
+      }
+
+      // spacemolt_catalog: craft_chains action
+      if (toolName === "spacemolt_catalog" && action === "craft_chains") {
+        try {
+          const ingredient = typeof args.id === "string" ? args.id : undefined;
+          const target = typeof args.text === "string" ? args.text : undefined;
+          const { data: mktData } = marketCache.get();
+          const priceMap = new Map<string, { bid: number; ask: number }>();
+          if (mktData) {
+            for (const item of mktData.items) {
+              priceMap.set(item.item_id, { bid: item.best_bid, ask: item.best_ask });
+            }
+          }
+          const results = findCraftChains(ingredient, priceMap, target);
+          return textResult({
+            chains: results,
+            note: results.length === 0
+              ? "No profitable craft chains found. Market prices may not cover input costs, or no recipes exist for the given ingredient."
+              : `Found ${results.length} craft chain(s). Uses vendored BOM data from rsned/spacemolt-crafting-server.`,
+          });
+        } catch (e) {
+          return textResult({ error: `craft_chains failed: ${e instanceof Error ? e.message : String(e)}` });
+        }
       }
 
       // Doc tools (spacemolt_social actions from proxy SQLite)
@@ -1174,6 +1246,22 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
             const targetAgentArg = args.id ? String(args.id) : undefined;
             if (!query) { result = { error: "search_memory requires content (search query)" }; break; }
             result = handleSearchMemory(agentName, query, limit, targetAgentArg, otherAgents);
+            break;
+          }
+          case "search_captain_logs": {
+            const query = String(args.content ?? args.text ?? "");
+            const limit = typeof args.count === "number" ? args.count : 20;
+            const targetAgent = args.id ? String(args.id) : agentName;
+            if (!query) {
+              result = { error: "search_captain_logs requires content (search query)" };
+              break;
+            }
+            try {
+              const matches = searchCaptainsLogs(targetAgent, query, limit);
+              result = { results: matches, query, agent: targetAgent };
+            } catch (err) {
+              result = { error: `search_captain_logs failed: ${err instanceof Error ? err.message : String(err)}` };
+            }
             break;
           }
           case "rate_memory": {

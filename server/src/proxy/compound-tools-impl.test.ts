@@ -1944,6 +1944,68 @@ describe("flee", () => {
     const travelCall = travelCalls[travelCalls.length - 1];
     expect(travelCall.target_poi).toBe("station"); // Default to station
   });
+
+  it("detects phantom_in_battle when get_battle_status returns not_in_battle code but dock returns in_combat", async () => {
+    // Reproduces lumen-shoal at Alhena/Voss Redoubt 2026-04-27:
+    // dock → ERROR: in_combat, get_battle_status → {code: "not_in_battle"}
+    const notes: Array<{ type: string; content: string }> = [];
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "get_battle_status") {
+          return { error: { code: "not_in_battle", message: "No active battle." } };
+        }
+        if (tool === "dock") return { error: "ERROR: in_combat" };
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, makeStatusCache("agent", {}), {
+      upsertNote: (_agentName: string, type: string, content: string) => {
+        notes.push({ type, content });
+      },
+    });
+
+    const result = await flee(deps);
+
+    expect(result.status).toBe("phantom_in_battle");
+    expect(result.escaped).toBe(false);
+    expect(result.recovery).toBe("logout_then_login");
+    expect(String(result.message)).toContain("logout");
+    expect(notes.some((n) => n.type === "phantom_battle")).toBe(true);
+  });
+
+  it("returns not_in_battle when get_battle_status returns not_in_battle code and dock probe is clean", async () => {
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "get_battle_status") {
+          return { error: { code: "not_in_battle", message: "No active battle." } };
+        }
+        if (tool === "dock") return { result: { docked: true } }; // No in_combat error
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, makeStatusCache("agent", {}));
+
+    const result = await flee(deps);
+
+    expect(result.status).toBe("not_in_battle");
+    expect(result.escaped).toBe(false);
+  });
+
+  it("detects phantom from in_combat in object error shape (not just string)", async () => {
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "get_battle_status") return { result: { status: "ended" } };
+        if (tool === "dock") return { error: { code: "in_combat", message: "Cannot dock during combat." } };
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, makeStatusCache("agent", {}));
+
+    const result = await flee(deps);
+
+    expect(result.status).toBe("phantom_in_battle");
+    expect(result.recovery).toBe("logout_then_login");
+  });
 });
 
 // ---------------------------------------------------------------------------

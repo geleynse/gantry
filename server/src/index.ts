@@ -24,6 +24,7 @@ import { setLifecycleHooks } from "./services/agent-manager.js";
 import { migrateCredentialsIfNeeded, validateAllCredentials } from "./services/credentials-crypto.js";
 import { recordCredentialValidationResult } from "./services/credential-health.js";
 import { fetchAndCacheCatalog } from "./services/game-catalog.js";
+import { runDailySnapshotFetch } from "./services/external-snapshot-fetcher.js";
 
 // Configure log level early
 setLogLevel(parseLogLevel(LOG_LEVEL));
@@ -244,6 +245,21 @@ const marketScanTimer = setInterval(async () => {
 }, MARKET_SCAN_INTERVAL_MS);
 marketScanTimer.unref();
 appTimers.register("marketScan", marketScanTimer);
+
+// --- 6b. Daily community market snapshot fetch (every 24h, ~06:05 UTC) ---
+// Fetches mkryo59-afk/spacemolt-news daily snapshots for cold-start agent intel.
+// Runs at startup and then every 24 hours. Won't re-fetch dates already in DB.
+const SNAPSHOT_FETCH_INTERVAL = 24 * 60 * 60 * 1000;
+void runDailySnapshotFetch(); // fire-and-forget on startup
+const snapshotFetchTimer = setInterval(async () => {
+  try {
+    await runDailySnapshotFetch();
+  } catch {
+    // Non-fatal — external fetch may fail when GitHub is unreachable
+  }
+}, SNAPSHOT_FETCH_INTERVAL);
+snapshotFetchTimer.unref();
+appTimers.register("snapshotFetch", snapshotFetchTimer);
 
 // --- 6. Tool call pruning (every 6 hours, 7-day retention) ---
 const PRUNE_INTERVAL = 6 * 60 * 60 * 1000;

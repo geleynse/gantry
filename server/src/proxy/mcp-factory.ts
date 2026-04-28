@@ -50,6 +50,43 @@ function sanitizeToolCallBody(body: unknown): string | null {
   return null;
 }
 
+/**
+ * Validate a tools/call request has a usable tool name.
+ * Returns null if the body is valid (or not a tools/call), or a JSON-RPC error
+ * envelope ready to send if name is missing, empty, or non-string.
+ *
+ * Pattern adopted from SpaceMolt/admiral late April 2026 — guards against small/local
+ * LLMs that emit malformed tool calls. Lets the agent recover via toolResult error
+ * instead of bubbling an unhandled MCP SDK throw.
+ */
+export function validateToolCallName(body: unknown): { jsonrpc: "2.0"; id: unknown; error: { code: number; message: string; data?: unknown } } | null {
+  if (
+    !body ||
+    typeof body !== "object" ||
+    (body as Record<string, unknown>).method !== "tools/call"
+  ) {
+    return null;
+  }
+  const reqId = (body as Record<string, unknown>).id;
+  const params = (body as Record<string, unknown>).params;
+  if (!params || typeof params !== "object") {
+    return {
+      jsonrpc: "2.0",
+      id: reqId ?? null,
+      error: { code: -32602, message: "Invalid tools/call: params missing", data: { received: params ?? null } },
+    };
+  }
+  const name = (params as Record<string, unknown>).name;
+  if (typeof name !== "string" || name.trim() === "") {
+    return {
+      jsonrpc: "2.0",
+      id: reqId ?? null,
+      error: { code: -32602, message: "Invalid tools/call: tool name missing or empty", data: { received: name ?? null } },
+    };
+  }
+  return null;
+}
+
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -151,6 +188,89 @@ export const OUR_SCHEMA_PARAMS: Record<string, string[]> = {
   commission_ship: ["ship_class", "provide_materials"],
   commission_quote: ["ship_class"],
 };
+
+// Exportable type for testing the orphan-pruning helper.
+export interface PruneTransportsArgs {
+  agentName: string;
+  currentSessionId: string | undefined;
+  transports: Map<string, { close?: () => Promise<void> | void } | StreamableHTTPServerTransport>;
+  sessionAgentMap: Map<string, string | undefined>;
+  sessionStore: { getSession(id: string): { agent?: string; createdAt: string } | null };
+  logger: {
+    info: (msg: string, data?: Record<string, unknown>) => void;
+    warn?: (msg: string, data?: Record<string, unknown>) => void;
+  };
+  now: number;
+  // Pre-login orphan must be older than this (ms) before closure.
+  preLoginOrphanMaxAgeMs?: number;
+}
+
+/**
+ * Pure helper for closing stale + orphan transports.
+ *
+ * Pass 1: close transports tagged for `agentName` on a different session ID
+ *         (prior login churn — same agent reconnecting).
+ * Pass 2: close pre-login orphans — transports whose sessionAgentMap entry
+ *         is missing/undefined AND whose DB session has agent null/undefined
+ *         AND whose createdAt is older than `preLoginOrphanMaxAgeMs` (default 120s).
+ *
+ * Returns counts for logging. Mutates `transports` and `sessionAgentMap`.
+ */
+export function pruneStaleAndOrphanTransports(args: PruneTransportsArgs): {
+  closedForAgent: number;
+  closedOrphans: number;
+} {
+  const {
+    agentName,
+    currentSessionId,
+    transports,
+    sessionAgentMap,
+    sessionStore,
+    logger,
+    now,
+    preLoginOrphanMaxAgeMs = 120_000,
+  } = args;
+
+  let closedForAgent = 0;
+  // Pass 1: close transports owned by the same agent on a different sid.
+  // Copy entries before mutating to avoid iterator invalidation.
+  for (const [sid, owner] of [...sessionAgentMap.entries()]) {
+    if (owner !== agentName) continue;
+    if (currentSessionId && sid === currentSessionId) continue;
+    const staleTransport = transports.get(sid);
+    if (staleTransport) {
+      transports.delete(sid);
+      staleTransport.close?.()?.catch?.(() => { /* ignore close errors */ });
+      closedForAgent++;
+    }
+    sessionAgentMap.delete(sid);
+  }
+
+  // Pass 2: close pre-login orphan transports.
+  let closedOrphans = 0;
+  for (const [sid, transport] of [...transports.entries()]) {
+    if (currentSessionId && sid === currentSessionId) continue;
+    const mapped = sessionAgentMap.get(sid);
+    if (mapped) continue; // already bound to an agent; not an orphan
+    const dbSession = sessionStore.getSession(sid);
+    if (!dbSession) continue; // session gone; reaper handles it
+    if (dbSession.agent) continue; // bound at DB level; not an orphan
+    const createdAtMs = Date.parse(dbSession.createdAt);
+    if (!Number.isFinite(createdAtMs)) continue;
+    const ageMs = now - createdAtMs;
+    if (ageMs < preLoginOrphanMaxAgeMs) continue;
+    transports.delete(sid);
+    sessionAgentMap.delete(sid);
+    transport.close?.()?.catch?.(() => { /* ignore close errors */ });
+    closedOrphans++;
+    logger.info("closeStaleTransportsForAgent: closing pre-login orphan", {
+      sid: sid.slice(0, 8),
+      ageSec: Math.round(ageMs / 1000),
+    });
+  }
+
+  return { closedForAgent, closedOrphans };
+}
 
 /**
  * Create the Express app with MCP transport handling.
@@ -438,23 +558,24 @@ export async function createMcpServer(config: GantryConfig) {
    * This runs synchronously on successful login: the transport map is
    * walked, any transport bound to the same agent (via sessionAgentMap or
    * DB session lookup) on a different session ID is closed immediately.
+   *
+   * Second pass: also close any pre-login orphan transports — transports
+   * created with no agent binding yet whose DB session is also unbound and
+   * older than 120s. These accumulate when an agent's MCP transport stalls
+   * and the runner spawns a replacement before login completes.
    */
   function closeStaleTransportsForAgent(agentName: string, currentSessionId: string | undefined): void {
-    let closed = 0;
-    // Copy entries before mutating to avoid iterator invalidation
-    for (const [sid, owner] of [...sessionAgentMap.entries()]) {
-      if (owner !== agentName) continue;
-      if (currentSessionId && sid === currentSessionId) continue;
-      const staleTransport = transports.get(sid);
-      if (staleTransport) {
-        transports.delete(sid);
-        staleTransport.close?.().catch(() => { /* ignore close errors */ });
-        closed++;
-      }
-      sessionAgentMap.delete(sid);
-    }
-    if (closed > 0) {
-      log.info("closed stale transports for agent", { agent: agentName, closed, remaining: transports.size });
+    const result = pruneStaleAndOrphanTransports({
+      agentName,
+      currentSessionId,
+      transports,
+      sessionAgentMap,
+      sessionStore,
+      logger: log,
+      now: Date.now(),
+    });
+    if (result.closedForAgent > 0) {
+      log.info("closed stale transports for agent", { agent: agentName, closed: result.closedForAgent, remaining: transports.size });
     }
   }
 
@@ -523,6 +644,7 @@ export async function createMcpServer(config: GantryConfig) {
       return (client as import("./game-client.js").HttpGameClient).getConnectionHealth();
     },
     getActiveAgents: () => sessions.listActive(),
+    getConfiguredFleetSize: () => config.agents.length,
     getErrorRate: () => {
       const metrics = serverMetrics.getMetrics();
       return metrics.requests.total > 0
@@ -557,9 +679,11 @@ export async function createMcpServer(config: GantryConfig) {
     webhookUrl: process.env.WATCHDOG_WEBHOOK_URL ?? null,
   });
 
-  // Clean up expired sessions from persistent store every 60s.
+  // Clean up expired sessions from persistent store every 15s.
   // Also reaps orphaned transports whose DB session has expired or been removed,
   // preventing unbounded transport map growth during long server runs.
+  // Was 60s; tightened after 2026-04-28 session-leak investigation showed
+  // pre-login orphan transports waiting too long on the slower interval.
   const cleanupInterval = setInterval(() => {
     const deleted = sessionStore.cleanup();
     if (deleted > 0) {
@@ -580,7 +704,7 @@ export async function createMcpServer(config: GantryConfig) {
     if (reaped > 0) {
       log.debug("reaped orphaned transports", { count: reaped, remaining: transports.size });
     }
-  }, 60_000);
+  }, 15_000);
   cleanupInterval.unref();
 
   // Helper: create an MCP transport and wire it up
@@ -635,6 +759,19 @@ export async function createMcpServer(config: GantryConfig) {
     }
   }
 
+  // Guard against malformed tools/call (missing/empty/non-string name).
+  // Returns true if the request was rejected and a JSON-RPC error response sent;
+  // callers should `return` immediately when this returns true.
+  function guardToolCall(version: string, req: import("express").Request, res: import("express").Response): boolean {
+    const err = validateToolCallName(req.body);
+    if (err) {
+      log.warn(`${version} MCP rejected malformed tools/call`, { error: err.error });
+      res.status(400).json(err);
+      return true;
+    }
+    return false;
+  }
+
   function sendBadSession(res: import("express").Response, body: unknown): void {
     res.status(400).json({
       jsonrpc: "2.0",
@@ -658,12 +795,14 @@ export async function createMcpServer(config: GantryConfig) {
       }
 
       if (transport) {
+        if (guardToolCall("v1", req, res)) return;
         logSanitized("v1", req.body);
         await transport.handleRequest(req as Parameters<typeof transport.handleRequest>[0], res, req.body);
       } else if (!sessionId && isInitializeRequest(req.body)) {
         const newTransport = createTransport("v1 MCP");
         const { mcpServer } = createServerInstance();
         await mcpServer.connect(newTransport);
+        if (guardToolCall("v1", req, res)) return;
         logSanitized("v1", req.body);
         await newTransport.handleRequest(req as Parameters<typeof newTransport.handleRequest>[0], res, req.body);
       } else {
@@ -688,6 +827,7 @@ export async function createMcpServer(config: GantryConfig) {
       }
 
       if (transport) {
+        if (guardToolCall("v2", req, res)) return;
         logSanitized("v2", req.body);
         await transport.handleRequest(req as Parameters<typeof transport.handleRequest>[0], res, req.body);
       } else if (!sessionId && isInitializeRequest(req.body)) {
@@ -707,6 +847,7 @@ export async function createMcpServer(config: GantryConfig) {
         }
         const newTransport = createTransport(`v2 MCP (${preset})`);
         await v2Instance.mcpServer.connect(newTransport);
+        if (guardToolCall("v2", req, res)) return;
         logSanitized("v2", req.body);
         await newTransport.handleRequest(req as Parameters<typeof newTransport.handleRequest>[0], res, req.body);
       } else {
@@ -757,6 +898,7 @@ export async function createMcpServer(config: GantryConfig) {
       }
 
       if (transport) {
+        if (guardToolCall("overseer", req, res)) return;
         logSanitized("overseer", req.body);
         await transport.handleRequest(req as Parameters<typeof transport.handleRequest>[0], res, req.body);
       } else if (!sessionId && isInitializeRequest(req.body)) {
@@ -764,6 +906,7 @@ export async function createMcpServer(config: GantryConfig) {
         // Close any existing connection before reconnecting — McpServer only allows one transport at a time
         try { await overseerMcpServer.close(); } catch { /* ignore if not connected */ }
         await overseerMcpServer.connect(newTransport);
+        if (guardToolCall("overseer", req, res)) return;
         logSanitized("overseer", req.body);
         await newTransport.handleRequest(req as Parameters<typeof newTransport.handleRequest>[0], res, req.body);
       } else {
@@ -830,9 +973,13 @@ export async function createMcpServer(config: GantryConfig) {
             health[name] = (client as import("./game-client.js").HttpGameClient).getConnectionHealth();
           }
         }
+        // Use configured fleet size (not active count) so the threshold is
+        // stable during reconnect cascades — see fleet-health-monitor for
+        // the same logic.
+        const fleetSize = config.agents.length;
         return {
           agents: health,
-          session_leak: transports.size > Math.max(activeAgents.length * 3, 10),
+          session_leak: transports.size > Math.max(fleetSize * 3, 10),
         };
       })(),
       analyze_market_cache: (() => {

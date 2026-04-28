@@ -258,6 +258,13 @@ function flatten(raw: GantryGameState, marketCache?: MarketCache): Record<string
     flat.lifetime_stats = lifetimeStats;
   }
 
+  // Pass through standings if present — available in game v0.271.0+
+  // May live at root level or inside the player wrapper
+  const standings = rawAsAny.standings ?? rawPlayer?.standings ?? player.standings;
+  if (standings && typeof standings === 'object') {
+    flat.standings = standings;
+  }
+
   return flat;
 }
 

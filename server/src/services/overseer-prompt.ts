@@ -110,16 +110,24 @@ export function buildUserPrompt(
       triageItems.push(`⚠ ${name}: IDLE ${mins}m → call issue_order(agent="${name}", message="Login and resume your mission")`);
     }
 
-    // Transit stuck (no POI, system is empty or unknown)
+    // Transit detection: empty location means agent is mid-jump.
+    // Distinguish two cases:
+    //   - TRANSIT IDLE (cargo > 0): in hyperspace with payload — wait, do NOT intervene.
+    //   - TRANSIT STUCK (cargo === 0 or undefined): no payload, may be genuinely stuck — order a reset.
+    // Either way the agent can't execute routines until location resolves.
     const hasStatusData = agent.credits !== undefined || agent.system !== undefined || agent.poi !== undefined;
     const loc = agent.poi ?? agent.system ?? "";
-    const isTransitStuck = agent.isOnline && hasStatusData && (!loc || loc === "unknown" || loc === "");
+    const inTransit = agent.isOnline && hasStatusData && (!loc || loc === "unknown" || loc === "");
     if (agent.isOnline && !hasStatusData) {
       triageItems.push(`ℹ ${name}: AWAITING STATUS — agent recently started, no data yet. No action needed.`);
       continue; // No data yet — skip cargo/fuel/credits checks
-    } else if (isTransitStuck) {
-      // Transit-stuck agents can't execute routines — only position reset helps
-      triageItems.push(`⚠ ${name}: TRANSIT STUCK → call issue_order(agent="${name}", message="Logout, wait 2 minutes, then re-login to reset position"). Do NOT trigger routines — they will fail during transit.`);
+    } else if (inTransit) {
+      const carryingCargo = (agent.cargoUsed ?? 0) > 0;
+      if (carryingCargo) {
+        triageItems.push(`ℹ ${name}: TRANSIT IDLE (in hyperspace, cargo ${agent.cargoUsed}/${agent.cargoMax ?? "?"}) — agent is mid-jump with payload. Do NOT stop_agent. Do NOT issue_order — they cannot consume orders mid-transit. Wait one turn.`);
+      } else {
+        triageItems.push(`⚠ ${name}: TRANSIT STUCK (empty location, no cargo) → call issue_order(agent="${name}", message="Logout, wait 2 minutes, then re-login to reset position"). Do NOT trigger routines — they will fail during transit.`);
+      }
       continue; // Skip cargo/fuel/credits checks — transit must resolve first
     }
 

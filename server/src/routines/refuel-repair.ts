@@ -64,9 +64,17 @@ async function run(ctx: RoutineContext, params: RefuelRepairParams): Promise<Rou
   let hullMax = typeof ship?.hull_max === "number" ? ship.hull_max : undefined;
 
   const fuelPct = (fuelCurrent !== undefined && fuelMax !== undefined && fuelMax > 0)
-    ? (fuelCurrent / fuelMax) * 100 : 100;
+    ? (fuelCurrent / fuelMax) * 100 : null;
   const hullPct = (hullCurrent !== undefined && hullMax !== undefined && hullMax > 0)
-    ? (hullCurrent / hullMax) * 100 : 100;
+    ? (hullCurrent / hullMax) * 100 : null;
+
+  if (fuelPct === null || hullPct === null) {
+    return handoff(
+      "Fuel or hull data unavailable from get_status — cannot determine refuel/repair needs",
+      { station: params.station, ship_data: ship ?? null, fuel_pct: fuelPct, hull_pct: hullPct },
+      phases,
+    );
+  }
 
   let didRefuel = false;
   let didRepair = false;

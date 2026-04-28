@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
-import { handlePassthrough, waitForActionResult, waitForCraftActionResult, textResult, type PassthroughDeps, type McpTextResult } from "./passthrough-handler.js";
+import { handlePassthrough, waitForActionResult, textResult, type PassthroughDeps, type McpTextResult } from "./passthrough-handler.js";
 import { EventBuffer } from "./event-buffer.js";
 import { STATE_CHANGING_TOOLS } from "./proxy-constants.js";
 import { GalaxyGraph } from "./pathfinder.js";
@@ -201,6 +201,95 @@ describe("handlePassthrough", () => {
     // Should have executed successfully (no error injected due to unexpected field)
     expect(client.execute).toHaveBeenCalledWith("jump", { target_system: "beta" });
     expect(parsed.error).toBeUndefined();
+  });
+
+  it("jump timeout: calls waitForTick to resync nav cache even when execute returns error", async () => {
+    // Bug: when a jump times out, waitForNavCacheUpdate was skipped (gated on !resp.error).
+    // Fix: an extra waitForTick() is called unconditionally on nav-tool error so the cache
+    // catches up with authoritative game state before the next adjacency check.
+    const client = createMockClient({
+      jump: { error: { code: "timeout", message: "Game server did not respond to jump within 90000ms" } },
+    });
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("timeout-agent", {
+      data: {
+        player: { current_system: "gsc_0051", current_poi: "gsc_0051_belt", docked_at_base: null },
+        tick: 100,
+      },
+      fetchedAt: Date.now() - 5000, // pre-existing cache age
+    });
+    const deps = createMockDeps({ statusCache });
+    // Simulate refreshStatus actually advancing the cache fetchedAt.
+    client.waitForTick = mock(async () => {
+      const cached = statusCache.get("timeout-agent");
+      if (cached) statusCache.set("timeout-agent", { data: cached.data, fetchedAt: Date.now() });
+    });
+
+    const result = await handlePassthrough(deps, client, "timeout-agent", "jump", "jump", { target_system: "alrakis" }, "alrakis");
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    // waitForTick must have been called to resync the nav cache on timeout error
+    expect(client.waitForTick).toHaveBeenCalled();
+    // Cache was successfully refreshed → no stale flag
+    expect(parsed._nav_cache_stale).toBeUndefined();
+  });
+
+  it("jump timeout: refresh times out → flags _nav_cache_stale", async () => {
+    // When the post-timeout waitForTick itself stalls past the 15s cap, the
+    // error response gets `_nav_cache_stale: true` so the agent knows to call
+    // get_status before retrying.
+    const client = createMockClient({
+      jump: { error: { code: "timeout", message: "no response" } },
+    });
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("stale-refresh-agent", {
+      data: {
+        player: { current_system: "gsc_0051", current_poi: "gsc_0051_belt", docked_at_base: null },
+        tick: 100,
+      },
+      fetchedAt: Date.now(),
+    });
+    // waitForTick that never resolves (simulates degraded server)
+    client.waitForTick = mock(() => new Promise<void>(() => { /* never resolves */ }));
+
+    const deps = createMockDeps({ statusCache });
+
+    // Use Bun's fake timers? Simpler: pass overrides to allow shorter cap.
+    // The implementation uses 15s; we'll just await the result. Bun test timeout
+    // defaults are ample. The Promise.race will reject after 15s.
+    const result = await handlePassthrough(deps, client, "stale-refresh-agent", "jump", "jump", { target_system: "alrakis" }, "alrakis");
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(parsed.error).toBeDefined();
+    expect(parsed._nav_cache_stale).toBe(true);
+  }, 30_000); // generous test timeout to cover the 15s cap
+
+  it("jump timeout: refresh fails to update cache → flags _nav_cache_stale", async () => {
+    // When waitForTick resolves but refreshStatus returned null (cache fetchedAt
+    // didn't advance), treat as a refresh failure and flag the response.
+    const client = createMockClient({
+      jump: { error: { code: "timeout", message: "no response" } },
+    });
+    const baselineFetchedAt = Date.now() - 5000;
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("null-refresh-agent", {
+      data: {
+        player: { current_system: "gsc_0051", current_poi: "gsc_0051_belt", docked_at_base: null },
+        tick: 100,
+      },
+      fetchedAt: baselineFetchedAt,
+    });
+    // waitForTick resolves but does NOT update the cache (refreshStatus returned null path)
+    client.waitForTick = mock(async () => { /* no-op, cache stays stale */ });
+
+    const deps = createMockDeps({ statusCache });
+
+    const result = await handlePassthrough(deps, client, "null-refresh-agent", "jump", "jump", { target_system: "alrakis" }, "alrakis");
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(parsed._nav_cache_stale).toBe(true);
+    // Cache fetchedAt should not have advanced
+    expect(statusCache.get("null-refresh-agent")?.fetchedAt).toBe(baselineFetchedAt);
   });
 
   it("travel: response with command field is accepted without error", async () => {
@@ -599,6 +688,138 @@ describe("handlePassthrough", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Storage cache wiring (view_storage / view_faction_storage → statusCache)
+// ---------------------------------------------------------------------------
+
+describe("storage cache wiring", () => {
+  it("view_storage at new POI populates personal_storage in statusCache", async () => {
+    const client = createMockClient({
+      view_storage: {
+        result: {
+          station_id: "sol_station",
+          items: [
+            { item_id: "iron_ore", quantity: 50 },
+            { item_id: "copper_ore", quantity: 20 },
+          ],
+        },
+      },
+    });
+
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("store-agent", {
+      data: { player: { current_poi: "sol_station" } },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+
+    await handlePassthrough(deps, client, "store-agent", "view_storage", "view_storage");
+
+    const cached = statusCache.get("store-agent");
+    const storage = cached?.data.personal_storage as Array<Record<string, unknown>>;
+    expect(Array.isArray(storage)).toBe(true);
+    expect(storage).toHaveLength(2);
+    expect(storage[0].item_id).toBe("iron_ore");
+    expect(storage[0].quantity).toBe(50);
+    expect(storage[0].poi_id).toBe("sol_station");
+  });
+
+  it("re-viewing same POI replaces old records for that POI only", async () => {
+    const client = createMockClient({
+      view_storage: {
+        result: {
+          station_id: "sol_station",
+          items: [{ item_id: "titanium", quantity: 99 }],
+        },
+      },
+    });
+
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("store-agent", {
+      data: {
+        player: { current_poi: "sol_station" },
+        // Pre-seed: one record at sol_station (stale) and one at vega (keep)
+        personal_storage: [
+          { item_id: "iron_ore", quantity: 5, poi_id: "sol_station" },
+          { item_id: "iron_ore", quantity: 3, poi_id: "vega_outpost" },
+        ],
+      },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+
+    await handlePassthrough(deps, client, "store-agent", "view_storage", "view_storage");
+
+    const cached = statusCache.get("store-agent");
+    const storage = cached?.data.personal_storage as Array<Record<string, unknown>>;
+    // vega record retained, sol_station replaced with new titanium entry
+    expect(storage).toHaveLength(2);
+    const vegaRec = storage.find((r) => r.poi_id === "vega_outpost");
+    const solRec = storage.find((r) => r.poi_id === "sol_station");
+    expect(vegaRec?.item_id).toBe("iron_ore");
+    expect(vegaRec?.quantity).toBe(3);
+    expect(solRec?.item_id).toBe("titanium");
+    expect(solRec?.quantity).toBe(99);
+  });
+
+  it("view_faction_storage populates faction_storage (not personal_storage)", async () => {
+    const client = createMockClient({
+      view_faction_storage: {
+        result: {
+          station_id: "alpha_station",
+          items: [{ item_id: "fuel_cell", quantity: 200, faction_id: "fed" }],
+        },
+      },
+    });
+
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("store-agent", {
+      data: { player: { current_poi: "alpha_station" } },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+
+    await handlePassthrough(deps, client, "store-agent", "view_faction_storage", "view_faction_storage");
+
+    const cached = statusCache.get("store-agent");
+    // faction_storage populated, personal_storage untouched
+    const factionStorage = cached?.data.faction_storage as Array<Record<string, unknown>>;
+    expect(Array.isArray(factionStorage)).toBe(true);
+    expect(factionStorage).toHaveLength(1);
+    expect(factionStorage[0].item_id).toBe("fuel_cell");
+    expect(factionStorage[0].quantity).toBe(200);
+    expect(factionStorage[0].poi_id).toBe("alpha_station");
+    expect(cached?.data.personal_storage).toBeUndefined();
+  });
+
+  it("malformed view_storage result does not throw and does not corrupt cache", async () => {
+    // API returns something unexpected (null result)
+    const client = createMockClient({ view_storage: { result: null } });
+
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("store-agent", {
+      data: {
+        player: { current_poi: "sol_station" },
+        personal_storage: [{ item_id: "iron_ore", quantity: 5, poi_id: "sol_station" }],
+      },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+
+    // Should not throw
+    const result = await handlePassthrough(deps, client, "store-agent", "view_storage", "view_storage");
+    expect(result).toBeDefined();
+
+    // Cache should still have the original record (merge produced empty newRecords,
+    // so existing records remain — behaviour when items array is absent/empty)
+    const cached = statusCache.get("store-agent");
+    const storage = cached?.data.personal_storage as Array<Record<string, unknown>>;
+    // The merge replaces currentPoi records with empty list; original retained from other POIs,
+    // but sol_station old record was replaced with empty set → storage is empty array
+    expect(Array.isArray(storage)).toBe(true);
+  });
+});
+
 describe("jump neighbor validation", () => {
   it("blocks jump to non-neighbor system with helpful error", async () => {
     const graph = new GalaxyGraph();
@@ -838,13 +1059,13 @@ describe("waitForCraftActionResult", () => {
       });
     }, 50);
 
-    const result = await waitForCraftActionResult(buf, 2000, 20);
+    const result = await waitForActionResult(buf, "craft", 2000, 20);
     expect(result).toEqual(outputs);
   });
 
   it("returns null on timeout", async () => {
     const buf = new EventBuffer();
-    const result = await waitForCraftActionResult(buf, 100, 20);
+    const result = await waitForActionResult(buf, "craft", 100, 20);
     expect(result).toBeNull();
   });
 });
@@ -1030,9 +1251,8 @@ NEXT: Jump next.`;
     const modules = [{ id: "mod1", slot_type: "weapon", name: "Autocannon" }];
     const client = createMockClient({ get_ship: { result: { ship_id: "levy", modules } } });
 
-    await expect(
-      handlePassthrough(deps, client, "test-agent", "get_ship", "get_ship")
-    ).resolves.toBeDefined();
+    const shipResult = await handlePassthrough(deps, client, "test-agent", "get_ship", "get_ship");
+    expect(shipResult).toBeDefined();
     // Cache should remain empty since there was nothing to merge into
     expect(statusCache.has("test-agent")).toBe(false);
   });
@@ -1044,9 +1264,8 @@ NEXT: Jump next.`;
     const client = createMockClient({ get_skills: { result: { skills } } });
 
     // Should not throw even with no existing cache entry
-    await expect(
-      handlePassthrough(deps, client, "test-agent", "get_skills", "get_skills")
-    ).resolves.toBeDefined();
+    const skillsResult = await handlePassthrough(deps, client, "test-agent", "get_skills", "get_skills");
+    expect(skillsResult).toBeDefined();
     // Cache should remain empty since there was nothing to merge into
     expect(statusCache.has("test-agent")).toBe(false);
   });

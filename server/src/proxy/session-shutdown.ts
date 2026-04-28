@@ -18,6 +18,7 @@ const ALLOWED_SHUTDOWN_TOOLS = new Set([
   "write_report",
   "read_report",
   "search_memory",
+  "search_captain_logs",
   "logout",
 ]);
 

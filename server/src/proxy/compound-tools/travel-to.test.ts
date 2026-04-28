@@ -358,6 +358,36 @@ describe("travel-to (direct import)", () => {
     expect(tickCount).toBeGreaterThanOrEqual(2);
   });
 
+  it("returns status:in_transit (not completed) when arrival-wait times out", async () => {
+    // Bug: travel-to.ts ignored waitForNavCacheUpdate's return value and unconditionally
+    // returned status:"completed". Agent then polled get_status, saw empty location for 6+
+    // turns, TransitStuckDetector advised logout/login, mid-transit logout caused SESSION_EXPIRED.
+    // Fix: check `updated` — on false, return status:"in_transit" with a wait-and-poll message.
+    const cache = makeStatusCache("agent", {
+      // current_system stays "sol" throughout — cache never updates (ship still in hyperspace)
+      player: { current_system: "sol", current_poi: "sol_belt", docked_at_base: null },
+    });
+
+    // Travel response includes arrival_tick, making isPending=true
+    const client = makeClient({
+      execute: async () => ({
+        result: { pending: true, arrival_tick: 999, status: "pending" },
+      }),
+      // waitForTick is a no-op — cache never changes, simulating a long-jump timeout
+      waitForTick: async () => {},
+    });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await travelTo(deps, "gsc_0041", identityResolver, false);
+
+    // Must NOT claim completion — ship hasn't arrived
+    expect(result.status).toBe("in_transit");
+    // Message must discourage logout/login (the action that triggered SESSION_EXPIRED)
+    expect(String(result.message)).toContain("Do NOT call logout/login");
+    // Must include the destination so the agent knows where it's headed
+    expect(result.destination).toBe("gsc_0041");
+  });
+
   it("includes dock warning when dock succeeds but docked_at_base remains null after retry", async () => {
     // Cache never updates to show docked
     const cache = makeStatusCache("agent", {

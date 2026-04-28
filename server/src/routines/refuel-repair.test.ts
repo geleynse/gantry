@@ -178,5 +178,37 @@ describe("refuel_repair routine", () => {
       const result = await refuelRepairRoutine.run(ctx, { station: "sirius_station" });
       expect(result.status).toBe("completed");
     });
+
+    it("hands off when fuel data is missing from get_status (no false 100% report)", async () => {
+      const toolsCalled: string[] = [];
+      const ctx = mockContext(
+        async (tool) => {
+          toolsCalled.push(tool);
+          if (tool === "get_status") return { result: { ship: { hull: 80, hull_max: 100 } } }; // fuel + fuel_max absent
+          return { result: {} };
+        },
+        { player: { current_poi: "sirius_station", docked_at_base: "sirius_base" } },
+      );
+
+      const result = await refuelRepairRoutine.run(ctx, { station: "sirius_station" });
+      expect(result.status).toBe("handoff");
+      expect(result.handoffReason).toContain("unavailable");
+      expect(toolsCalled).not.toContain("refuel"); // routine must NOT silently default to "looks fine"
+      expect(toolsCalled).not.toContain("repair");
+    });
+
+    it("hands off when hull data is missing from get_status", async () => {
+      const ctx = mockContext(
+        async (tool) => {
+          if (tool === "get_status") return { result: { ship: { fuel: 50, fuel_max: 100 } } }; // hull absent
+          return { result: {} };
+        },
+        { player: { current_poi: "sirius_station", docked_at_base: "sirius_base" } },
+      );
+
+      const result = await refuelRepairRoutine.run(ctx, { station: "sirius_station" });
+      expect(result.status).toBe("handoff");
+      expect(result.handoffReason).toContain("unavailable");
+    });
   });
 });

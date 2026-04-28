@@ -42,6 +42,30 @@ export interface SessionLaunchSpec {
 /** In-memory map of tracked child processes. Authoritative for status checks. */
 const trackedProcesses = new Map<string, childProcess.ChildProcess>();
 
+/**
+ * Parallel map: epoch ms when each tracked process was spawned. Cleared on
+ * exit. Used by overseer-mcp's stop_agent guard to reject premature
+ * "transit/stuck/idle" stops on agents that just started.
+ */
+const processStartedAt = new Map<string, number>();
+
+/**
+ * Returns ms since the named process was spawned by this server, or null if
+ * the process is not tracked (e.g. externally spawned via PID file). Tests
+ * may override via `_setProcessStartedAtForTest`.
+ */
+export function getProcessUptimeMs(name: string): number | null {
+  const startedAt = processStartedAt.get(name);
+  if (startedAt === undefined) return null;
+  return Date.now() - startedAt;
+}
+
+/** Test-only seam — sets a fake start time for `name`. */
+export function _setProcessStartedAtForTest(name: string, epochMs: number | null): void {
+  if (epochMs === null) processStartedAt.delete(name);
+  else processStartedAt.set(name, epochMs);
+}
+
 function assertValidName(name: string): void {
   if (!validateAgentName(name) && !SYSTEM_SESSIONS.has(name)) {
     throw new Error(`Invalid process name: ${name}`);
@@ -94,6 +118,7 @@ export async function hasSession(name: string): Promise<boolean> {
     if (isProcessAlive(child)) return true;
     // Dead ref — clean up
     trackedProcesses.delete(name);
+    processStartedAt.delete(name);
     removePidFile(name);
     return false;
   }
@@ -177,12 +202,14 @@ export async function newSession(name: string, spec: SessionLaunchSpec): Promise
 
     // Register in-memory ref — authoritative source of truth for status
     trackedProcesses.set(name, child);
+    processStartedAt.set(name, Date.now());
 
     // Auto-clean on exit
     child.on('exit', () => {
       const current = trackedProcesses.get(name);
       if (current === child) {
         trackedProcesses.delete(name);
+        processStartedAt.delete(name);
         removePidFile(name);
       }
     });
@@ -223,6 +250,7 @@ export async function killSession(name: string): Promise<void> {
   if (child) {
     // Dead ref — clean up
     trackedProcesses.delete(name);
+    processStartedAt.delete(name);
     removePidFile(name);
     return;
   }

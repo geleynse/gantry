@@ -234,7 +234,7 @@ describe("SessionShutdownManager - Integration Tests", () => {
       expect(manager.isAllowedToolDuringShutdown("logout")).toBe(true);
     });
 
-    it("all 10 allowed tools are correctly identified", () => {
+    it("all 11 allowed tools are correctly identified", () => {
       const expectedAllowedTools = [
         "write_diary",
         "read_diary",
@@ -245,11 +245,12 @@ describe("SessionShutdownManager - Integration Tests", () => {
         "write_report",
         "read_report",
         "search_memory",
+        "search_captain_logs",
         "logout",
       ];
 
       const allowedTools = manager.getAllowedToolsDuringShutdown();
-      expect(allowedTools.length).toBe(10);
+      expect(allowedTools.length).toBe(11);
 
       for (const tool of expectedAllowedTools) {
         expect(allowedTools).toContain(tool);

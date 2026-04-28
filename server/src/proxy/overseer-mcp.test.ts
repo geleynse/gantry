@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "bun:test";
 import { createDatabase } from "../services/database.js";
 import { OverseerAgent } from "../services/overseer-agent.js";
 import { createActionExecutor } from "../services/overseer-actions.js";
-import { createOverseerMcpServer, type OverseerMcpDeps } from "./overseer-mcp.js";
+import { createOverseerMcpServer, checkStopAgentPremature, type OverseerMcpDeps } from "./overseer-mcp.js";
 import type { FleetSnapshot } from "../services/coordinator-state.js";
 
 // ---------------------------------------------------------------------------
@@ -159,5 +159,66 @@ describe("OverseerMcpServer", () => {
     // The 8 tools are: get_fleet_status, get_decision_history, issue_order,
     // trigger_routine, start_agent, stop_agent, reassign_role, log_decision
     expect(server).toBeDefined();
+  });
+});
+
+describe("checkStopAgentPremature", () => {
+  const FIVE_MIN = 5 * 60 * 1000;
+  const TEN_MIN = 10 * 60 * 1000;
+  const THIRTY_MIN = 30 * 60 * 1000;
+  const ONE_HOUR = 60 * 60 * 1000;
+
+  it("rejects transit/stuck reason when uptime is under 30 minutes", () => {
+    const result = checkStopAgentPremature("drifter-gale", "transit stuck 3 turns", TEN_MIN);
+    expect(result).not.toBeNull();
+    expect(result?.error).toBe("stop_agent_premature");
+    expect(result?.message).toContain("drifter-gale only running 10m");
+    expect(result?.message).toContain("issue_order");
+  });
+
+  it("rejects 'idle' reason at 5 min uptime", () => {
+    const result = checkStopAgentPremature("rust-vane", "idle for too long", FIVE_MIN);
+    expect(result).not.toBeNull();
+    expect(result?.error).toBe("stop_agent_premature");
+  });
+
+  it("allows transit reason once uptime exceeds 30 minutes", () => {
+    const result = checkStopAgentPremature("drifter-gale", "transit stuck 30+ min", THIRTY_MIN);
+    expect(result).toBeNull();
+  });
+
+  it("allows transit reason at 1 hour uptime", () => {
+    const result = checkStopAgentPremature("drifter-gale", "transit stuck", ONE_HOUR);
+    expect(result).toBeNull();
+  });
+
+  it("allows fault reasons regardless of uptime (broken)", () => {
+    const result = checkStopAgentPremature("sable-thorn", "broken — agent crashing every turn", FIVE_MIN);
+    expect(result).toBeNull();
+  });
+
+  it("allows fault reasons regardless of uptime (crash)", () => {
+    const result = checkStopAgentPremature("sable-thorn", "agent crash detected", FIVE_MIN);
+    expect(result).toBeNull();
+  });
+
+  it("allows transit reason if it ALSO mentions a fault (transit + crash)", () => {
+    const result = checkStopAgentPremature("sable-thorn", "agent stuck in transit, crashed mid-jump", FIVE_MIN);
+    expect(result).toBeNull();
+  });
+
+  it("allows non-transit reasons regardless of uptime (e.g. role reassignment)", () => {
+    const result = checkStopAgentPremature("cinder-wake", "reassigning role", FIVE_MIN);
+    expect(result).toBeNull();
+  });
+
+  it("allows stop when uptime is null (externally spawned, no signal)", () => {
+    const result = checkStopAgentPremature("drifter-gale", "transit stuck", null);
+    expect(result).toBeNull();
+  });
+
+  it("rejection message includes uptime in minutes", () => {
+    const result = checkStopAgentPremature("drifter-gale", "transit idle", 10 * 60 * 1000);
+    expect(result?.message).toMatch(/10m/);
   });
 });

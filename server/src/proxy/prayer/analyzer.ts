@@ -16,7 +16,18 @@ import {
   type PredicateName,
 } from "./types.js";
 
-const PREDICATES = new Set(["FUEL", "CREDITS", "CARGO_PCT", "CARGO", "MINED"]);
+const PREDICATES = new Set(["FUEL", "CREDITS", "CARGO_PCT", "CARGO", "MINED", "STASHED", "STASH", "MISSION_ACTIVE"]);
+
+const PREDICATE_ARG_TYPES: Record<string, ArgType[]> = {
+  FUEL: [],
+  CREDITS: [],
+  CARGO_PCT: [],
+  CARGO: ["item"],
+  MINED: ["item"],
+  STASHED: ["item"],
+  STASH: ["destination", "item"],
+  MISSION_ACTIVE: [],
+};
 
 export function analyzePrayerProgram(program: AstProgram, snapshot: AnalyzerSnapshot): AnalyzedProgram {
   const warnings: AnalyzerWarning[] = [];
@@ -63,10 +74,10 @@ export function analyzePrayerProgram(program: AstProgram, snapshot: AnalyzerSnap
     if (!PREDICATES.has(metric)) {
       throw new PrayerAnalyzeError(`unknown predicate '${pred.metric}'`, pred.loc, nearestNames(metric, [...PREDICATES]));
     }
-    const argType = metric === "CARGO" || metric === "MINED" ? "item" : "any";
+    const argTypes = PREDICATE_ARG_TYPES[metric] ?? [];
     return {
       metric: metric as PredicateName,
-      args: pred.args.map((arg) => analyzeArg(arg, argType)),
+      args: pred.args.map((arg, index) => analyzeArg(arg, argTypes[index] ?? "any")),
       op: pred.op,
       rhs: pred.rhs,
       loc: pred.loc,

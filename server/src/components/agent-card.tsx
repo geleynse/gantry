@@ -6,6 +6,7 @@ import { formatAbsolute, relativeTime } from "@/lib/time";
 import { HealthBar } from "./health-bar";
 import { ShipImage } from "./ShipImage";
 import { HealthMetricsCard } from "./health-metrics-card";
+import { StandingsPanel } from "./standings-panel";
 import { AgentStatusHeader, HealthScoreIndicator } from "./agent-card-status";
 import { AgentActions } from "./agent-card-actions";
 import type { AgentStatus } from "@/hooks/use-fleet-status";
@@ -329,6 +330,9 @@ export function AgentCard({ agent, gameState, name, compact }: AgentCardProps) {
         errorRate={agent.errorRate}
         connectionStatus={agent.connectionStatus}
       />
+
+      {/* Standings (game v0.271.0+) */}
+      <StandingsPanel standings={gameState?.standings} />
 
       {/* Skills (#150) */}
       {gameState && Object.keys(gameState.skills ?? {}).length > 0 && (

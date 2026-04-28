@@ -87,6 +87,7 @@ export class HttpGameClient implements GameTransport {
   private loginTime = 0;
   private nextRequestId = 1;
   private lastActionTime = 0;
+  private reconnectCount = 0;
 
   // Event wiring
   onEvent: ((event: GameEvent) => void) | null = null;
@@ -556,7 +557,7 @@ export class HttpGameClient implements GameTransport {
     return {
       rapidDisconnects: 0,
       reconnectsPerMinute: 0,
-      totalReconnects: 0,
+      totalReconnects: this.reconnectCount,
       lastConnectedAt: this.loginTime,
       connectionDurationMs,
       sessionExpiresAt: this.sessionExpiresAt ?? undefined,
@@ -577,6 +578,8 @@ export class HttpGameClient implements GameTransport {
       });
       if (resp.error) return false;
       this.authenticated = true;
+      this.reconnectCount++;
+      log.info("[proxy] session auto-reconnect succeeded", { agent: this.label, reconnectCount: this.reconnectCount });
       this.log("MCP session renewed successfully");
       return true;
     } catch {

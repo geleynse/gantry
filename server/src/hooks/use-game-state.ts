@@ -28,6 +28,18 @@ export interface SkillData {
   xp_to_next?: number;
 }
 
+export interface EmpireStanding {
+  Fame?: number;
+  Criminal?: number;
+  CriminalEncounters?: number;
+  Love?: number;
+  Hate?: number;
+  Fear?: number;
+  Need?: number;
+}
+
+export type Standings = Record<string, EmpireStanding>;
+
 export interface AgentShip {
   name: string;
   class: string;
@@ -61,6 +73,7 @@ export interface AgentGameState {
   home_system?: string | null;
   home_poi?: string | null;
   skills: Record<string, SkillData>;
+  standings?: Standings;
   lifetime_stats?: LifetimeStats;
   data_age_s?: number;
   last_seen?: string;

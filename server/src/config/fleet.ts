@@ -5,7 +5,7 @@ import { readFileSync, watchFile, existsSync } from "node:fs";
 import { atomicWriteFileSync } from "../lib/atomic-write.js";
 import { join } from "node:path";
 import { createLogger } from "../lib/logger.js";
-import { FLEET_DIR, GANTRY_ENV } from "./env.js";
+import { FLEET_DIR, GANTRY_ENV, GANTRY_MOCK } from "./env.js";
 import { FleetConfigSchema } from "./schemas.js";
 import { DEFAULT_TURN_INTERVAL, DEFAULT_STAGGER_DELAY } from "./constants.js";
 import type { AgentConfig, AuthConfig, MockModeConfig, AccountPoolConfig, CoordinatorConfig, OverseerConfig, OutboundConfig, GantryConfig } from "./types.js";
@@ -119,6 +119,13 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
     } else {
       mockMode = fleetConfig.mockMode as MockModeConfig;
     }
+  }
+
+  // GANTRY_MOCK=1 env var: activate mock mode when no mockMode in config.
+  // Config wins — if mockMode is explicitly set (even to { enabled: false }), leave it alone.
+  if (!mockMode && GANTRY_MOCK) {
+    mockMode = { enabled: true };
+    log.info("Mock mode activated via GANTRY_MOCK=1 env var");
   }
 
   // Resolve accountPool path (relative paths resolved against fleetDir)

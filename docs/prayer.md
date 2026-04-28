@@ -47,7 +47,8 @@ A program is a sequence of statements separated by `;`. Trailing semicolons are 
 | `halt` | — | Stop execution successfully |
 | `wait` | `<ticks>` | Sleep for N game ticks |
 | `mine` | `<destination>` | Mine at a POI; use `here` for current location |
-| `go` | `<destination>` | Travel to a POI (accepts `home`, `nearest_station`, or an identifier) |
+| `go` | `<destination>` | Travel to a POI in the **current system** (accepts `home`, `nearest_station`, or an identifier) |
+| `jump` | `<system_id>` | Cross-system jump to the named system via the game's route planner. Blocks until arrival. |
 | `dock` | — | Dock at current POI |
 | `undock` | — | Undock from current station |
 | `refuel` | — | Refuel at current station |

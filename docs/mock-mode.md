@@ -8,6 +8,16 @@ No game account or network connection required.
 
 ## Quick Start
 
+**Option A — env var (zero-touch, recommended for CI):**
+
+```bash
+GANTRY_MOCK=1 bun dist/index.js
+```
+
+No changes to `gantry.json` needed. Uses default mock state (5000 credits, 80 fuel, docked at `nexus_station`).
+
+**Option B — config key (fine-grained control):**
+
 Set `mockMode` in your `gantry.json`:
 
 ```jsonc
@@ -18,6 +28,8 @@ Set `mockMode` in your `gantry.json`:
 ```
 
 Start Gantry normally. All agent tool calls will be handled by the mock client instead of the game server.
+
+**Precedence:** `mockMode` in `gantry.json` always wins. `GANTRY_MOCK=1` only activates mock mode when `mockMode` is absent from the config. If `mockMode: { enabled: false }` is set explicitly, that overrides the env var.
 
 ---
 
@@ -82,13 +94,39 @@ You can extend the file to cover more actions or add alternate response states. 
 
 ## State Simulation
 
-The mock client tracks lightweight per-agent state and mutates it as tools are called:
+The mock client tracks lightweight per-agent state and mutates it as tools are called.
 
-- `mine` / `batch_mine` — adds ore to cargo
-- `refuel` — decreases credits, increases fuel
-- `sell` / `multi_sell` — removes cargo items, increases credits
-- `travel_to` / `navigate` — updates location
-- `login` / `logout` — toggles session state
+### Tier-2 supported handlers (stateful)
+
+| Tool | Behaviour |
+|------|-----------|
+| `login` / `logout` | Toggle session auth state |
+| `get_status` | Returns full simulated status snapshot |
+| `get_credits` / `get_fuel` / `get_location` / `get_cargo` / `get_cargo_summary` | Read current state |
+| `get_system` | Returns mock system with POI list; patches id to requested system |
+| `travel_to` | Deducts 8 fuel, updates `poi`/`dockedAt` based on POI name (station vs. belt) |
+| `jump` | Moves to any target system, deducts 10 fuel, clears docked state |
+| `dock` | Sets `dockedAt` and `poi` to the specified station |
+| `undock` | Clears `dockedAt` |
+| `mine` / `batch_mine` | Adds `iron_ore` to cargo |
+| `refuel` | Deducts credits, fills fuel |
+| `sell` | Single-item sell: deducts cargo, adds credits at canned price |
+| `multi_sell` | Bulk sell: deducts cargo, adds credits |
+| `buy` | Deducts credits, adds item to cargo |
+| `repair` | Restores hull (5 cr/hp); no-op if hull already at 100 |
+| `craft` | Converts `iron_ore` → `steel_plate` (2:1 ratio) |
+| `view_market` | Returns canned item list with `price_buy`/`price_sell` fields |
+| `view_storage` | Returns empty storage list with capacity fields |
+| `get_notifications` | Returns `{ notifications: [] }` — prevents parse errors |
+| `analyze_market` | Returns canned market recommendations |
+| `scan` | Returns canned NPC scan result |
+| `get_missions` / `captains_log_*` / `read_doc` / `write_diary` / `write_doc` | Canned or no-op |
+
+### Tier-3 tools (canned defaults — not stateful)
+
+The `default` fallback handles all other tools (combat, skills, forum, trade offers, etc.) with `{ status: "ok", message: "Mock response: action completed successfully." }`. These tools are intentionally not simulated — Tier 3 would require a full game ruleset.
+
+Tools that return canned defaults only: `attack`, `get_battle_status`, `scan_and_attack`, `install_mod`, `get_skills`, `missions/*`, `forum_*`, `trade_offer`, `chat`.
 
 This lets you test multi-step agent flows (mine → sell → travel) with plausible state transitions, without needing the real game.
 

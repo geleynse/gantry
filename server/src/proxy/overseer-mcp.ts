@@ -14,6 +14,42 @@ import { queryAll } from "../services/database.js";
 import { buildUserPrompt } from "../services/overseer-prompt.js";
 import { searchCatalog } from "../services/game-catalog.js";
 import { ResourceKnowledge } from "../services/resource-knowledge.js";
+import { getProcessUptimeMs } from "../services/process-manager.js";
+
+const STOP_AGENT_MIN_UPTIME_MS = 30 * 60 * 1000;
+const TRANSIT_REASON_RE = /transit|stuck|idle|hyperspace|jumping/i;
+const FAULT_REASON_RE = /broken|crash|error|exception|loop|hang/i;
+
+/**
+ * Decide whether the overseer's stop_agent call should be rejected as a
+ * premature escalation. Returns null to allow the stop, or a guard payload
+ * (returned to the LLM as the tool result) to reject it.
+ *
+ * Rejection rule: reason mentions transit/stuck/idle AND target's uptime is
+ * <30 min AND reason does NOT also mention a real fault (crash/error/broken).
+ * `uptimeMs === null` means we have no uptime signal (externally spawned) —
+ * in that case we don't second-guess the overseer.
+ */
+export function checkStopAgentPremature(
+  agent: string,
+  reason: string,
+  uptimeMs: number | null,
+): { ok: false; error: string; message: string } | null {
+  if (uptimeMs === null || uptimeMs >= STOP_AGENT_MIN_UPTIME_MS) return null;
+  const transitLike = TRANSIT_REASON_RE.test(reason);
+  const faultLike = FAULT_REASON_RE.test(reason);
+  if (!transitLike || faultLike) return null;
+  const mins = Math.round(uptimeMs / 60_000);
+  return {
+    ok: false,
+    error: "stop_agent_premature",
+    message:
+      `Cannot stop_agent — ${agent} only running ${mins}m. ` +
+      "Per ESCALATION ORDER, transit/stuck/idle conditions must persist 30+ min before stop. " +
+      'Use issue_order(agent, message="logout, wait, then re-login to reset position") instead. ' +
+      "If the agent is actually broken/crashed (not just slow in transit), re-call with reason mentioning crash/error/broken.",
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Deps
@@ -328,6 +364,14 @@ export function createOverseerMcpServer(deps: OverseerMcpDeps): McpServer {
       }),
     },
     async (params) => {
+      const guard = checkStopAgentPremature(
+        params.agent,
+        params.reason,
+        getProcessUptimeMs(params.agent),
+      );
+      if (guard) {
+        return { content: [{ type: "text" as const, text: JSON.stringify(guard) }] };
+      }
       const results = await deps.actionExecutor.execute([
         { type: "stop_agent", params: { agent: params.agent, reason: params.reason } },
       ]);

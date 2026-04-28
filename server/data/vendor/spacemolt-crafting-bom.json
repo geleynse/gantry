@@ -1,0 +1,238 @@
+{
+  "_meta": {
+    "source": "https://github.com/rsned/spacemolt-crafting-server",
+    "source_commit": "c17dc9cbdecf",
+    "source_date": "2026-04-24",
+    "license": "MIT",
+    "license_holder": "Robert Sneddon",
+    "vendored_at": "2026-04-28",
+    "note": "Manually extracted from catalog/ore and catalog/refined Markdown files. Covers the most common ore-to-refined chains. Inputs are total quantities needed per 1 unit of output (normalized). Update by re-fetching source repo."
+  },
+  "recipes": [
+    {
+      "id": "basic_iron_smelting",
+      "name": "Basic Iron Smelting",
+      "output_item_id": "steel_plate",
+      "output_qty": 1,
+      "ticks": 3,
+      "skills": [],
+      "inputs": [
+        { "item_id": "iron_ore", "qty": 10 }
+      ]
+    },
+    {
+      "id": "refine_steel",
+      "name": "Refine Steel",
+      "output_item_id": "steel_plate",
+      "output_qty": 2,
+      "ticks": 2,
+      "skills": ["Ore Refinement 1"],
+      "inputs": [
+        { "item_id": "iron_ore", "qty": 5 }
+      ]
+    },
+    {
+      "id": "basic_copper_processing",
+      "name": "Basic Copper Processing",
+      "output_item_id": "copper_wiring",
+      "output_qty": 1,
+      "ticks": 3,
+      "skills": [],
+      "inputs": [
+        { "item_id": "copper_ore", "qty": 8 }
+      ]
+    },
+    {
+      "id": "process_copper_wiring",
+      "name": "Process Copper Wiring",
+      "output_item_id": "copper_wiring",
+      "output_qty": 2,
+      "ticks": 2,
+      "skills": ["Ore Refinement 1"],
+      "inputs": [
+        { "item_id": "copper_ore", "qty": 4 }
+      ]
+    },
+    {
+      "id": "fabricate_circuit_boards",
+      "name": "Fabricate Circuit Boards",
+      "output_item_id": "circuit_board",
+      "output_qty": 2,
+      "ticks": 3,
+      "skills": ["Basic Crafting 2"],
+      "inputs": [
+        { "item_id": "copper_ore", "qty": 3 },
+        { "item_id": "silicon_ore", "qty": 2 }
+      ]
+    },
+    {
+      "id": "fabricate_silver_circuit_boards",
+      "name": "Fabricate Silver Circuit Boards",
+      "output_item_id": "circuit_board",
+      "output_qty": 2,
+      "ticks": 3,
+      "skills": ["Basic Crafting 2"],
+      "inputs": [
+        { "item_id": "silver_ore", "qty": 2 },
+        { "item_id": "silicon_ore", "qty": 2 }
+      ]
+    },
+    {
+      "id": "forge_titanium_alloy",
+      "name": "Forge Titanium Alloy",
+      "output_item_id": "titanium_alloy",
+      "output_qty": 1,
+      "ticks": 5,
+      "skills": ["Ore Refinement 3"],
+      "inputs": [
+        { "item_id": "titanium_ore", "qty": 3 }
+      ]
+    },
+    {
+      "id": "onboard_alloy_synthesis",
+      "name": "Onboard Alloy Synthesis",
+      "output_item_id": "titanium_alloy",
+      "output_qty": 1,
+      "ticks": 0,
+      "skills": [],
+      "inputs": [
+        { "item_id": "iron_ore", "qty": 2 },
+        { "item_id": "titanium_ore", "qty": 3 }
+      ]
+    },
+    {
+      "id": "refine_titanium",
+      "name": "Refine Titanium",
+      "output_item_id": "titanium_ingot",
+      "output_qty": 1,
+      "ticks": 4,
+      "skills": ["Ore Refinement 2"],
+      "inputs": [
+        { "item_id": "titanium_ore", "qty": 5 }
+      ]
+    },
+    {
+      "id": "smelt_aluminum_sheet",
+      "name": "Smelt Aluminum Sheet",
+      "output_item_id": "aluminum_sheet",
+      "output_qty": 2,
+      "ticks": 3,
+      "skills": ["Ore Refinement 1"],
+      "inputs": [
+        { "item_id": "aluminum_ore", "qty": 5 }
+      ]
+    },
+    {
+      "id": "basic_silicon_refinement",
+      "name": "Basic Silicon Refinement",
+      "output_item_id": "flex_polymer",
+      "output_qty": 1,
+      "ticks": 3,
+      "skills": [],
+      "inputs": [
+        { "item_id": "silicon_ore", "qty": 8 }
+      ]
+    },
+    {
+      "id": "synthesize_polymer",
+      "name": "Synthesize Polymer",
+      "output_item_id": "flex_polymer",
+      "output_qty": 3,
+      "ticks": 2,
+      "skills": ["Ore Refinement 1"],
+      "inputs": [
+        { "item_id": "silicon_ore", "qty": 3 }
+      ]
+    },
+    {
+      "id": "create_ceramite_plating",
+      "name": "Create Ceramite Plating",
+      "output_item_id": "ceramite_plating",
+      "output_qty": 2,
+      "ticks": 8,
+      "skills": ["Basic Crafting 4", "Ore Refinement 4"],
+      "inputs": [
+        { "item_id": "titanium_ore", "qty": 2 },
+        { "item_id": "silicon_ore", "qty": 4 }
+      ]
+    },
+    {
+      "id": "sinter_silicate_composite",
+      "name": "Sinter Silicate Composite",
+      "output_item_id": "silicate_composite",
+      "output_qty": 1,
+      "ticks": 4,
+      "skills": ["Ore Refinement 2"],
+      "inputs": [
+        { "item_id": "silicon_ore", "qty": 4 }
+      ]
+    },
+    {
+      "id": "fire_thermal_ceramic",
+      "name": "Fire Thermal Ceramic",
+      "output_item_id": "thermal_ceramic",
+      "output_qty": 1,
+      "ticks": 4,
+      "skills": ["Ore Refinement 2"],
+      "inputs": [
+        { "item_id": "aluminum_ore", "qty": 4 },
+        { "item_id": "silicon_ore", "qty": 2 }
+      ]
+    },
+    {
+      "id": "manufacture_ferrous_slugs",
+      "name": "Manufacture Ferrous Slugs",
+      "output_item_id": "ferrous_slug_case",
+      "output_qty": 1,
+      "ticks": 2,
+      "skills": [],
+      "inputs": [
+        { "item_id": "iron_ore", "qty": 3 }
+      ]
+    },
+    {
+      "id": "onboard_munitions_fabrication",
+      "name": "Onboard Munitions Fabrication",
+      "output_item_id": "standard_rounds_box",
+      "output_qty": 1,
+      "ticks": 0,
+      "skills": [],
+      "inputs": [
+        { "item_id": "iron_ore", "qty": 2 }
+      ]
+    },
+    {
+      "id": "spin_optical_fiber",
+      "name": "Spin Optical Fiber",
+      "output_item_id": "optical_fiber_bundle",
+      "output_qty": 1,
+      "ticks": 4,
+      "skills": ["Ore Refinement 2"],
+      "inputs": [
+        { "item_id": "silicon_ore", "qty": 3 }
+      ]
+    },
+    {
+      "id": "grow_crystalline_lattice",
+      "name": "Grow Crystalline Lattice",
+      "output_item_id": "crystalline_lattice",
+      "output_qty": 1,
+      "ticks": 6,
+      "skills": ["Ore Refinement 3"],
+      "inputs": [
+        { "item_id": "silicon_ore", "qty": 5 }
+      ]
+    },
+    {
+      "id": "fuse_reinforced_glass",
+      "name": "Fuse Reinforced Glass",
+      "output_item_id": "reinforced_glass",
+      "output_qty": 1,
+      "ticks": 3,
+      "skills": [],
+      "inputs": [
+        { "item_id": "silicon_ore", "qty": 5 }
+      ]
+    }
+  ]
+}

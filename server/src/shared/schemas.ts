@@ -147,6 +147,25 @@ export const FactionStateSchema = z.object({
   upgrades: z.array(FactionUpgradeSchema).optional(),
 });
 
+// ---------------------------------------------------------------------------
+// Standings (as returned by get_status in game v0.271.0+)
+// ---------------------------------------------------------------------------
+
+export const EmpireStandingSchema = z.object({
+  Fame: z.number().optional(),
+  Criminal: z.number().optional(),
+  CriminalEncounters: z.number().optional(),
+  Love: z.number().optional(),
+  Hate: z.number().optional(),
+  Fear: z.number().optional(),
+  Need: z.number().optional(),
+});
+
+export const StandingsSchema = z.record(EmpireStandingSchema);
+
+export type EmpireStanding = z.infer<typeof EmpireStandingSchema>;
+export type Standings = z.infer<typeof StandingsSchema>;
+
 export const AgentGameStateSchema = z.object({
   credits: z.number(),
   current_system: z.string().nullable(),
@@ -157,6 +176,7 @@ export const AgentGameStateSchema = z.object({
   ship: AgentShipSchema.nullable(),
   faction: FactionStateSchema.nullable().optional(),
   skills: z.record(SkillDataSchema),
+  standings: StandingsSchema.optional(),
   data_age_s: z.number().optional(),
   last_seen: z.string().optional(),
 });

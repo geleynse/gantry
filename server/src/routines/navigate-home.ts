@@ -97,17 +97,30 @@ async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<
   if (td.failed) return handoff(td.failed, { station: params.station }, phases);
 
   // --- Phase 5: Refuel ---
-  // Re-fetch status after docking for accurate fuel/hull readings
+  // Re-fetch status after docking for accurate fuel/hull readings AND arrival verification
   const freshStatusResp = await ctx.client.execute("get_status");
   const freshStatus = freshStatusResp.result as Record<string, unknown> | undefined;
+  const freshPlayer = freshStatus?.player as Record<string, unknown> | undefined;
+  const arrivedPoi = freshPlayer?.current_poi as string | undefined;
+  const arrivedDocked = freshPlayer?.docked_at_base as string | undefined;
+  const arrived = !!arrivedPoi?.includes(params.station);
+
+  if (!arrived) {
+    return handoff(
+      `navigate_home: travelAndDock returned but ship is not at ${params.station} (current_poi=${arrivedPoi ?? "unknown"})`,
+      { station: params.station, current_poi: arrivedPoi, docked_at_base: arrivedDocked },
+      phases,
+    );
+  }
+
   const ship = freshStatus?.ship as Record<string, unknown> | undefined;
   let didRefuel = false;
   if (params.refuel) {
     const fuelCurrent = typeof ship?.fuel === "number" ? ship.fuel : undefined;
     const fuelMax = typeof ship?.fuel_max === "number" ? ship.fuel_max : undefined;
     const fuelPct = (fuelCurrent !== undefined && fuelMax !== undefined && fuelMax > 0)
-      ? (fuelCurrent / fuelMax) * 100 : 100;
-    if (fuelPct < 80) {
+      ? (fuelCurrent / fuelMax) * 100 : null;
+    if (fuelPct !== null && fuelPct < 80) {
       const refuelPhase = phase("refuel");
       const refuelResp = await ctx.client.execute("refuel");
       if (refuelResp.error) {
@@ -127,9 +140,9 @@ async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<
     const hullCurrent = typeof ship?.hull === "number" ? ship.hull : undefined;
     const hullMax = typeof ship?.hull_max === "number" ? ship.hull_max : undefined;
     const hullPct = (hullCurrent !== undefined && hullMax !== undefined && hullMax > 0)
-      ? (hullCurrent / hullMax) * 100 : 100;
+      ? (hullCurrent / hullMax) * 100 : null;
 
-    if (hullPct < 90) {
+    if (hullPct !== null && hullPct < 90) {
       const repairPhase = phase("repair");
       const repairResp = await ctx.client.execute("repair");
       if (repairResp.error) {

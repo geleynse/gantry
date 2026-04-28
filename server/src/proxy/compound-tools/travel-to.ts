@@ -261,6 +261,25 @@ export async function travelTo(
       client, agentName, systemBefore, statusCache, undefined, arrivalTickBeforeTravel,
     );
     log.debug("travel nav cache update", { agent: agentName, updated, elapsed_ms: Date.now() - tTravel });
+    if (!updated) {
+      // Ship is still in hyperspace — the arrival tick was never observed within the wait window.
+      // Do NOT claim completion: the agent would then see consecutive empty-location responses,
+      // TransitStuckDetector would advise logout/login, and a mid-transit logout triggers
+      // SESSION_EXPIRED (the game server still holds the hyperspace state).
+      log.warn("travel_to: transit timeout — ship still in hyperspace, returning in_transit", {
+        agent: agentName,
+        destination: finalDestination,
+        elapsed_ms: Date.now() - t0,
+      });
+      return {
+        status: "in_transit",
+        message:
+          "Ship is still en route to destination. Call get_status in 30–60 seconds to check arrival. " +
+          "Do NOT call logout/login — the ship will arrive naturally.",
+        destination: finalDestination,
+        steps,
+      };
+    }
   } else {
     // Intra-system travel — two ticks is enough
     await client.waitForTick();

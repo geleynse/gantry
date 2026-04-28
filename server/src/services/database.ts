@@ -669,4 +669,25 @@ CREATE INDEX IF NOT EXISTS idx_routine_jobs_agent ON routine_jobs(agent);
 CREATE INDEX IF NOT EXISTS idx_routine_jobs_started ON routine_jobs(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_routine_jobs_status ON routine_jobs(status);
 
+-- Community market snapshots fetched from mkryo59-afk/spacemolt-news daily.
+-- Single-station data (Grand Exchange), useful for cold-start planning only.
+-- Always include the as_of column so agents know it's stale.
+CREATE TABLE IF NOT EXISTS external_market_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  as_of_date TEXT NOT NULL,     -- YYYY-MM-DD
+  item_name TEXT NOT NULL,      -- human-readable ("Iron Ore")
+  item_id TEXT NOT NULL,        -- snake_case ("iron_ore")
+  category TEXT NOT NULL DEFAULT '',
+  sell_price INTEGER NOT NULL DEFAULT 0,   -- station ask (what you pay to buy)
+  sell_qty INTEGER NOT NULL DEFAULT 0,
+  buy_price INTEGER NOT NULL DEFAULT 0,    -- station bid (what you receive when selling)
+  buy_qty INTEGER NOT NULL DEFAULT 0,
+  snapshot_list TEXT NOT NULL DEFAULT '',  -- 'supply_surplus' | 'demand_shortage' | 'high_value' | 'arbitrage_candidates'
+  station TEXT NOT NULL DEFAULT '',
+  fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(as_of_date, item_id, snapshot_list)
+);
+CREATE INDEX IF NOT EXISTS idx_ext_snapshots_item_date ON external_market_snapshots(item_id, as_of_date DESC);
+CREATE INDEX IF NOT EXISTS idx_ext_snapshots_date ON external_market_snapshots(as_of_date DESC);
+
 `;

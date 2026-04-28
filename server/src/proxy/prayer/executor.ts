@@ -9,7 +9,6 @@ import {
   type ExecState,
   type ExecutorDeps,
   type PrayResult,
-  type ResolvedArg,
 } from "./types.js";
 
 const INTERRUPT_EVENTS = [
@@ -26,7 +25,7 @@ export async function executePrayerProgram(program: AnalyzedProgram, deps: Execu
   const startedAt = Date.now();
   const beforeData = deps.statusCache.get(deps.agentName)?.data ?? {};
   const before = snapshotDiff(beforeData);
-  const state: ExecState = {
+  const state: ExecState = deps.initialState ?? {
     stepsExecuted: 0,
     startedAt,
     transientRetriesUsed: 0,
@@ -64,6 +63,7 @@ async function runBlock(stmts: AnalyzedStmt[], state: ExecState, deps: ExecutorD
     if (stmt.kind === "command") {
       await executeCommand(stmt.cmd, state, deps);
       state.stepsExecuted++;
+      tryCheckpoint(state, deps);
       continue;
     }
 
@@ -160,6 +160,15 @@ function classifyResult(result: unknown): "ok" | "skip" | "transient" | "fatal" 
   }
   if (text.includes("not in cargo") || text.includes("no ") || text.includes("nothing")) return "skip";
   return "fatal";
+}
+
+function tryCheckpoint(state: ExecState, deps: ExecutorDeps): void {
+  if (!deps.onCheckpoint) return;
+  try {
+    deps.onCheckpoint(state);
+  } catch {
+    // best-effort — never let checkpointing crash a prayer
+  }
 }
 
 function checkLimits(state: ExecState, deps: ExecutorDeps): void {

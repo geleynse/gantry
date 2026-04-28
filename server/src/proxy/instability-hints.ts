@@ -17,7 +17,7 @@ const SAFE_TOOLS = new Set([
   "v2_get_player", "v2_get_ship", "v2_get_cargo",
   "login", "logout",
   "captains_log_add", "captains_log_get", "captains_log_list",
-  "read_doc", "read_diary", "search_memory",
+  "read_doc", "read_diary", "search_memory", "search_captain_logs",
   "write_doc", "write_diary", "write_report",
   "get_state", "view",
 ]);
