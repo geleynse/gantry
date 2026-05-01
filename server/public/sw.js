@@ -68,6 +68,10 @@ self.addEventListener('fetch', (event) => {
   // Only handle GET requests
   if (request.method !== 'GET') return;
 
+  // Cache.put rejects non-http(s) schemes (chrome-extension://, blob:, data:, etc).
+  // Skip them entirely so cacheFirst doesn't throw.
+  if (!url.startsWith('http://') && !url.startsWith('https://')) return;
+
   // Never cache API, SSE, or MCP endpoints
   if (shouldNeverCache(url)) return;
 

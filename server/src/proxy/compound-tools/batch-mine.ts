@@ -42,6 +42,7 @@ export async function batchMine(
   let emptyMineCount = 0; // Track consecutive empty-yield mines for depletion detection
 
   const shutdownManager = getSessionShutdownManager();
+  const isV2 = typeof client.isV2 === "function" && client.isV2();
 
   for (let i = 0; i < clampedCount; i++) {
     // Check for shutdown signal
@@ -50,7 +51,9 @@ export async function batchMine(
       break;
     }
 
-    const resp = await client.execute("mine", undefined, { noRetry: true });
+    const resp = isV2
+      ? await client.execute("spacemolt", { action: "mine" }, { noRetry: true })
+      : await client.execute("mine", undefined, { noRetry: true });
 
     if (resp.error) {
       lastError = resp.error as Record<string, unknown>;
@@ -128,7 +131,9 @@ export async function batchMine(
   }
 
   // Get final cargo state (free query)
-  const finalCargo = await client.execute("get_cargo");
+  const finalCargo = isV2
+    ? await client.execute("spacemolt", { action: "get_cargo" })
+    : await client.execute("get_cargo");
 
   return {
     status: "completed",

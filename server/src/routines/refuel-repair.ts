@@ -59,9 +59,13 @@ async function run(ctx: RoutineContext, params: RefuelRepairParams): Promise<Rou
   const ship = status?.ship as Record<string, unknown> | undefined;
 
   let fuelCurrent = typeof ship?.fuel === "number" ? ship.fuel : undefined;
-  let fuelMax = typeof ship?.fuel_max === "number" ? ship.fuel_max : undefined;
+  let fuelMax = typeof ship?.max_fuel === "number" ? ship.max_fuel
+              : typeof ship?.fuel_max === "number" ? ship.fuel_max
+              : undefined;
   let hullCurrent = typeof ship?.hull === "number" ? ship.hull : undefined;
-  let hullMax = typeof ship?.hull_max === "number" ? ship.hull_max : undefined;
+  let hullMax = typeof ship?.max_hull === "number" ? ship.max_hull
+              : typeof ship?.hull_max === "number" ? ship.hull_max
+              : undefined;
 
   const fuelPct = (fuelCurrent !== undefined && fuelMax !== undefined && fuelMax > 0)
     ? (fuelCurrent / fuelMax) * 100 : null;

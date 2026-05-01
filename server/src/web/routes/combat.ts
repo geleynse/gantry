@@ -31,7 +31,12 @@ router.get('/summary', (req, res) => {
         (agent || '_' || COALESCE(pirate_name, '') || '_' || DATE(created_at))
       END) AS total_encounters,
       SUM(CASE WHEN event_type = 'pirate_combat' THEN COALESCE(damage, 0) ELSE 0 END) AS total_damage,
-      COUNT(CASE WHEN event_type = 'player_died' THEN 1 END) AS total_deaths,
+      -- Group deaths into 1-minute buckets so a phantom-in_combat loop or
+      -- duplicate insertion doesn't inflate the count. Sable-thorn was
+      -- reporting 47 deaths from 11 encounters (>100% mortality, impossible).
+      COUNT(DISTINCT CASE WHEN event_type = 'player_died' THEN
+        (agent || '_' || strftime('%Y-%m-%dT%H:%M', created_at))
+      END) AS total_deaths,
       SUM(CASE WHEN event_type = 'player_died' THEN COALESCE(insurance_payout, 0) ELSE 0 END) AS total_insurance
     FROM combat_events
     ${timeClause}
@@ -109,7 +114,9 @@ router.get('/systems', (req, res) => {
     SELECT
       system,
       COUNT(CASE WHEN event_type IN ('pirate_combat', 'pirate_warning') THEN 1 END) AS encounter_count,
-      COUNT(CASE WHEN event_type = 'player_died' THEN 1 END) AS death_count,
+      COUNT(DISTINCT CASE WHEN event_type = 'player_died' THEN
+        (agent || '_' || strftime('%Y-%m-%dT%H:%M', created_at))
+      END) AS death_count,
       SUM(CASE WHEN event_type = 'pirate_combat' THEN COALESCE(damage, 0) ELSE 0 END) AS total_damage
     FROM combat_events
     WHERE (system IS NOT NULL AND system != '')

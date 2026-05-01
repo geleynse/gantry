@@ -23,7 +23,7 @@ import { join } from "node:path";
 import { atomicWriteFileSync } from "../lib/atomic-write.js";
 import { encrypt, decryptWithFallback, isEncrypted, getEncryptionSecret } from "./crypto.js";
 import { createLogger } from "../lib/logger.js";
-import { HttpGameClient } from "../proxy/game-client.js";
+import { HttpGameClientV2 } from "../proxy/http-game-client-v2.js";
 import { MetricsWindow } from "../proxy/instability-metrics.js";
 
 const log = createLogger("credentials-crypto");
@@ -234,7 +234,7 @@ async function validateCredentialEntry(
 ): Promise<CredentialValidationResult> {
   const makeClient = clientFactory ?? ((mcpUrl: string) => {
     const metrics = new MetricsWindow();
-    const c = new HttpGameClient(mcpUrl, metrics);
+    const c = new HttpGameClientV2(mcpUrl, undefined, `validate:${agentName}`, "standard", metrics);
     return c as ValidationGameClient;
   });
 
@@ -293,7 +293,7 @@ async function validateCredentialEntry(
  * This is advisory only; startup continues regardless.
  *
  * @param clientFactory - Optional factory for creating the game client. Defaults to
- *   creating a real HttpGameClient. Override in tests to avoid real network connections.
+ *   creating a real HttpGameClientV2. Override in tests to avoid real network connections.
  */
 export async function validateCredentials(
   fleetDir: string,

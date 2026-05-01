@@ -1,11 +1,27 @@
 /**
  * Comms timeline grouping logic.
  *
- * The fleet_comms_log table records each order as two rows: one `order` row
- * when an operator queues it, and one `delivery` row per agent that picks it
- * up. Both rows share an `order_id` in their `metadata_json`. The original
- * timeline rendered them as two separate cards, which the operator
- * justifiably called "duplicate listings".
+ * Background — "duplicate" investigation:
+ *
+ * The fleet_comms_log table records each order as N+1 rows: one `order`
+ * row when an operator queues it, and one `delivery` row per agent that
+ * picks it up. Both rows share an `order_id` in their `metadata_json`.
+ * The original timeline rendered every row as its own card, which made
+ * a single fleet-wide order show as 1 ORDER card + 5 DELIVERY cards.
+ * Operators (correctly) called these "duplicates"; they were not
+ * actually duplicates at the data layer — they were N+1 _related_ rows.
+ *
+ * Two ways the bug could manifest:
+ *
+ *   1. Real distinct rows rendered separately (the original case) —
+ *      fixed here by visual grouping in `buildTimelineRows`.
+ *   2. Server-side duplicate inserts (e.g. delivery handler runs twice
+ *      for the same agent + order). These would currently still render
+ *      twice _within_ a single grouped card. We do not silently drop
+ *      them; if true duplicates ever appear they'll be obvious to
+ *      operators and the fix is server-side, not in this UI. See the
+ *      regression test "server-side duplicate delivery rows" in
+ *      `__tests__/page.test.tsx`.
  *
  * `buildTimelineRows` collapses each ORDER + matching DELIVERIES into a
  * single grouped row. Reports and orphan deliveries (e.g. an order entry

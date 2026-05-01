@@ -590,5 +590,28 @@ export function parseTurnFile(content: string): ParsedTurn {
     }
   }
 
+  // Dedupe identical events within a single turn. Multiple tool calls in the
+  // same turn often surface the same `events:` block (the proxy injects
+  // critical events into responses, and game payloads also embed them), which
+  // produced duplicate combat_events rows per actual game event. Keys include
+  // every distinguishing field so back-to-back-but-different fights still
+  // record correctly.
+  const seen = new Set<string>();
+  result.combatEvents = result.combatEvents.filter((e) => {
+    const key = [
+      e.eventType,
+      e.pirateName ?? "",
+      e.pirateTier ?? "",
+      e.damage ?? "",
+      e.hullAfter ?? "",
+      e.maxHull ?? "",
+      e.insurancePayout ?? "",
+      e.system ?? "",
+    ].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
   return result;
 }

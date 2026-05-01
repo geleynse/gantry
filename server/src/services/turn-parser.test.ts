@@ -698,4 +698,47 @@ events:
     expect(parsed.combatEvents).toHaveLength(1);
     expect(parsed.combatEvents[0].system).toBe('Dusk');
   });
+
+  it('parseTurnFile dedupes identical combat events surfaced across multiple tool results in one turn', () => {
+    // Mirrors the phantom_in_combat case: get_status keeps echoing the same
+    // events: block on every call within a turn, producing duplicate
+    // player_died rows for one actual death.
+    const id1 = 'toolu_a';
+    const id2 = 'toolu_b';
+    const id3 = 'toolu_c';
+    const yamlWithDeath = `result: dead\nevents:\n  - type: player_died\n    data:\n      insurance_payout: 5000\n`;
+    const yamlEcho = `result: idle\nevents:\n  - type: player_died\n    data:\n      insurance_payout: 5000\n`;
+    const lines = [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: id1, name: 'get_status', input: {} }] } }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id1, content: yamlWithDeath }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: id2, name: 'get_status', input: {} }] } }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id2, content: yamlEcho }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: id3, name: 'get_status', input: {} }] } }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id3, content: yamlEcho }] } }),
+      JSON.stringify({ type: 'result', total_cost_usd: 0.001, usage: { input_tokens: 100, output_tokens: 50 }, num_turns: 1, duration_ms: 5000, model: 'test' }),
+    ].join('\n');
+
+    const parsed = parseTurnFile(lines);
+    const deaths = parsed.combatEvents.filter(e => e.eventType === 'player_died');
+    expect(deaths).toHaveLength(1);
+    expect(deaths[0].insurancePayout).toBe(5000);
+  });
+
+  it('parseTurnFile keeps distinct combat events with different damage/hull values', () => {
+    const id1 = 'toolu_a';
+    const id2 = 'toolu_b';
+    const yaml1 = `result: hit\nevents:\n  - type: pirate_combat\n    data:\n      pirate_name: Reaver\n      pirate_tier: scout\n      damage: 10\n      your_hull: 90\n      your_max_hull: 100\n`;
+    const yaml2 = `result: hit\nevents:\n  - type: pirate_combat\n    data:\n      pirate_name: Reaver\n      pirate_tier: scout\n      damage: 15\n      your_hull: 75\n      your_max_hull: 100\n`;
+    const lines = [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: id1, name: 'mine', input: {} }] } }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id1, content: yaml1 }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: id2, name: 'mine', input: {} }] } }),
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id2, content: yaml2 }] } }),
+      JSON.stringify({ type: 'result', total_cost_usd: 0.001, usage: { input_tokens: 100, output_tokens: 50 }, num_turns: 1, duration_ms: 5000, model: 'test' }),
+    ].join('\n');
+
+    const parsed = parseTurnFile(lines);
+    expect(parsed.combatEvents).toHaveLength(2);
+    expect(parsed.combatEvents.map(e => e.damage).sort()).toEqual([10, 15]);
+  });
 });

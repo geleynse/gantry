@@ -119,6 +119,11 @@ export class MockGameClient implements GameTransport {
     return this.state.authenticated;
   }
 
+  /** Mock games speak v1 (no v2 mock harness exists). */
+  isV2(): boolean {
+    return false;
+  }
+
   /** Called for every non-internal push event (not used in mock — kept for interface compat). */
   onEvent: ((event: GameEvent) => void) | null = null;
   /** Called with fresh status data after waitForTick(). */

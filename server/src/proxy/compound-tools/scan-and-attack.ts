@@ -40,6 +40,7 @@ export async function scanAndAttack(
   stanceArg = "aggressive",
 ): Promise<CompoundResult> {
   const { client, agentName, statusCache, battleCache, persistBattleState, upsertNote } = deps;
+  const isV2 = typeof client.isV2 === "function" && client.isV2();
 
   // Step 0: Pre-combat readiness check
   const readinessReport = battleReadiness(
@@ -68,7 +69,9 @@ export async function scanAndAttack(
   const weaponsList = Array.isArray(shipWeapons) ? shipWeapons : [];
 
   // Step 1: Get nearby entities
-  const nearbyResp = await client.execute("get_nearby");
+  const nearbyResp = isV2
+    ? await client.execute("spacemolt", { action: "get_nearby" })
+    : await client.execute("get_nearby");
   const nearbyData = (nearbyResp.result ?? {}) as Record<string, unknown>;
   const liveEntities = (
     Array.isArray(nearbyData.nearby) ? nearbyData.nearby :
@@ -194,7 +197,9 @@ export async function scanAndAttack(
     stance: gameStance,
     no_ammo: !!ammoWarning,
   });
-  const attackResp = await client.execute("attack", { target_id: targetId }, { noRetry: true });
+  const attackResp = isV2
+    ? await client.execute("spacemolt_battle", { action: "engage", target_id: targetId }, { noRetry: true })
+    : await client.execute("attack", { target_id: targetId }, { noRetry: true });
 
   if (attackResp.error) {
     log.warn("scan_and_attack attack failed", {
@@ -227,7 +232,9 @@ export async function scanAndAttack(
       agent: agentName,
       attempt: `${waitTick + 1}/${BATTLE_INIT_MAX_TICKS}`,
     });
-    const initCheck = await client.execute("get_battle_status");
+    const initCheck = isV2
+      ? await client.execute("spacemolt_battle", { action: "status" })
+      : await client.execute("get_battle_status");
     if (!initCheck.error) {
       battleStarted = true;
       log.debug("scan_and_attack battle started", {
@@ -258,7 +265,11 @@ export async function scanAndAttack(
 
   // Set stance via battle command (game stances: fire, evade, brace, flee)
   if (gameStance !== "fire") {
-    await client.execute("battle", { action: "stance", stance: gameStance }, { noRetry: true });
+    if (isV2) {
+      await client.execute("spacemolt_battle", { action: "stance", stance: gameStance }, { noRetry: true });
+    } else {
+      await client.execute("battle", { action: "stance", stance: gameStance }, { noRetry: true });
+    }
   }
 
   log.info("scan_and_attack battle engaged", {
@@ -294,7 +305,9 @@ export async function scanAndAttack(
   for (let i = 0; i < MAX_BATTLE_TICKS; i++) {
     await client.waitForTick();
 
-    const statusResp = await client.execute("get_battle_status");
+    const statusResp = isV2
+      ? await client.execute("spacemolt_battle", { action: "status" })
+      : await client.execute("get_battle_status");
     if (statusResp.error) {
       log.debug("scan_and_attack battle ended (status error)", {
         agent: agentName,
@@ -363,20 +376,18 @@ export async function scanAndAttack(
           agent: agentName,
           hull_percent: hull,
         });
-        const fleeResp = await client.execute("battle", {
-          action: "stance",
-          stance: "flee",
-        });
+        const fleeResp = isV2
+          ? await client.execute("spacemolt_battle", { action: "stance", stance: "flee" })
+          : await client.execute("battle", { action: "stance", stance: "flee" });
         if (!fleeResp.error) currentStance = "flee";
       } else if (hull < 30 && (currentStance === "fire" || currentStance === "aggressive")) {
         log.warn("scan_and_attack switching to brace", {
           agent: agentName,
           hull_percent: hull,
         });
-        const braceResp = await client.execute("battle", {
-          action: "stance",
-          stance: "brace",
-        });
+        const braceResp = isV2
+          ? await client.execute("spacemolt_battle", { action: "stance", stance: "brace" })
+          : await client.execute("battle", { action: "stance", stance: "brace" });
         if (!braceResp.error) currentStance = "brace";
       }
 
@@ -387,7 +398,11 @@ export async function scanAndAttack(
         (currentStance === "fire" || currentStance === "aggressive") &&
         (zone === "outer" || zone === "mid")
       ) {
-        await client.execute("battle", { action: "advance" });
+        if (isV2) {
+          await client.execute("spacemolt_battle", { action: "advance" });
+        } else {
+          await client.execute("battle", { action: "advance" });
+        }
       }
 
       // Combat alert: auto-report when hull drops below 30%

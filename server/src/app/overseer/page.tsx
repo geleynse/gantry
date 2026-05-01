@@ -19,8 +19,8 @@ import {
   RotateCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { relativeTime } from "@/lib/utils";
-import { formatAbsolute } from "@/lib/time";
+import { formatAbsolute, formatRelativeTime } from "@/lib/time";
+import { formatCurrency, formatDuration, formatTokens } from "@/lib/format";
 import { apiFetch } from "@/lib/api";
 import { useOverseerStatus, useOverseerDecisions } from "@/hooks/use-overseer";
 import { useFleetStatus } from "@/hooks/use-fleet-status";
@@ -40,23 +40,9 @@ function parseJsonSafe<T>(json: string | null | undefined, fallback: T): T {
   }
 }
 
-function formatCost(n: number | null | undefined): string {
-  if (n == null) return "—";
-  if (n < 0.01) return "<$0.01";
-  return `$${n.toFixed(2)}`;
-}
-
-function formatDuration(ms: number | null | undefined): string {
-  if (ms == null) return "—";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function formatTokens(n: number | null | undefined): string {
-  if (n == null) return "—";
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  return String(n);
-}
+// Cost / duration / token formatters live in lib/format now — kept as a
+// local alias so existing call sites read the same.
+const formatCost = formatCurrency;
 
 // ---------------------------------------------------------------------------
 // Status badge
@@ -340,7 +326,7 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
           className="shrink-0 text-[10px] text-muted-foreground/60 font-mono"
           title={formatAbsolute(decision.created_at)}
         >
-          {relativeTime(decision.created_at)}
+          {formatRelativeTime(decision.created_at)}
         </span>
       </button>
 
@@ -383,7 +369,7 @@ function DecisionCard({ decision }: { decision: OverseerDecision }) {
             </div>
             <div>
               <span className="text-muted-foreground/60">at </span>
-              <span className="text-foreground" title={relativeTime(decision.created_at)}>
+              <span className="text-foreground" title={formatRelativeTime(decision.created_at)}>
                 {formatAbsolute(decision.created_at)}
               </span>
             </div>

@@ -207,6 +207,17 @@ describe("checkStopAgentPremature", () => {
     expect(result).toBeNull();
   });
 
+  it("rejects 'navigation loop' as a transit-pattern reason (loop is not a fault)", () => {
+    const result = checkStopAgentPremature(
+      "lumen-shoal",
+      "Agent stuck in navigation loop for 5+ turns: cargo full, credits frozen, fleet orders undelivered",
+      13 * 60 * 1000,
+    );
+    expect(result).not.toBeNull();
+    expect(result?.error).toBe("stop_agent_premature");
+    expect(result?.message).toContain("lumen-shoal only running 13m");
+  });
+
   it("allows non-transit reasons regardless of uptime (e.g. role reassignment)", () => {
     const result = checkStopAgentPremature("cinder-wake", "reassigning role", FIVE_MIN);
     expect(result).toBeNull();

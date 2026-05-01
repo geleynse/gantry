@@ -6,12 +6,12 @@
  */
 
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
-import { handlePassthrough, waitForActionResult, textResult, type PassthroughDeps, type McpTextResult } from "./passthrough-handler.js";
+import { handlePassthrough, waitForActionResult, textResult, executeForClient, type PassthroughDeps, type McpTextResult } from "./passthrough-handler.js";
 import { EventBuffer } from "./event-buffer.js";
 import { STATE_CHANGING_TOOLS } from "./proxy-constants.js";
 import { GalaxyGraph } from "./pathfinder.js";
 import { createDatabase, closeDb } from "../services/database.js";
-import { registerPoi, markDockable, isDockable } from "../services/galaxy-poi-registry.js";
+import { registerPoi, markDockable, isDockable, _resetDockFailures } from "../services/galaxy-poi-registry.js";
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -1451,7 +1451,7 @@ describe("POI validation", () => {
 });
 
 describe("dock dockability recording", () => {
-  beforeEach(() => { createDatabase(":memory:"); });
+  beforeEach(() => { createDatabase(":memory:"); _resetDockFailures(); });
   afterEach(() => { closeDb(); });
 
   it("marks POI as dockable on successful dock", async () => {
@@ -1474,7 +1474,7 @@ describe("dock dockability recording", () => {
     expect(isDockable("sol_station")).toBe(true);
   });
 
-  it("marks POI as non-dockable on failed dock after retry", async () => {
+  it("does not mark POI non-dockable on a single failed dock (transient)", async () => {
     registerPoi({ id: "main_belt", name: "Main Belt", system: "sol", type: "belt" });
 
     const client = createMockClient({ dock: { result: { status: "completed" } } });
@@ -1489,7 +1489,61 @@ describe("dock dockability recording", () => {
     });
 
     await handlePassthrough(deps, client, "agent1", "dock", "dock", {}, "dock");
+    expect(isDockable("main_belt")).toBeNull();
+  });
+
+  it("marks POI as non-dockable only after 3 consecutive failed docks", async () => {
+    registerPoi({ id: "main_belt", name: "Main Belt", system: "sol", type: "belt" });
+
+    const statusCache = new Map();
+    statusCache.set("agent1", {
+      data: { player: { current_poi: "main_belt", current_system: "sol", docked_at_base: null } },
+      fetchedAt: Date.now(),
+    });
+    const makeDeps = () => createMockDeps({
+      statusCache,
+      waitForDockCacheUpdate: mock(async () => false),
+    });
+
+    for (let i = 0; i < 3; i++) {
+      const client = createMockClient({ dock: { result: { status: "completed" } } });
+      await handlePassthrough(makeDeps(), client, "agent1", "dock", "dock", {}, "dock");
+    }
     expect(isDockable("main_belt")).toBe(false);
+  });
+
+  it("successful dock resets the failure counter", async () => {
+    registerPoi({ id: "main_belt", name: "Main Belt", system: "sol", type: "belt" });
+
+    const statusCache = new Map();
+    const setCachePoi = (docked: boolean | null) => statusCache.set("agent1", {
+      data: { player: { current_poi: "main_belt", current_system: "sol", docked_at_base: docked } },
+      fetchedAt: Date.now(),
+    });
+
+    // Two failures
+    setCachePoi(null);
+    for (let i = 0; i < 2; i++) {
+      const client = createMockClient({ dock: { result: { status: "completed" } } });
+      const deps = createMockDeps({ statusCache, waitForDockCacheUpdate: mock(async () => false) });
+      await handlePassthrough(deps, client, "agent1", "dock", "dock", {}, "dock");
+    }
+
+    // Successful dock
+    setCachePoi(false);
+    const okClient = createMockClient({ dock: { result: { status: "completed" } } });
+    const okDeps = createMockDeps({ statusCache, waitForDockCacheUpdate: mock(async () => true) });
+    await handlePassthrough(okDeps, okClient, "agent1", "dock", "dock", {}, "dock");
+    expect(isDockable("main_belt")).toBe(true);
+
+    // Two more failures should not flip back to false (counter was reset).
+    setCachePoi(null);
+    for (let i = 0; i < 2; i++) {
+      const client = createMockClient({ dock: { result: { status: "completed" } } });
+      const deps = createMockDeps({ statusCache, waitForDockCacheUpdate: mock(async () => false) });
+      await handlePassthrough(deps, client, "agent1", "dock", "dock", {}, "dock");
+    }
+    expect(isDockable("main_belt")).toBe(true);
   });
 });
 
@@ -1674,5 +1728,149 @@ describe("pre-dock dockability check", () => {
     const cached = statusCache.get("claimant-agent");
     const insurance = cached?.data?.insurance as Record<string, unknown> | undefined;
     expect(insurance?.active).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// executeForClient — v1 → v2 dispatch + param translation
+// ---------------------------------------------------------------------------
+
+function makeRecorderClient(isV2: boolean) {
+  const calls: Array<{ tool: string; args?: Record<string, unknown> }> = [];
+  // Cast to any — these tests only exercise executeForClient's dispatch
+  // and translation logic, which only touches `execute` and `isV2`.
+  // The full PassthroughClient interface includes nav/tick fields that
+  // aren't relevant here.
+  const client = {
+    execute: async (tool: string, args?: Record<string, unknown>) => {
+      calls.push({ tool, args });
+      return { result: { ok: true } };
+    },
+    isV2: () => isV2,
+  } as any;
+  return { calls, client };
+}
+
+describe("executeForClient — v1 path", () => {
+  it("passes v1 tool name and args through unchanged", async () => {
+    const { calls, client } = makeRecorderClient(false);
+    await executeForClient(client, "jump", { target_system: "sirius" });
+    expect(calls).toEqual([{ tool: "jump", args: { target_system: "sirius" } }]);
+  });
+});
+
+describe("executeForClient — v2 path", () => {
+  it("dispatches v1 'jump' as spacemolt(action='jump', id=...) — translates target_system→id", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "jump", { target_system: "sirius" });
+    expect(calls).toEqual([{ tool: "spacemolt", args: { action: "jump", id: "sirius" } }]);
+  });
+
+  it("dispatches v1 'travel' with target_poi → spacemolt(action='travel', id=...)", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "travel", { target_poi: "main_belt" });
+    expect(calls).toEqual([{ tool: "spacemolt", args: { action: "travel", id: "main_belt" } }]);
+  });
+
+  it("dispatches v1 'attack' with target_id → spacemolt_battle(action='engage', id=...)", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "attack", { target_id: "pirate_1" });
+    expect(calls).toEqual([{ tool: "spacemolt_battle", args: { action: "engage", id: "pirate_1" } }]);
+  });
+
+  it("dispatches v1 'loot_wreck' with wreck_id → spacemolt_salvage(action='loot', id=...)", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "loot_wreck", { wreck_id: "wreck_42" });
+    expect(calls).toEqual([{ tool: "spacemolt_salvage", args: { action: "loot", id: "wreck_42" } }]);
+  });
+
+  it("dispatches v1 'install_mod' with module_id → spacemolt(action='install_mod', id=...)", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "install_mod", { module_id: "shield_mk2" });
+    expect(calls).toEqual([{ tool: "spacemolt", args: { action: "install_mod", id: "shield_mk2" } }]);
+  });
+
+  it("preserves identity-mapped params (deposit_items keeps item_id)", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "deposit_items", { item_id: "iron_ore", quantity: 10 });
+    expect(calls).toEqual([{
+      tool: "spacemolt_storage",
+      args: { action: "deposit", item_id: "iron_ore", quantity: 10 },
+    }]);
+  });
+
+  it("does not rename non-translated params (mine count passes through)", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "mine", { count: 5 });
+    expect(calls).toEqual([{ tool: "spacemolt", args: { action: "mine", count: 5 } }]);
+  });
+
+  it("falls back to v1 name passthrough when not in V1_TO_V2_DISPATCH", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "spacemolt_pray", { script: "wait 1;" });
+    expect(calls).toEqual([{ tool: "spacemolt_pray", args: { script: "wait 1;" } }]);
+  });
+
+  it("drops agent-supplied action from args so dispatch action wins", async () => {
+    // Repro of the Chunk D soak bug: agent calls 'deposit_items' which dispatches
+    // to spacemolt_storage(action="deposit"), but the agent's args also include
+    // action="deposit_items" — the spread used to overwrite dispatch.action with
+    // the agent's wrong name, sending action="deposit_items" to v2 game (rejected).
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "deposit_items", {
+      action: "deposit_items",  // legacy v1 name leaked from agent
+      item_id: "gold_ore",
+      quantity: 14,
+    });
+    expect(calls).toEqual([{
+      tool: "spacemolt_storage",
+      args: { action: "deposit", item_id: "gold_ore", quantity: 14 },
+    }]);
+  });
+
+  it("'missions' alias dispatches to spacemolt(get_missions)", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "missions", { action: "missions" });
+    expect(calls).toEqual([{ tool: "spacemolt", args: { action: "get_missions" } }]);
+  });
+
+  it("find_route dispatches to spacemolt(find_route) — drops agent's action", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "find_route", {
+      action: "find_route",
+      target_system: "haven",
+    });
+    expect(calls).toEqual([{ tool: "spacemolt", args: { action: "find_route", id: "haven" } }]);
+  });
+
+  it("view_market dispatches to spacemolt_market (not spacemolt)", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "view_market", { action: "view_market", item_id: "iron_ore" });
+    expect(calls).toEqual([{
+      tool: "spacemolt_market",
+      args: { action: "view_market", item_id: "iron_ore" },
+    }]);
+  });
+
+  it("estimate_purchase dispatches to spacemolt_market", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "estimate_purchase", {
+      action: "estimate_purchase",
+      item_id: "ore_hopper",
+      quantity: 2,
+    });
+    expect(calls).toEqual([{
+      tool: "spacemolt_market",
+      args: { action: "estimate_purchase", item_id: "ore_hopper", quantity: 2 },
+    }]);
+  });
+
+  it("captains_log_list dispatches to spacemolt_social", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "captains_log_list", { action: "captains_log_list" });
+    expect(calls).toEqual([{
+      tool: "spacemolt_social",
+      args: { action: "captains_log_list" },
+    }]);
   });
 });

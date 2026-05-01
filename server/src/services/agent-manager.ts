@@ -34,7 +34,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function buildStartSpec(agent: AgentConfig): proc.SessionLaunchSpec {
+function buildStartSpec(agent: AgentConfig & { canaryMode?: boolean }): proc.SessionLaunchSpec {
   const runnerExecutable = join(FLEET_DIR, 'gantry-runner');
   const name = agent.name;
   const backend = agent.backend || 'claude';
@@ -66,6 +66,15 @@ function buildStartSpec(agent: AgentConfig): proc.SessionLaunchSpec {
 
   if (agent.systemPrompt) {
     args.push('--systemPrompt', agent.systemPrompt);
+  }
+
+  // Canary mode: tells the runner to skip the long normal turn prompt and let
+  // the systemPrompt drive the agent for a single one-shot turn. Required for
+  // codex backend, where the long stdin turn prompt out-prioritizes the
+  // systemPrompt (codex prioritizes stdin over -c system_prompt= for content
+  // overlap). Without this flag, the canary system prompt is ignored.
+  if (agent.canaryMode) {
+    args.push('--canaryMode');
   }
 
   // Compaction model support — pass a cheaper model for context compaction when configured.
@@ -186,7 +195,7 @@ export async function startAgentCanary(name: string): Promise<{ ok: boolean; mes
   clearSignal(name, 'inject');
 
   const agent = AGENTS.find(a => a.name === name)!;
-  const startSpec = buildStartSpec({ ...agent, systemPrompt: PRAYER_CANARY_SYSTEM_PROMPT });
+  const startSpec = buildStartSpec({ ...agent, systemPrompt: PRAYER_CANARY_SYSTEM_PROMPT, canaryMode: true });
   log.debug('Generated canary start spec', { agent: name });
 
   try {

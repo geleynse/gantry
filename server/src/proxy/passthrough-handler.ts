@@ -26,7 +26,7 @@ import { addDiaryEntry } from "../services/notes-db.js";
 import { validateCaptainsLogFormat } from "./pipeline.js";
 import { syncCaptainsLogsFromServer, persistCaptainsLogEntry } from "../services/captains-logs-db.js";
 import { syncActionLog, persistActionLogEntries } from "../services/action-log-parser.js";
-import { markDockable, isDockable, getPoi } from "../services/galaxy-poi-registry.js";
+import { markDockable, isDockable, getPoi, recordDockFailure } from "../services/galaxy-poi-registry.js";
 import { enrichWithThreatAssessment } from "./threat-assessment.js";
 import { normalizeSystemName } from "./compound-tools/utils.js";
 import { autoRecordLoreFromResult, buildLoreHint } from "../services/poi-lore.js";
@@ -57,6 +57,270 @@ export interface PassthroughClient {
   execute: (cmd: string, args?: Record<string, unknown>) => Promise<{ result?: unknown; error?: { code?: unknown; message?: unknown } | null }>;
   waitForTick: (ms?: number) => Promise<void>;
   lastArrivalTick: number | null;
+  /** Optional: present on v1/v2 HTTP clients, absent on test mocks. Test mocks
+   *  default to v1 dispatch (the previous behavior). */
+  isV2?: () => boolean;
+}
+
+import { V2_TO_V1_PARAM_MAP } from "./schema.js";
+
+// ---------------------------------------------------------------------------
+// v1 → v2 dispatch mapping
+// ---------------------------------------------------------------------------
+
+/**
+ * Inverse of `V2_TO_V1_PARAM_MAP` (schema.ts). For each v2 action, maps the
+ * v1-specific param name BACK to the v2-generic name so that compound-tool
+ * code that passes v1-style args (`target_system`, `target_poi`, `target_id`,
+ * `wreck_id`, `module_id`, etc.) gets translated to the generic shape the
+ * v2 game server actually accepts (`id`, `text`, `count`, `quantity`).
+ *
+ * Identity entries (where v1 and v2 use the same name) are skipped so the
+ * resulting per-action map stays small and unambiguous.
+ *
+ * Computed once at module load time. Reads as: "for v2 action `jump`, rename
+ * v1 param `target_system` to v2 param `id`."
+ */
+const V1_TO_V2_PARAM_MAP: Record<string, Record<string, string>> = (() => {
+  const inverted: Record<string, Record<string, string>> = {};
+  for (const [action, paramMap] of Object.entries(V2_TO_V1_PARAM_MAP)) {
+    const inverse: Record<string, string> = {};
+    // First-write wins: when multiple v2 params remap to the same v1 name
+    // (e.g. jump's `id` and `system_id` both map to `target_system`), the
+    // FIRST one declared in V2_TO_V1_PARAM_MAP is the canonical v2 generic
+    // name. The later entries are defensive aliases for prompt-misread
+    // recovery (see sable-thorn `system_id` fix). For outbound v1→v2, we
+    // always pick the canonical name.
+    for (const [v2Param, v1Param] of Object.entries(paramMap)) {
+      if (v2Param === v1Param) continue;
+      if (inverse[v1Param] !== undefined) continue;
+      inverse[v1Param] = v2Param;
+    }
+    inverted[action] = inverse;
+  }
+  return inverted;
+})();
+
+/**
+ * Translate v1-style args into v2-style args for the given v2 action.
+ * Returns a new object; does not mutate the input.
+ */
+function translateV1ArgsToV2(action: string, args: Record<string, unknown> | undefined): Record<string, unknown> {
+  const paramMap = V1_TO_V2_PARAM_MAP[action];
+  if (!paramMap || !args) return { ...(args ?? {}) };
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    const renamed = paramMap[key] ?? key;
+    out[renamed] = value;
+  }
+  return out;
+}
+
+/**
+ * v1 tool name → { v2Tool, v2Action }. Used by `executeForClient` to dispatch
+ * a v1 flat call ("undock", "mine", "attack", ...) against a v2 game server,
+ * which needs the consolidated tool namespace plus an `action` arg.
+ *
+ * Reads as the inverse of `V2_ACTION_TO_V1_NAME` in `gantry-v2.ts`. Anything
+ * not in this map is presumed to be a static v2-namespaced action under
+ * `spacemolt` (the default namespace for almost everything).
+ */
+const V1_TO_V2_DISPATCH: Record<string, { tool: string; action: string }> = {
+  // spacemolt (default namespace) — explicit entries for clarity.
+  mine: { tool: "spacemolt", action: "mine" },
+  travel: { tool: "spacemolt", action: "travel" },
+  jump: { tool: "spacemolt", action: "jump" },
+  jump_route: { tool: "spacemolt", action: "jump_route" },
+  dock: { tool: "spacemolt", action: "dock" },
+  undock: { tool: "spacemolt", action: "undock" },
+  refuel: { tool: "spacemolt", action: "refuel" },
+  repair: { tool: "spacemolt", action: "repair" },
+  sell: { tool: "spacemolt", action: "sell" },
+  buy: { tool: "spacemolt", action: "buy" },
+  craft: { tool: "spacemolt", action: "craft" },
+  jettison: { tool: "spacemolt", action: "jettison" },
+  install_mod: { tool: "spacemolt", action: "install_mod" },
+  uninstall_mod: { tool: "spacemolt", action: "uninstall_mod" },
+  repair_module: { tool: "spacemolt", action: "repair_module" },
+  use_item: { tool: "spacemolt", action: "use_item" },
+  cloak: { tool: "spacemolt", action: "cloak" },
+  self_destruct: { tool: "spacemolt", action: "self_destruct" },
+  survey_system: { tool: "spacemolt", action: "survey_system" },
+  distress_signal: { tool: "spacemolt", action: "distress_signal" },
+  // spacemolt query actions
+  get_status: { tool: "spacemolt", action: "get_status" },
+  get_state: { tool: "spacemolt", action: "get_state" },
+  get_player: { tool: "spacemolt", action: "get_player" },
+  get_location: { tool: "spacemolt", action: "get_location" },
+  get_queue: { tool: "spacemolt", action: "get_queue" },
+  get_ship: { tool: "spacemolt", action: "get_ship" },
+  get_cargo: { tool: "spacemolt", action: "get_cargo" },
+  get_nearby: { tool: "spacemolt", action: "get_nearby" },
+  get_system: { tool: "spacemolt", action: "get_system" },
+  get_skills: { tool: "spacemolt", action: "get_skills" },
+  get_poi: { tool: "spacemolt", action: "get_poi" },
+  get_base: { tool: "spacemolt", action: "get_base" },
+  get_map: { tool: "spacemolt", action: "get_map" },
+  get_version: { tool: "spacemolt", action: "get_version" },
+  get_notifications: { tool: "spacemolt", action: "get_notifications" },
+  get_commands: { tool: "spacemolt", action: "get_commands" },
+  search_systems: { tool: "spacemolt", action: "search_systems" },
+  find_route: { tool: "spacemolt", action: "find_route" },
+  scan: { tool: "spacemolt", action: "scan" },
+  // mission actions live on spacemolt
+  get_missions: { tool: "spacemolt", action: "get_missions" },
+  get_active_missions: { tool: "spacemolt", action: "get_active_missions" },
+  accept_mission: { tool: "spacemolt", action: "accept_mission" },
+  complete_mission: { tool: "spacemolt", action: "complete_mission" },
+  decline_mission: { tool: "spacemolt", action: "decline_mission" },
+  abandon_mission: { tool: "spacemolt", action: "abandon_mission" },
+  completed_missions: { tool: "spacemolt", action: "completed_missions" },
+  view_completed_mission: { tool: "spacemolt", action: "view_completed_mission" },
+  // legacy alias agents still send
+  missions: { tool: "spacemolt", action: "get_missions" },
+  // market actions live on spacemolt_market (not spacemolt)
+  view_market: { tool: "spacemolt_market", action: "view_market" },
+  view_orders: { tool: "spacemolt_market", action: "view_orders" },
+  estimate_purchase: { tool: "spacemolt_market", action: "estimate_purchase" },
+  analyze_market: { tool: "spacemolt_market", action: "analyze_market" },
+  create_sell_order: { tool: "spacemolt_market", action: "create_sell_order" },
+  create_buy_order: { tool: "spacemolt_market", action: "create_buy_order" },
+  cancel_order: { tool: "spacemolt_market", action: "cancel_order" },
+  modify_order: { tool: "spacemolt_market", action: "modify_order" },
+  // catalog: v2 tool is `spacemolt_catalog` and uses `type` not `action`.
+  catalog: { tool: "spacemolt_catalog", action: "" },
+  // storage namespace
+  view_storage: { tool: "spacemolt_storage", action: "view" },
+  view_faction_storage: { tool: "spacemolt_storage", action: "view_faction" },
+  deposit_items: { tool: "spacemolt_storage", action: "deposit" },
+  withdraw_items: { tool: "spacemolt_storage", action: "withdraw" },
+  // battle namespace
+  attack: { tool: "spacemolt_battle", action: "engage" },
+  reload: { tool: "spacemolt_battle", action: "reload" },
+  battle: { tool: "spacemolt_battle", action: "" }, // requires action in args
+  get_battle_status: { tool: "spacemolt_battle", action: "status" },
+  // salvage namespace
+  get_wrecks: { tool: "spacemolt_salvage", action: "wrecks" },
+  loot_wreck: { tool: "spacemolt_salvage", action: "loot" },
+  salvage_wreck: { tool: "spacemolt_salvage", action: "salvage" },
+  scrap_wreck: { tool: "spacemolt_salvage", action: "scrap" },
+  tow_wreck: { tool: "spacemolt_salvage", action: "tow" },
+  release_tow: { tool: "spacemolt_salvage", action: "release" },
+  sell_wreck: { tool: "spacemolt_salvage", action: "sell" },
+  buy_insurance: { tool: "spacemolt_salvage", action: "insure" },
+  get_insurance_quote: { tool: "spacemolt_salvage", action: "quote" },
+  // ship namespace
+  commission_status: { tool: "spacemolt_ship", action: "commission_status" },
+  commission_ship: { tool: "spacemolt_ship", action: "commission" },
+  // social: captains_log_list/get/add are on spacemolt_social
+  captains_log_list: { tool: "spacemolt_social", action: "captains_log_list" },
+  captains_log_get: { tool: "spacemolt_social", action: "captains_log_get" },
+  captains_log_add: { tool: "spacemolt_social", action: "captains_log_add" },
+};
+
+/**
+ * Dispatch a v1-style tool call (flat name + flat args) against either a v1 or
+ * v2 client. For v2 the call is rewritten to `client.execute(v2Tool, { action,
+ * ...args })`; session_id is auto-injected by the v2 client itself.
+ *
+ * Tools not present in `V1_TO_V2_DISPATCH` fall back to passing the v1 name
+ * through unchanged — matches v2 behavior for static tools that share names
+ * (e.g. `spacemolt_pray`).
+ */
+export async function executeForClient(
+  client: PassthroughClient,
+  v1ToolName: string,
+  args?: Record<string, unknown>,
+  v2ToolHint?: string,
+): Promise<{ result?: unknown; error?: { code?: unknown; message?: unknown } | null }> {
+  const isV2 = typeof client.isV2 === "function" && client.isV2();
+  if (!isV2) {
+    return client.execute(v1ToolName, args);
+  }
+
+  // Prefer V1_TO_V2_DISPATCH when it has an entry — this catches agents that
+  // called an action on the wrong consolidated tool (e.g. spacemolt(action=
+  // "analyze_market") when analyze_market actually lives on spacemolt_market).
+  // Fall back to v2ToolHint for v2-native action names that aren't in the
+  // legacy dispatch map (e.g. spacemolt_storage(action="deposit")).
+  const dispatch =
+    V1_TO_V2_DISPATCH[v1ToolName] ??
+    (v2ToolHint ? { tool: v2ToolHint, action: v1ToolName } : undefined);
+  if (!dispatch) {
+    // Unknown — pass through; the v2 client will surface a clear error from
+    // the game server if the name really is unsupported.
+    return client.execute(v1ToolName, args);
+  }
+
+  // Special case: catalog uses `type` not `action`.
+  if (dispatch.tool === "spacemolt_catalog") {
+    const { action: _drop, ...rest } = (args ?? {}) as Record<string, unknown>;
+    return client.execute("spacemolt_catalog", rest);
+  }
+
+  // For "battle" (sub-actions like advance/retreat/stance/target), the caller
+  // passes action via args.action — preserve it and translate args.
+  if (dispatch.tool === "spacemolt_battle" && dispatch.action === "" && args?.action) {
+    const subAction = String(args.action);
+    const translated = translateV1ArgsToV2(subAction, args);
+    return client.execute("spacemolt_battle", translated);
+  }
+
+  // Translate v1-style param names (e.g. target_system, wreck_id, module_id)
+  // to v2-generic names (id, text) before dispatching. Only the `spacemolt`,
+  // `spacemolt_battle`, `spacemolt_salvage`, and `spacemolt_ship` tools use
+  // generic param names in v2; the rest (spacemolt_market, spacemolt_storage,
+  // spacemolt_social) use v1-style explicit names (item_id, order_id, etc.)
+  // and should NOT be translated — translation would rename `item_id` → `id`,
+  // which v2 spacemolt_market/storage don't accept.
+  //
+  // Drop the agent-supplied `action` from the translated args before merging
+  // with `dispatch.action`. Otherwise an agent-side typo (e.g. action="missions"
+  // for an action that's actually `get_missions`) overrides the dispatch's
+  // canonical action via spread semantics, sending the wrong action name to
+  // the v2 game server.
+  const TRANSLATE_TOOLS = new Set([
+    "spacemolt",
+    "spacemolt_battle",
+    "spacemolt_salvage",
+    "spacemolt_ship",
+  ]);
+  const shouldTranslate = TRANSLATE_TOOLS.has(dispatch.tool);
+  const finalArgs = shouldTranslate
+    ? translateV1ArgsToV2(dispatch.action, args)
+    : { ...(args ?? {}) };
+  const { action: _agentAction, ...argsNoAction } = finalArgs;
+  // Per-action arg-name forgiveness: agents sometimes send v2-generic names
+  // (id) on tools that expect v1-style explicit names (item_id). Rename
+  // commonly-confused params before forwarding to the v2 game server.
+  const renamed = applyV2ArgAliases(dispatch.action, argsNoAction);
+  return client.execute(dispatch.tool, { action: dispatch.action, ...renamed });
+}
+
+/**
+ * Agent-input → v2-game-server arg-name aliases. Only declared for actions
+ * where agents commonly use the wrong param name despite explicit prompt
+ * guidance. Applied AFTER translateV1ArgsToV2.
+ */
+const V2_AGENT_ARG_ALIASES: Record<string, Record<string, string>> = {
+  // spacemolt_storage uses `item_id`; agents sometimes send `id`.
+  deposit: { id: "item_id" },
+  withdraw: { id: "item_id" },
+};
+
+function applyV2ArgAliases(
+  action: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const aliases = V2_AGENT_ARG_ALIASES[action];
+  if (!aliases) return args;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    const target = aliases[k] ?? k;
+    // Don't clobber an explicit v2 name with an alias-renamed value.
+    if (out[target] === undefined) out[target] = v;
+  }
+  return out;
 }
 
 export interface PassthroughDeps {
@@ -182,7 +446,7 @@ export async function handlePassthrough(
   payload?: Record<string, unknown>,
   navDest?: unknown,
   traceId?: string,
-  opts?: { skipLogging?: boolean },
+  opts?: { skipLogging?: boolean; v2ToolHint?: string },
 ): Promise<McpTextResult> {
 
   const {
@@ -319,7 +583,7 @@ export async function handlePassthrough(
         agent: agentName,
         docked_at_base: String(player.docked_at_base),
       });
-      await client.execute("undock");
+      await executeForClient(client, "undock");
       await client.waitForTick();
     }
   }
@@ -372,17 +636,37 @@ export async function handlePassthrough(
     }
   }
 
-  // --- 1d. Auto-fill weapon_instance_id for reload ---
-  if (v1ToolName === "reload" && payload && !payload.weapon_instance_id) {
+  // --- 1d. Auto-fill weapon id for reload ---
+  // v1: ship.weapons[].instance_id → payload.weapon_instance_id
+  // v2: ship.modules[] (from HttpGameClientV2 status parser) where slot
+  //     contains "weapon" → payload.id (the v2 generic param name)
+  if (v1ToolName === "reload" && payload) {
+    const isV2Client = typeof client.isV2 === "function" && client.isV2();
     const cached = statusCache.get(agentName);
     const ship = cached?.data?.ship as Record<string, unknown> | undefined;
-    const weapons = ship?.weapons as Array<Record<string, unknown>> | undefined;
-    if (weapons && weapons.length > 0) {
-      const firstWeapon = weapons[0];
-      const weaponId = firstWeapon.instance_id ?? firstWeapon.id;
-      if (weaponId) {
-        payload.weapon_instance_id = weaponId;
-        log.debug("auto-filled weapon_instance_id for reload", { agent: agentName, weaponId: String(weaponId) });
+
+    if (isV2Client && !payload.id) {
+      const modules = ship?.modules as Array<Record<string, unknown>> | undefined;
+      if (modules && modules.length > 0) {
+        const weaponMod = modules.find((m) => {
+          const slot = String(m.slot ?? "").toLowerCase();
+          return slot.includes("weapon");
+        });
+        const weaponId = weaponMod?.id;
+        if (weaponId) {
+          payload.id = weaponId;
+          log.debug("auto-filled weapon id for reload (v2)", { agent: agentName, weaponId: String(weaponId) });
+        }
+      }
+    } else if (!isV2Client && !payload.weapon_instance_id) {
+      const weapons = ship?.weapons as Array<Record<string, unknown>> | undefined;
+      if (weapons && weapons.length > 0) {
+        const firstWeapon = weapons[0];
+        const weaponId = firstWeapon.instance_id ?? firstWeapon.id;
+        if (weaponId) {
+          payload.weapon_instance_id = weaponId;
+          log.debug("auto-filled weapon_instance_id for reload", { agent: agentName, weaponId: String(weaponId) });
+        }
       }
     }
   }
@@ -491,7 +775,7 @@ export async function handlePassthrough(
     : logToolCallComplete;
   const toolStartMs = Date.now();
   try {
-  const resp = await client.execute(v1ToolName, payload);
+  const resp = await executeForClient(client, v1ToolName, payload, opts?.v2ToolHint);
 
   // --- Record game API call in rate limit tracker ---
   if (deps.rateLimitTracker) {
@@ -830,7 +1114,7 @@ export async function handlePassthrough(
           const installedId = (payload?.item_id ?? payload?.module_id ?? payload?.id) as string | undefined;
           log.info("[proxy] install_mod", { agent: agentName, module_id: installedId });
           try {
-            const shipResp = await client.execute("get_ship", {});
+            const shipResp = await executeForClient(client, "get_ship", {});
             if (shipResp?.result) {
               const modules = (shipResp.result as any)?.modules as Array<Record<string, unknown>> | undefined;
               if (modules && Array.isArray(modules)) {
@@ -882,7 +1166,7 @@ export async function handlePassthrough(
             cache_age_ms: cachedAfterDock ? Date.now() - cachedAfterDock.fetchedAt : -1,
           });
           // Retry dock once
-          const retryResp = await client.execute("dock", undefined);
+          const retryResp = await executeForClient(client, "dock", undefined);
           if (!retryResp.error) {
             await waitForDockCacheUpdate(client, agentName);
           }
@@ -902,14 +1186,14 @@ export async function handlePassthrough(
               elapsed, { success: false, errorCode: "dock_verification_failed" });
             const poiIdFail = String(playerRetry?.current_poi ?? "");
             if (poiIdFail) {
-              markDockable(poiIdFail, false, {
+              recordDockFailure(poiIdFail, {
                 name: poiIdFail,
                 system: String(playerRetry?.current_system ?? ""),
               });
             }
             const poiName = String(playerRetry?.current_poi ?? "unknown");
             const isLikelyNonDockable = isDockable(poiName) === false ||
-              /belt|sun|cloud|field|asteroid|vents|nebula|secundus|tollkeeper|shelf|reef|cluster|ring|deposit|harvesters|mineral|gas_pocket|_star$|^saturn$|_drift|comet|remnant|red_maw|_i+$|_world$|sentinel|citadel|cryobelt/.test(poiName);
+              /belt|sun|cloud|field|asteroid|vents|nebula|secundus|tollkeeper|shelf|reef|cluster|ring|deposit|harvesters|mineral|gas_pocket|_star$|^saturn$|_drift|comet|remnant|red_maw|_i+$|_world$|sentinel|cryobelt/.test(poiName);
             const systemName = playerRetry?.current_system ? String(playerRetry.current_system) : undefined;
             const systemClause = systemName
               ? `Use get_system for "${systemName}" to find dockable stations, then travel_to that station.`
@@ -930,7 +1214,7 @@ export async function handlePassthrough(
       // Game bug: commission_ship charges credits but returns status=completed, then commission_status returns none.
       // Auto-verify commission_status and error if mismatch (prevents silent credit loss).
       if (v1ToolName === "commission_ship") {
-        const commissionResp = await client.execute("commission_status", {});
+        const commissionResp = await executeForClient(client, "commission_status", {});
         if (!commissionResp.error && typeof commissionResp.result === "object" && commissionResp.result !== null) {
           const commissionResult = commissionResp.result as Record<string, unknown>;
           if (commissionResult.status === "none") {

@@ -157,6 +157,24 @@ describe("sanitizeToolName — XML/HTML artifact stripping", () => {
     expect(name).toBe("spacemolt");
     expect(sanitized).toBe(true);
   });
+
+  it("collapses doubled mcp__gantry__ prefix", () => {
+    const { name, sanitized } = sanitizeToolName("mcp__gantry__mcp__gantry__logout");
+    expect(name).toBe("mcp__gantry__logout");
+    expect(sanitized).toBe(true);
+  });
+
+  it("collapses tripled mcp__gantry__ prefix", () => {
+    const { name, sanitized } = sanitizeToolName("mcp__gantry__mcp__gantry__mcp__gantry__login");
+    expect(name).toBe("mcp__gantry__login");
+    expect(sanitized).toBe(true);
+  });
+
+  it("collapses doubled prefix combined with trailing artifact", () => {
+    const { name, sanitized } = sanitizeToolName('mcp__gantry__mcp__gantry__mine" />');
+    expect(name).toBe("mcp__gantry__mine");
+    expect(sanitized).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

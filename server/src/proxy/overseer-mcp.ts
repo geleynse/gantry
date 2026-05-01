@@ -18,7 +18,7 @@ import { getProcessUptimeMs } from "../services/process-manager.js";
 
 const STOP_AGENT_MIN_UPTIME_MS = 30 * 60 * 1000;
 const TRANSIT_REASON_RE = /transit|stuck|idle|hyperspace|jumping/i;
-const FAULT_REASON_RE = /broken|crash|error|exception|loop|hang/i;
+const FAULT_REASON_RE = /broken|crash|error|exception|hang/i;
 
 /**
  * Decide whether the overseer's stop_agent call should be rejected as a

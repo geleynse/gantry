@@ -117,7 +117,9 @@ async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<
   let didRefuel = false;
   if (params.refuel) {
     const fuelCurrent = typeof ship?.fuel === "number" ? ship.fuel : undefined;
-    const fuelMax = typeof ship?.fuel_max === "number" ? ship.fuel_max : undefined;
+    const fuelMax = typeof ship?.max_fuel === "number" ? ship.max_fuel
+                  : typeof ship?.fuel_max === "number" ? ship.fuel_max
+                  : undefined;
     const fuelPct = (fuelCurrent !== undefined && fuelMax !== undefined && fuelMax > 0)
       ? (fuelCurrent / fuelMax) * 100 : null;
     if (fuelPct !== null && fuelPct < 80) {
@@ -138,7 +140,9 @@ async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<
   let didRepair = false;
   if (params.repair) {
     const hullCurrent = typeof ship?.hull === "number" ? ship.hull : undefined;
-    const hullMax = typeof ship?.hull_max === "number" ? ship.hull_max : undefined;
+    const hullMax = typeof ship?.max_hull === "number" ? ship.max_hull
+                  : typeof ship?.hull_max === "number" ? ship.hull_max
+                  : undefined;
     const hullPct = (hullCurrent !== undefined && hullMax !== undefined && hullMax > 0)
       ? (hullCurrent / hullMax) * 100 : null;
 

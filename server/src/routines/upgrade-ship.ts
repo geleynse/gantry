@@ -264,7 +264,9 @@ async function run(ctx: RoutineContext, rawParams: UpgradeShipParams): Promise<R
       ? (shipsResult!.listings as Array<Record<string, unknown>>)
       : (Array.isArray(shipsResult) ? (shipsResult as unknown as Array<Record<string, unknown>>) : []);
 
-  const currentHull = typeof ship?.hull_max === "number" ? ship.hull_max : 0;
+  const currentHull = typeof ship?.max_hull === "number" ? ship.max_hull
+                    : typeof ship?.hull_max === "number" ? ship.hull_max
+                    : 0;
   const currentSlots = typeof ship?.module_slots === "number" ? ship.module_slots : currentModules.length;
 
   for (const candidate of availableShips) {

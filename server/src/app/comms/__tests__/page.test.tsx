@@ -146,4 +146,62 @@ describe("buildTimelineRows — ORDER/DELIVERY grouping", () => {
     const rows = buildTimelineRows(entries);
     expect(rows.length).toBe(1);
   });
+
+  test("delivery-then-order order in feed (newest-first stream) still groups", () => {
+    // Comms feed arrives newest-first; the delivery row is fetched before
+    // the order it belongs to. The grouping pass must still find the order
+    // when it walks past the delivery first.
+    const entries: CommsLogEntry[] = [
+      makeEntry({
+        id: 2,
+        type: "delivery",
+        metadata_json: JSON.stringify({ order_id: 11 }),
+        created_at: "2026-04-24T00:01:00Z",
+      }),
+      makeEntry({
+        id: 1,
+        type: "order",
+        metadata_json: JSON.stringify({ order_id: 11 }),
+        created_at: "2026-04-24T00:00:30Z",
+      }),
+    ];
+
+    const rows = buildTimelineRows(entries);
+    expect(rows.length).toBe(1);
+    expect(rows[0].kind).toBe("order_group");
+  });
+
+  test("server-side duplicate delivery rows for the same order render once each", () => {
+    // If the comms_log table ever ends up with two delivery rows for the
+    // same agent on the same order (the historical bug that produced the
+    // perception of "duplicates"), they group under the order rather than
+    // floating separately. The deliveries list keeps both ids — the UI
+    // dedup is done by visual grouping, not by silently dropping rows.
+    const entries: CommsLogEntry[] = [
+      makeEntry({
+        id: 1,
+        type: "order",
+        metadata_json: JSON.stringify({ order_id: 99 }),
+      }),
+      makeEntry({
+        id: 2,
+        type: "delivery",
+        agent: "drifter-gale",
+        metadata_json: JSON.stringify({ order_id: 99 }),
+        created_at: "2026-04-24T00:00:30Z",
+      }),
+      makeEntry({
+        id: 3,
+        type: "delivery",
+        agent: "drifter-gale",
+        metadata_json: JSON.stringify({ order_id: 99 }),
+        created_at: "2026-04-24T00:00:31Z",
+      }),
+    ];
+
+    const rows = buildTimelineRows(entries);
+    expect(rows.length).toBe(1);
+    if (rows[0].kind !== "order_group") throw new Error("expected order_group");
+    expect(rows[0].deliveries.length).toBe(2);
+  });
 });

@@ -19,7 +19,6 @@ const log = createLogger("gantry-v2");
 import * as z from "zod";
 import { getConfig, type GantryConfig } from "../config.js";
 import {
-  V2_TO_V1_PARAM_MAP,
   serverSchemaToZod,
   type ServerTool,
 } from "./schema.js";
@@ -63,6 +62,32 @@ import { queryRecentSnapshot, listSnapshotDates, getSnapshotCoverage } from "../
 import { findCraftChains } from "../services/crafting-profit.js";
 
 // ---------------------------------------------------------------------------
+// Prayer wall-clock budget
+// ---------------------------------------------------------------------------
+
+/**
+ * Wall-clock budget for a single PrayerLang script execution.
+ *
+ * Defaults to 15 minutes. Cross-system prayer scripts wait on tick resolution
+ * for every jump (~30s/tick × multiple ticks) and may layer in dock/sell/refuel
+ * legs; previous 10-minute budget caused single-jump prayers to time out
+ * intermittently when the game server was slow to confirm arrival.
+ *
+ * Configurable via the PRAYER_WALL_CLOCK_MS env var (milliseconds).
+ * Minimum 60s, maximum 30 min — values outside that range are clamped.
+ */
+export function prayerWallClockBudgetMs(): number {
+  const raw = process.env.PRAYER_WALL_CLOCK_MS;
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.min(30 * 60 * 1000, Math.max(60_000, parsed));
+    }
+  }
+  return 15 * 60 * 1000;
+}
+
+// ---------------------------------------------------------------------------
 // Rate limit tracking helper
 // ---------------------------------------------------------------------------
 
@@ -87,6 +112,10 @@ function makeTrackedClient(
     waitForTick: (ms) => client.waitForTick(ms),
     get lastArrivalTick() { return client.lastArrivalTick; },
     waitForNextArrival: client.waitForNextArrival?.bind(client),
+    waitForTickToReach: client.waitForTickToReach?.bind(client),
+    // Forward isV2 so compound tools running through the tracked client still
+    // see the right transport version.
+    isV2: client.isV2?.bind(client),
   };
 }
 
@@ -103,69 +132,55 @@ export interface V2SharedState extends SharedState {
   v2ToolSchemas: Map<string, ServerTool>;
 }
 
-// ---------------------------------------------------------------------------
-// V2 action → v1 tool name mappings
-// ---------------------------------------------------------------------------
-
-export const V2_ACTION_TO_V1_NAME: Record<string, Record<string, string>> = {
-  spacemolt_storage: {
-    view: "view_storage",
-    deposit: "deposit_items",
-    withdraw: "withdraw_items",
-  },
-  spacemolt: {
-    // get_status is intercepted by cached queries before reaching the guardrail
-    get_player: "get_status", // common hallucination alias
-    sell: "sell",
-    buy: "buy",
-    mine: "mine",
-    refuel: "refuel",
-    repair: "repair",
-    dock: "dock",
-    undock: "undock",
-  },
-  spacemolt_salvage: {
-    wrecks: "get_wrecks",
-    loot: "loot_wreck",
-    salvage: "salvage_wreck",
-    scrap: "scrap_wreck",
-    tow: "tow_wreck",
-    release: "release_tow",
-    sell: "sell_wreck",
-    quote: "get_insurance_quote",
-    insure: "buy_insurance",
-    policies: "claim_insurance",
-    set_home: "set_home_base",
-    status: "commission_status",
-  },
-  spacemolt_battle: {
-    engage: "attack",
-    status: "get_battle_status",
-    reload: "reload",
-    // advance, retreat, stance, target → v1 "battle" tool (handled below)
-  },
-  spacemolt_insurance: {
-    quote: "get_insurance_quote",
-    buy: "buy_insurance",
-    claim: "claim_insurance",
-  },
-  spacemolt_facility: {
-    faction_list: "faction_list",
-    faction_build: "faction_build",
-    faction_upgrade: "faction_upgrade",
-    personal_build: "personal_build",
-    types: "types",
-    upgrades: "upgrades",
-  },
-};
-
-// Actions that map to v1 "battle" tool with action kept as a param
-const BATTLE_SUB_ACTIONS = new Set(["advance", "retreat", "stance", "target", "help"]);
-
-// Generic v2 param names that may need remapping to v1 equivalents
-const GENERIC_PARAMS = ["id", "text", "target", "content", "index"] as const;
+/**
+ * Standalone proxy-side tools registered on the gantry MCP server (NOT on the
+ * game server). Agents sometimes wrap these as `spacemolt(action="X")` which
+ * dispatches to the game server and returns -32602. We catch the known ones
+ * upfront with a clear "call it directly" error.
+ */
+const STANDALONE_PROXY_TOOLS = new Set([
+  "debug_log",
+  "create_alert",
+  "write_report",
+  "write_diary",
+  "read_diary",
+  "write_doc",
+  "read_doc",
+  "search_memory",
+  "rate_memory",
+  "query_known_resources",
+  "query_catalog",
+]);
 
 export function withPrayerScriptSchema(toolName: string, serverTool?: ServerTool): ServerTool | undefined {
+  // Catalog: extend `type` enum with proxy-injected types (craft_chains, etc.) so
+  // agents calling `spacemolt_catalog(type="craft_chains")` clear schema validation.
+  // The actual handlers live in the v2 dispatcher (`spacemolt_catalog && action === "craft_chains"`).
+  if (toolName === "spacemolt_catalog") {
+    if (!serverTool) return serverTool;
+    const inputSchema = serverTool.inputSchema ?? { type: "object", properties: {}, required: [] };
+    const properties = { ...(inputSchema.properties ?? {}) };
+    const required = [...(inputSchema.required ?? [])];
+    const typeProp = properties.type as { enum?: string[]; type?: string; description?: string } | undefined;
+    if (typeProp?.enum) {
+      const proxyTypes = ["craft_chains"];
+      const missing = proxyTypes.filter(name => !typeProp.enum!.includes(name));
+      if (missing.length > 0) {
+        properties.type = { ...typeProp, enum: [...typeProp.enum, ...missing] };
+      }
+    }
+    return {
+      name: serverTool.name,
+      description: serverTool.description,
+      inputSchema: {
+        ...inputSchema,
+        type: inputSchema.type ?? "object",
+        properties,
+        required,
+      },
+    };
+  }
+
   if (toolName !== "spacemolt") return serverTool;
 
   const inputSchema = serverTool?.inputSchema ?? { type: "object", properties: {}, required: [] };
@@ -208,87 +223,6 @@ export function withPrayerScriptSchema(toolName: string, serverTool?: ServerTool
       required,
     },
   };
-}
-
-// ---------------------------------------------------------------------------
-// mapV2ToV1 — translate v2 tool+action to v1 tool name and args
-// ---------------------------------------------------------------------------
-
-export function mapV2ToV1(
-  toolName: string,
-  action: string,
-  args: Record<string, unknown>,
-  serverTool?: ServerTool,
-): { v1ToolName: string; v1Args: Record<string, unknown> } {
-  // Determine v1 tool name
-  let v1ToolName: string;
-  if (toolName === "spacemolt_catalog") {
-    v1ToolName = "catalog";
-  } else if (toolName === "spacemolt_battle" && BATTLE_SUB_ACTIONS.has(action)) {
-    v1ToolName = "battle";
-  } else if (V2_ACTION_TO_V1_NAME[toolName]?.[action]) {
-    v1ToolName = V2_ACTION_TO_V1_NAME[toolName][action];
-  } else {
-    v1ToolName = action;
-  }
-
-  // Build v1 args — copy all except the dispatch key
-  const v1Args: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(args)) {
-    if (key === "action") continue;
-    // For catalog, keep "type" as a v1 param (don't strip it)
-    if (toolName === "spacemolt_catalog" && key === "type") {
-      v1Args.type = value;
-      continue;
-    }
-    v1Args[key] = value;
-  }
-
-  // For battle sub-actions, pass the v2 action as the v1 "action" param
-  if (toolName === "spacemolt_battle" && BATTLE_SUB_ACTIONS.has(action)) {
-    v1Args.action = action;
-  }
-
-  // Storage tools are individual game commands (view_storage, deposit_items, withdraw_items)
-  // — no action param needed since the tool name itself encodes the action
-
-  // Apply v2→v1 parameter remapping
-  // 1. Check for manual remap overrides first
-  const manualRemap = V2_TO_V1_PARAM_MAP[action];
-  if (manualRemap) {
-    for (const [v2Param, v1Param] of Object.entries(manualRemap)) {
-      if (v2Param in v1Args) {
-        v1Args[v1Param] = v1Args[v2Param];
-        if (v1Param !== v2Param) delete v1Args[v2Param];
-      }
-    }
-  }
-
-  // 2. Automated discovery mapping:
-  // If the serverTool schema for this tool identifies which generic v2 param (id, text)
-  // maps to which v1 param, use it. This uses the metadata provided by the server
-  // when it generates the v2 consolidated tools.
-  if (serverTool?.inputSchema?.properties) {
-    const props = serverTool.inputSchema.properties;
-    
-    for (const generic of GENERIC_PARAMS) {
-      if (!(generic in v1Args)) continue;
-
-      // In the server's inputSchema for a v2 action, it often marks the original
-      // v1 parameter name in the description or as an extension field.
-      // The gameserver includes `x-spacemolt-v1-param` in the schema.
-      const propDef = props[generic] as Record<string, unknown>;
-      const v1ParamName = propDef?.["x-spacemolt-v1-param"] as string | undefined;
-      
-      if (v1ParamName && v1ParamName !== generic) {
-        log.info(`[discovery] Auto-mapped v2 param "${generic}" to v1 "${v1ParamName}" for action "${action}"`);
-        v1Args[v1ParamName] = v1Args[generic];
-        delete v1Args[generic];
-      }
-    }
-  }
-
-  return { v1ToolName, v1Args };
 }
 
 // ---------------------------------------------------------------------------
@@ -599,7 +533,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
           fuzzyMatchThreshold: liveConfig.prayer?.fuzzyMatchThreshold,
           maxSteps,
           maxLoopIters: 200,
-          maxWallClockMs: 10 * 60 * 1000,
+          maxWallClockMs: prayerWallClockBudgetMs(),
           initialState,
           onCheckpoint: (state) => saveCheckpoint(agentName, state),
           handlePassthrough: async (tool, passthroughArgs) => {
@@ -1004,6 +938,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
             },
             waitForTick: client.waitForTick.bind(client),
             lastArrivalTick: client.lastArrivalTick,
+            isV2: () => client.isV2(),
           };
 
           const routinePromise = dispatchRoutine(
@@ -1338,47 +1273,46 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
         }
       }
 
-      // --- Passthrough to game server via WebSocket (v2→v1 translation) ---
+      // --- Passthrough to game server ---
+      //
+      // For v2 clients we skip mapV2ToV1 entirely: handlePassthrough will pick
+      // up isV2 from the client and dispatch v2 tool/action pairs (with
+      // session_id auto-injected by the client). For v1 clients we still
+      // translate to flat v1 tool names + remapped args (the existing path).
 
       if (!action) {
         return textResult({ error: `Missing required parameter: ${toolName === "spacemolt_catalog" ? "type" : "action"}` });
       }
 
-      const { v1ToolName, v1Args } = mapV2ToV1(toolName, action, args, serverTool);
-
-      // Guard against unknown/hallucinated actions
-      // By this point all proxy-handled actions (compound, cached, doc, event, routine)
-      // have been checked. If v1ToolName isn't a known game tool, it's likely hallucinated.
-      const gameTools = shared.proxy.gameTools;
-      if (gameTools.length > 0 && !gameTools.includes(v1ToolName)) {
-        // Build a list of valid actions for this v2 tool from the schema enum
-        const actionProp = serverTool?.inputSchema?.properties?.action as { enum?: string[] } | undefined;
-        const validActions = actionProp?.enum ?? Object.keys(V2_ACTION_TO_V1_NAME[toolName] ?? {});
-        const suggestion = validActions.length > 0
-          ? ` Valid actions for ${toolName}: ${validActions.slice(0, 15).join(", ")}${validActions.length > 15 ? ` (+${validActions.length - 15} more)` : ""}.`
-          : "";
-        log.warn(`[${agentName}] BLOCKED unknown action "${action}" → v1 "${v1ToolName}" not in gameTools | trace: ${traceId}`);
-        // Include usage examples for common tools to help agents self-correct
-        let usageHint = "";
-        if (toolName === "spacemolt_storage") {
-          usageHint = ' Example: spacemolt_storage(action="deposit", item_id="iron_ore", quantity=10). Required params: item_id and quantity for deposit/withdraw.';
-        }
-        return textResult({ error: `Unknown action "${action}" for ${toolName} — no matching game command.${suggestion}${usageHint} Use spacemolt(action="help") for full list.` });
+      // Catch common agent mistake: wrapping a STANDALONE proxy tool name in
+      // spacemolt(action=...). These tools are registered at top-level on
+      // the gantry MCP server, not on the v2 game server, and dispatching
+      // them to the game returns -32602.
+      if (STANDALONE_PROXY_TOOLS.has(action)) {
+        return textResult({
+          error: `Unknown action "${action}" for ${toolName}.`,
+          message: `"${action}" is a STANDALONE proxy tool — call it directly as ${action}(...) without wrapping in spacemolt. It is not a game-server action.`,
+        });
       }
 
-      // Resolve POI name to ID for passthrough v2 travel calls
-      if (action === "travel" && v1Args.target_poi && typeof v1Args.target_poi === "string") {
-        const resolved = resolvePoiId(agentName, v1Args.target_poi, statusCache);
-        if (resolved !== v1Args.target_poi) {
-          log.info(`[${agentName}] v2 passthrough travel resolved POI: "${v1Args.target_poi}" → "${resolved}"`);
-          v1Args.target_poi = resolved;
+      // v2→v2: no name translation. handlePassthrough's branches key on
+      // `action` (jump/dock/travel/etc.), and executeForClient sends the v2
+      // tool namespace + action via the v2ToolHint passed below.
+
+      // Resolve POI name to ID for passthrough v2 travel calls.
+      const v2Args: Record<string, unknown> = { ...args };
+      if (action === "travel" && typeof v2Args.target_poi === "string") {
+        const resolved = resolvePoiId(agentName, v2Args.target_poi, statusCache);
+        if (resolved !== v2Args.target_poi) {
+          log.info(`[${agentName}] v2 passthrough travel resolved POI: "${v2Args.target_poi}" → "${resolved}"`);
+          v2Args.target_poi = resolved;
         }
       }
 
-      const payload = Object.keys(v1Args).length > 0 ? v1Args : undefined;
-      const navDest = payload?.target_system ?? payload?.target_poi;
+      const v2Payload = Object.keys(v2Args).length > 0 ? v2Args : undefined;
+      const v2NavDest = v2Payload?.target_system ?? v2Payload?.target_poi ?? v2Payload?.system ?? v2Payload?.destination;
 
-      return handlePassthrough(passthroughDeps, client, agentName, action, v1ToolName, payload, navDest, traceId);
+      return handlePassthrough(passthroughDeps, client, agentName, action, action, v2Payload, v2NavDest, traceId, { v2ToolHint: toolName });
     });
     registeredTools.push(toolName);
   }

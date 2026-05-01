@@ -10,6 +10,7 @@ import type { CompoundToolDeps, CompoundResult } from "./types.js";
 import { stripPendingFields, waitForNavCacheUpdate, normalizeSystemName } from "./utils.js";
 import { systemPoiCache, cacheSystemPois } from "../poi-resolver.js";
 import type { PoiEntry } from "../poi-resolver.js";
+import { jumpRoute } from "./jump-route.js";
 
 const log = createLogger("compound-tools");
 
@@ -17,6 +18,65 @@ const log = createLogger("compound-tools");
 function isInvalidPoiError(errMsg: string): boolean {
   const lower = errMsg.toLowerCase();
   return lower.includes("invalid_poi") || lower.includes("unknown destination") || lower.includes("invalid poi");
+}
+
+/**
+ * Attempt to resolve a destination string as a *system name* (cross-system route)
+ * rather than a local POI. PrayerLang's `go <name>` doc explicitly promises this:
+ * `go sirius` from Sol should route to Sirius, not fail because there's no local
+ * "sirius" POI in Sol.
+ *
+ * Returns:
+ *   - { kind: "noop" }       — destination is the current system, or graph unavailable
+ *   - { kind: "ambiguous" }  — multiple systems match the name, agent must be specific
+ *   - { kind: "no_match" }   — name doesn't resolve to any system
+ *   - { kind: "route", systemIds, finalSystemId } — routable, caller should jump there
+ */
+export type CrossSystemResolution =
+  | { kind: "noop" }
+  | { kind: "ambiguous"; matches: string[] }
+  | { kind: "no_match" }
+  | { kind: "route"; systemIds: string[]; finalSystemId: string };
+
+export function resolveCrossSystem(
+  destination: string,
+  galaxyGraph: CompoundToolDeps["galaxyGraph"],
+  currentSystem: string | undefined,
+): CrossSystemResolution {
+  if (!galaxyGraph || galaxyGraph.systemCount === 0) return { kind: "noop" };
+  if (!currentSystem) return { kind: "noop" };
+
+  // Direct exact-or-normalized match via galaxyGraph
+  const direct = galaxyGraph.resolveSystemId(destination);
+  if (direct) {
+    const fromId = galaxyGraph.resolveSystemId(currentSystem) ?? currentSystem;
+    if (direct === fromId) return { kind: "noop" }; // already there
+    const route = galaxyGraph.findRoute(fromId, direct);
+    if (!route) return { kind: "no_match" }; // not reachable
+    return { kind: "route", systemIds: route.route.slice(1), finalSystemId: direct };
+  }
+
+  // Substring match across all known systems (case/underscore-insensitive)
+  const needle = normalizeSystemName(destination);
+  const candidates: { id: string; normName: string; normId: string }[] = [];
+  for (const id of galaxyGraph.systemIds()) {
+    const name = galaxyGraph.getSystemName(id);
+    const normId = normalizeSystemName(id);
+    const normName = normalizeSystemName(name);
+    if (normId.includes(needle) || normName.includes(needle)) {
+      candidates.push({ id, normName, normId });
+    }
+  }
+  if (candidates.length === 0) return { kind: "no_match" };
+  if (candidates.length > 1) {
+    return { kind: "ambiguous", matches: candidates.map(c => c.id) };
+  }
+  const target = candidates[0].id;
+  const fromId = galaxyGraph.resolveSystemId(currentSystem) ?? currentSystem;
+  if (target === fromId) return { kind: "noop" };
+  const route = galaxyGraph.findRoute(fromId, target);
+  if (!route) return { kind: "no_match" };
+  return { kind: "route", systemIds: route.route.slice(1), finalSystemId: target };
 }
 
 /**
@@ -43,6 +103,7 @@ async function attemptFuzzyPoiRetry(
 ): Promise<{ result?: unknown; error?: unknown } | null> {
   const currentSystem = playerBefore?.current_system as string | undefined;
   if (!currentSystem) return null;
+  const isV2 = typeof client.isV2 === "function" && client.isV2();
 
   // Populate cache if needed
   if (!systemPoiCache.has(currentSystem)) {
@@ -52,7 +113,9 @@ async function attemptFuzzyPoiRetry(
       destination: requestedDest,
     });
     try {
-      const sysResp = await client.execute("get_system", {});
+      const sysResp = isV2
+        ? await client.execute("spacemolt", { action: "get_system" })
+        : await client.execute("get_system", {});
       if (sysResp.result) {
         cacheSystemPois(sysResp.result);
       }
@@ -76,7 +139,9 @@ async function attemptFuzzyPoiRetry(
       resolved: fullId,
       system: currentSystem,
     });
-    const retryResp = await client.execute("travel", { target_poi: fullId });
+    const retryResp = isV2
+      ? await client.execute("spacemolt", { action: "travel", target_poi: fullId })
+      : await client.execute("travel", { target_poi: fullId });
     steps.push({ action: "travel_fuzzy_retry", result: retryResp.result ?? retryResp.error });
     return retryResp;
   }
@@ -116,6 +181,7 @@ export async function travelTo(
   shouldDockOverride?: boolean,
 ): Promise<CompoundResult> {
   const { client, agentName, statusCache } = deps;
+  const isV2 = typeof client.isV2 === "function" && client.isV2();
   const steps: Array<{ action: string; result: unknown }> = [];
   const t0 = Date.now();
 
@@ -166,7 +232,9 @@ export async function travelTo(
         destination: finalDestination,
       });
       try {
-        const sysResp = await client.execute("get_system", {});
+        const sysResp = isV2
+          ? await client.execute("spacemolt", { action: "get_system" })
+          : await client.execute("get_system", {});
         if (sysResp.result) {
           cacheSystemPois(sysResp.result);
           resolvedDest = resolvePoiId(agentName, finalDestination, statusCache);
@@ -188,12 +256,112 @@ export async function travelTo(
     });
   }
 
+  // CROSS-SYSTEM RESOLUTION: if the destination still didn't resolve to a local
+  // POI and isn't a raw poi_* ID, check whether it names a *system* in the galaxy
+  // graph. PrayerLang's `go <name>` is documented as fuzzy across systems, so
+  // `go sirius` from Sol must route to Sirius — not fail with "Unknown destination".
+  if (
+    resolvedDest === finalDestination &&
+    !finalDestination.startsWith("poi_") &&
+    deps.galaxyGraph
+  ) {
+    const currentSystem = playerBefore?.current_system as string | undefined;
+    const xs = resolveCrossSystem(finalDestination, deps.galaxyGraph, currentSystem);
+    if (xs.kind === "ambiguous") {
+      const msg =
+        `Ambiguous destination "${finalDestination}" — matches multiple systems: ` +
+        `${xs.matches.slice(0, 5).join(", ")}${xs.matches.length > 5 ? ", …" : ""}. ` +
+        `Use a more specific system_id.`;
+      log.warn("travel_to cross-system: ambiguous", {
+        agent: agentName,
+        requested: finalDestination,
+        matches: xs.matches,
+      });
+      return {
+        status: "error",
+        error: "ambiguous_destination",
+        message: msg,
+        steps,
+      };
+    }
+    if (xs.kind === "route" && xs.systemIds.length > 0) {
+      log.info("travel_to cross-system: routing via jumpRoute", {
+        agent: agentName,
+        requested: finalDestination,
+        from: currentSystem,
+        to: xs.finalSystemId,
+        hops: xs.systemIds.length,
+      });
+      const jumpResult = await jumpRoute(deps, xs.systemIds);
+      steps.push({ action: "jump_route", result: jumpResult });
+      if (jumpResult.status !== "completed") {
+        return {
+          status: "error",
+          error: "cross_system_route_failed",
+          message:
+            `Cross-system route to "${finalDestination}" failed during jumps. ` +
+            `${(jumpResult as { message?: string }).message ?? "See jump_route step for detail."}`,
+          steps,
+        };
+      }
+      // Refresh local POI cache for the new system + retry POI resolution. The
+      // agent likely meant "go to a station in <system>" — once we're in-system
+      // the existing local resolver + station-prefer logic picks the right POI.
+      try {
+        const sysResp = isV2
+          ? await client.execute("spacemolt", { action: "get_system" })
+          : await client.execute("get_system", {});
+        if (sysResp.result) cacheSystemPois(sysResp.result);
+      } catch {
+        // best-effort
+      }
+      resolvedDest = resolvePoiId(agentName, finalDestination, statusCache);
+      if (resolvedDest === finalDestination) {
+        // No POI matched the destination name in the new system — fall back to
+        // the system's first station if any was cached.
+        const newSystemPois = systemPoiCache.get(xs.finalSystemId) ?? [];
+        const station = newSystemPois.find(
+          p => p.type === "station" || p.name.toLowerCase().includes("station"),
+        );
+        if (station) {
+          log.info("travel_to cross-system: defaulting to system station", {
+            agent: agentName,
+            destination: finalDestination,
+            station: station.id,
+          });
+          resolvedDest = station.id;
+        } else {
+          // Arrived in the system but no station to dock at — return "completed
+          // arrival" so the agent knows the jumps succeeded even if travel didn't.
+          const finalCache = statusCache.get(agentName);
+          const finalPlayer = finalCache
+            ? ((finalCache.data.player ?? finalCache.data) as Record<string, unknown>)
+            : null;
+          return {
+            status: "completed",
+            steps,
+            location_after: finalPlayer
+              ? {
+                  system: finalPlayer.current_system,
+                  poi: finalPlayer.current_poi,
+                  docked_at_base: finalPlayer.docked_at_base ?? null,
+                }
+              : null,
+            warning: `Arrived in ${xs.finalSystemId} via cross-system jump. No station POI matched "${finalDestination}" — call get_system + travel_to a specific POI.`,
+          };
+        }
+      }
+    }
+  }
+
   // Snapshot arrival tick before travel so waitForNavCacheUpdate can detect the signal
   const arrivalTickBeforeTravel = client.lastArrivalTick;
   const systemBefore = playerBefore?.current_system;
 
   // Travel to destination (server auto-undocks if needed)
-  let travelResp = await client.execute("travel", { target_poi: resolvedDest });
+  let travelResp = isV2
+    ? await client.execute("spacemolt", { action: "travel", target_poi: resolvedDest })
+    : await client.execute("travel", { target_poi: resolvedDest });
   steps.push({ action: "travel", result: travelResp.result ?? travelResp.error });
   const tTravel = Date.now();
   if (travelResp.error) {
@@ -320,7 +488,9 @@ export async function travelTo(
     // dock uses a 30s timeout — game server can be slow under load.
     let dockResp: Awaited<ReturnType<typeof client.execute>>;
     try {
-      dockResp = await client.execute("dock", undefined, { timeoutMs: 30_000, noRetry: true });
+      dockResp = isV2
+        ? await client.execute("spacemolt", { action: "dock" }, { timeoutMs: 30_000, noRetry: true })
+        : await client.execute("dock", undefined, { timeoutMs: 30_000, noRetry: true });
     } catch (err) {
       log.warn("dock timed out", { agent: agentName, destination, elapsed_ms: Date.now() - tDockStart });
       dockResp = { error: `dock timed out after 30s — game server may be slow. Try again.` };
@@ -365,7 +535,9 @@ export async function travelTo(
     });
     let retryDock: Awaited<ReturnType<typeof client.execute>>;
     try {
-      retryDock = await client.execute("dock", undefined, { timeoutMs: 30_000, noRetry: true });
+      retryDock = isV2
+        ? await client.execute("spacemolt", { action: "dock" }, { timeoutMs: 30_000, noRetry: true })
+        : await client.execute("dock", undefined, { timeoutMs: 30_000, noRetry: true });
     } catch {
       retryDock = { error: "dock retry timed out" };
     }

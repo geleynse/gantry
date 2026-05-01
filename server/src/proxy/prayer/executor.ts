@@ -1,6 +1,7 @@
 import { evalPredicate, resolveArg } from "./predicates.js";
 import { diffSnapshots, snapshotDiff } from "./result.js";
 import { cargoByItem } from "./state.js";
+import { createLogger } from "../../lib/logger.js";
 import {
   PrayerRuntimeError,
   type AnalyzedCommand,
@@ -10,6 +11,8 @@ import {
   type ExecutorDeps,
   type PrayResult,
 } from "./types.js";
+
+const log = createLogger("prayer-executor");
 
 const INTERRUPT_EVENTS = [
   "pirate_warning",
@@ -176,6 +179,18 @@ function checkLimits(state: ExecState, deps: ExecutorDeps): void {
     throw new PrayerRuntimeError("step_limit_reached", "Prayer script reached max_steps");
   }
   if (Date.now() - state.startedAt > deps.maxWallClockMs) {
+    log.warn("prayer wall-clock exceeded", {
+      agent: deps.agentName,
+      budget_ms: deps.maxWallClockMs,
+      elapsed_ms: Date.now() - state.startedAt,
+      steps_executed: state.stepsExecuted,
+      transient_retries: state.transientRetriesUsed,
+      last_subtools: state.log.slice(-5).map(e => ({
+        tool: e.tool,
+        ok: e.ok,
+        duration_ms: e.durationMs,
+      })),
+    });
     throw new PrayerRuntimeError("wall_clock_exceeded", "Prayer script exceeded wall-clock limit");
   }
 }

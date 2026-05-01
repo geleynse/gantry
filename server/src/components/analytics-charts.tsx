@@ -21,7 +21,10 @@ import {
   formatCreditsCompact,
   formatCreditsDeltaCompact,
   formatCredits as formatCreditsFull,
+  formatCurrency,
+  formatDuration,
   formatNumber,
+  formatTokens,
 } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
@@ -73,31 +76,16 @@ interface AgentComparisonEntry {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatCost(n: number): string {
-  if (n >= 10) return `$${n.toFixed(2)}`;
-  if (n >= 1) return `$${n.toFixed(3)}`;
-  return `$${n.toFixed(4)}`;
-}
+// Cost cells use the canonical formatter from lib/format. Same call site,
+// fewer near-duplicate ladders sprinkled around the dashboard.
+const formatCost = formatCurrency;
 
 /**
- * Y-axis tick formatter — compact form with `$` prefix and 2-sig-fig
- * decimals so adjacent ticks read consistently. Replaces the previous
- * `.toFixed(N)` ladder which produced uneven precision across the axis.
+ * Y-axis tick formatter — uses the canonical currency helper which already
+ * floors at "<$0.01" and switches to compact form above $1k. Avoids the
+ * dreaded "$0.000043" axis ticks the old `.toFixed(4)` ladder produced.
  */
-function formatCostAxis(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  const abs = Math.abs(n);
-  const sign = n < 0 ? "-" : "";
-  if (abs === 0) return "$0.00";
-  if (abs >= 1_000) return `${sign}$${formatCompactNumber(abs)}`;
-  // Two decimal places at the dollar level — "$2.60", "$0.65", "$0.05".
-  return `${sign}$${abs.toFixed(2)}`;
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
+const formatCostAxis = formatCurrency;
 
 // Local compact-credits shim — keeps existing call sites working while
 // pointing at the canonical helper. Drop "M" / "k" / raw is now handled
@@ -127,7 +115,7 @@ function CostTooltip({ active, payload }: CostTooltipProps) {
       </div>
       {payload.map((entry, i) => (
         <div key={i} style={{ color: entry.color }}>
-          {entry.name}: ${entry.value.toFixed(4)}
+          {entry.name}: {formatCurrency(entry.value)}
         </div>
       ))}
     </div>
@@ -411,8 +399,28 @@ export function ToolUsageChart({ hours }: ToolUsageChartProps) {
           return;
         }
 
+        // Collapse historical doubled-prefix tool names ("mcp__gantry__mcp__gantry__logout")
+        // into a single entry. The proxy now sanitizes at write-time, but old
+        // analytics data still contains the duplicated form.
+        const collapsed = new Map<string, ToolFrequencyEntry>();
+        for (const entry of raw) {
+          const cleanName = entry.toolName.replace(/^(mcp__gantry__)+/, "mcp__gantry__");
+          const existing = collapsed.get(cleanName);
+          if (existing) {
+            existing.count += entry.count;
+            // Weighted average for success rate
+            const total = existing.count + entry.count;
+            existing.avgSuccess = total > 0
+              ? (existing.avgSuccess * existing.count + entry.avgSuccess * entry.count) / total
+              : 0;
+          } else {
+            collapsed.set(cleanName, { ...entry, toolName: cleanName });
+          }
+        }
+        const merged = [...collapsed.values()].sort((a, b) => b.count - a.count);
+
         // Take top 20 tools, sorted by count
-        const top20 = raw.slice(0, 20);
+        const top20 = merged.slice(0, 20);
         setData(
           top20.map((entry) => ({
             name: entry.toolName,
@@ -634,11 +642,9 @@ interface ExpensiveTurnsTableProps {
   limit?: number;
 }
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
-  return String(n);
-}
+// `formatTokens` is provided by lib/format. The shared helper renders
+// "12.3k" (one decimal); the previous local copy rendered "12k" — close
+// enough that the migration is invisible at the table-cell level.
 
 function cacheHitBadgeClass(rate: number): string {
   if (rate >= 0.6) return "text-success";

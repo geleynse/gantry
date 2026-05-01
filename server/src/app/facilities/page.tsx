@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Factory, RefreshCw, ChevronDown, AlertCircle, Radar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch, isApiError } from "@/lib/api";
@@ -164,7 +164,9 @@ function FacilityRow({ facility }: { facility: FacilityRecord }) {
 
 // ---------------------------------------------------------------------------
 // Request scan button — POSTs to /api/facilities-scan, which queues a
-// `list_facilities` directive into the fleet_orders queue.
+// spacemolt_facility directive into the fleet_orders queue. Passes the
+// currently-active tab so the order targets only the actions that populate
+// that view (or all four when tab is omitted).
 // ---------------------------------------------------------------------------
 
 type ScanState =
@@ -173,30 +175,46 @@ type ScanState =
   | { status: "ok"; message: string }
   | { status: "error"; message: string };
 
-function RequestScanButton({ agent }: { agent: string }) {
+interface RequestScanButtonProps {
+  agent: string;
+  tab?: TabId;
+  /** Fired once the scan order is queued. Used to schedule a follow-up
+   *  fetchFacilities() so the dashboard reflects the new cache without the
+   *  operator having to mash Refresh. */
+  onSuccess?: () => void;
+}
+
+function RequestScanButton({ agent, tab, onSuccess }: RequestScanButtonProps) {
   const [state, setState] = useState<ScanState>({ status: "idle" });
 
   const handleClick = useCallback(async () => {
     if (state.status === "pending") return;
     setState({ status: "pending" });
     try {
-      const res = await apiFetch<{ ok: boolean; orderId: number; target: string | null }>(
+      const res = await apiFetch<{
+        ok: boolean;
+        orderId: number;
+        target: string | null;
+        tab: string | null;
+        actions: string[];
+      }>(
         "/facilities-scan",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ agent }),
+          body: JSON.stringify({ agent, tab }),
         }
       );
       setState({
         status: "ok",
         message: `Scan order #${res.orderId} queued for ${res.target ?? "fleet"}.`,
       });
+      onSuccess?.();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setState({ status: "error", message: msg });
     }
-  }, [agent, state.status]);
+  }, [agent, tab, state.status, onSuccess]);
 
   const disabled = state.status === "pending" || !agent;
 
@@ -228,6 +246,12 @@ function RequestScanButton({ agent }: { agent: string }) {
 // Main page
 // ---------------------------------------------------------------------------
 
+/** Delay between a successful scan order and the auto-refresh. Long enough
+ *  for the targeted agent to pick the order up on its next turn (turns are
+ *  ~90s, but the order is high-priority and the fleet often has ticks within
+ *  10-20s) and short enough that the operator hasn't moved on. */
+const POST_SCAN_REFRESH_MS = 30_000;
+
 export default function FacilitiesPage() {
   const agentNames = useAgentNames();
   const [selectedAgent, setSelectedAgent] = useState<string>("");
@@ -235,6 +259,17 @@ export default function FacilitiesPage() {
   const [data, setData] = useState<FacilitiesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ErrorState | null>(null);
+
+  // Single cancellable timeout for post-scan auto-refresh. Held in a ref so
+  // we can cancel from any callback without re-rendering.
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelPendingRefresh = useCallback(() => {
+    if (refreshTimerRef.current !== null) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+  }, []);
 
   // Default to first agent once names load
   useEffect(() => {
@@ -249,7 +284,7 @@ export default function FacilitiesPage() {
     setError(null);
     try {
       const params = new URLSearchParams({ agent: selectedAgent, tab: activeTab });
-      const res = await apiFetch<FacilitiesResponse>(`/api/facilities?${params}`);
+      const res = await apiFetch<FacilitiesResponse>(`/facilities?${params}`);
       setData(res);
     } catch (err) {
       setError(classifyError(err, selectedAgent));
@@ -261,6 +296,20 @@ export default function FacilitiesPage() {
   useEffect(() => {
     fetchFacilities();
   }, [fetchFacilities]);
+
+  // Cancel any pending auto-refresh on unmount.
+  useEffect(() => cancelPendingRefresh, [cancelPendingRefresh]);
+
+  /** Schedule (or reschedule) a single post-scan refresh. Any prior pending
+   *  refresh is cancelled, so a second click within the window collapses to
+   *  one fetch instead of two. */
+  const scheduleAutoRefresh = useCallback(() => {
+    cancelPendingRefresh();
+    refreshTimerRef.current = setTimeout(() => {
+      refreshTimerRef.current = null;
+      fetchFacilities();
+    }, POST_SCAN_REFRESH_MS);
+  }, [cancelPendingRefresh, fetchFacilities]);
 
   const facilities = data?.facilities ?? [];
 
@@ -339,7 +388,11 @@ export default function FacilitiesPage() {
               <p className="text-sm text-destructive font-medium">{error.message}</p>
               {error.kind === "not_found" && selectedAgent && (
                 <div className="mt-3">
-                  <RequestScanButton agent={selectedAgent} />
+                  <RequestScanButton
+                    agent={selectedAgent}
+                    tab={activeTab}
+                    onSuccess={scheduleAutoRefresh}
+                  />
                 </div>
               )}
             </div>
@@ -368,7 +421,13 @@ export default function FacilitiesPage() {
               ? "No buildable facility types in cache."
               : "No faction facilities recorded."}
           </div>
-          {selectedAgent && <RequestScanButton agent={selectedAgent} />}
+          {selectedAgent && (
+            <RequestScanButton
+              agent={selectedAgent}
+              tab={activeTab}
+              onSuccess={scheduleAutoRefresh}
+            />
+          )}
         </div>
       )}
 

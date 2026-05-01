@@ -21,9 +21,12 @@ export async function lootWrecks(
 ): Promise<CompoundResult> {
   const { client, agentName } = deps;
   const maxWrecks = Math.min(count, 10);
+  const isV2 = typeof client.isV2 === "function" && client.isV2();
 
   // Step 1: get_wrecks
-  const wrecksResp = await client.execute("get_wrecks");
+  const wrecksResp = isV2
+    ? await client.execute("spacemolt_salvage", { action: "wrecks" })
+    : await client.execute("get_wrecks");
   if (wrecksResp.error) return { error: wrecksResp.error };
 
   const wrecks = extractWrecks(wrecksResp.result);
@@ -50,9 +53,9 @@ export async function lootWrecks(
     const wreckId = String(wreck.id ?? wreck.wreck_id ?? "");
     if (!wreckId) continue;
 
-    const salvageResp = await client.execute("salvage_wreck", {
-      wreck_id: wreckId,
-    });
+    const salvageResp = isV2
+      ? await client.execute("spacemolt_salvage", { action: "salvage", id: wreckId })
+      : await client.execute("salvage_wreck", { wreck_id: wreckId });
     if (salvageResp.error) {
       results.push({ wreck_id: wreckId, status: "failed", error: salvageResp.error });
     } else {
@@ -69,7 +72,9 @@ export async function lootWrecks(
   }
 
   // Step 3: final cargo check
-  const finalCargo = await client.execute("get_cargo");
+  const finalCargo = isV2
+    ? await client.execute("spacemolt", { action: "get_cargo" })
+    : await client.execute("get_cargo");
 
   return {
     status: "completed",

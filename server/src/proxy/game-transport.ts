@@ -64,6 +64,17 @@ export interface GameTransport {
 
   // Health
   getConnectionHealth(): ConnectionHealthMetrics;
+
+  /**
+   * Returns true if this client speaks the v2 game protocol (HttpGameClientV2).
+   * Used by passthrough/compound-tool code paths that need to dispatch v2 tool
+   * names + actions instead of the v1 flat tool names.
+   *
+   * Implemented as a method (not `instanceof`) per the migration plan §"What
+   * could go wrong" #4 — `instanceof` can fail across module boundaries after
+   * transpilation. Both clients ship a stable runtime check.
+   */
+  isV2(): boolean;
 }
 
 // Shared constants used by both WS and HTTP implementations

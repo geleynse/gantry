@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createDatabase, closeDb } from "./database.js";
-import { registerPoi, getPoi, getPoisBySystem, markDockable, isDockable, getAllPois } from "./galaxy-poi-registry.js";
+import { registerPoi, getPoi, getPoisBySystem, markDockable, isDockable, getAllPois, recordDockFailure, _resetDockFailures } from "./galaxy-poi-registry.js";
 
 describe("galaxy-poi-registry", () => {
-  beforeEach(() => { createDatabase(":memory:"); });
+  beforeEach(() => { createDatabase(":memory:"); _resetDockFailures(); });
   afterEach(() => { closeDb(); });
 
   it("registerPoi stores and getPoi retrieves", () => {
@@ -53,6 +53,34 @@ describe("galaxy-poi-registry", () => {
   it("markDockable does nothing without fallback for unregistered POI", () => {
     markDockable("ghost_poi", false);
     expect(isDockable("ghost_poi")).toBeNull();
+  });
+
+  it("recordDockFailure does not persist on first or second failure", () => {
+    registerPoi({ id: "war_citadel", name: "War Citadel", system: "sol", type: "station" });
+    expect(recordDockFailure("war_citadel", { name: "War Citadel", system: "sol" })).toBe(1);
+    expect(isDockable("war_citadel")).toBeNull();
+    expect(recordDockFailure("war_citadel", { name: "War Citadel", system: "sol" })).toBe(2);
+    expect(isDockable("war_citadel")).toBeNull();
+  });
+
+  it("recordDockFailure persists dockable=false on third consecutive failure", () => {
+    registerPoi({ id: "war_citadel", name: "War Citadel", system: "sol", type: "station" });
+    recordDockFailure("war_citadel", { name: "War Citadel", system: "sol" });
+    recordDockFailure("war_citadel", { name: "War Citadel", system: "sol" });
+    expect(recordDockFailure("war_citadel", { name: "War Citadel", system: "sol" })).toBe(3);
+    expect(isDockable("war_citadel")).toBe(false);
+  });
+
+  it("markDockable(true) resets the failure counter", () => {
+    registerPoi({ id: "war_citadel", name: "War Citadel", system: "sol", type: "station" });
+    recordDockFailure("war_citadel", { name: "War Citadel", system: "sol" });
+    recordDockFailure("war_citadel", { name: "War Citadel", system: "sol" });
+    markDockable("war_citadel", true);
+    expect(isDockable("war_citadel")).toBe(true);
+    // After reset, two more failures should not flip to false
+    recordDockFailure("war_citadel", { name: "War Citadel", system: "sol" });
+    recordDockFailure("war_citadel", { name: "War Citadel", system: "sol" });
+    expect(isDockable("war_citadel")).toBe(true);
   });
 
   it("getAllPois returns all with dockable status", () => {

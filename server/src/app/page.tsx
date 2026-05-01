@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Play, Square, Eye, RotateCw, List, LayoutGrid, Shield, ShieldOff } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { formatCredits as formatCreditsFull } from "@/lib/format";
+import { formatCredits as formatCreditsFull, formatCurrency } from "@/lib/format";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { useFleetStatus } from "@/hooks/use-fleet-status";
@@ -82,7 +82,7 @@ function OverseerBanner() {
           <div>
             <span className="text-[10px] uppercase tracking-wider block">Cost Today</span>
             <span className="text-foreground">
-              {overseer?.costToday != null ? `$${overseer.costToday.toFixed(2)}` : "—"}
+              {formatCurrency(overseer?.costToday ?? null)}
             </span>
           </div>
         </div>

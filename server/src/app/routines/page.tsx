@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, ChevronDown, Clock3, RefreshCw, Route, Search, XCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -34,10 +34,10 @@ interface RoutineJobsResponse {
 const STATUS_OPTIONS: Array<"all" | RoutineJobStatus> = ["all", "running", "completed", "error"];
 const STATUS_CARD_OPTIONS: RoutineJobStatus[] = ["running", "completed", "error"];
 
-// 7-column grid: Started | Agent | Trace | Routine | Summary | Status | Duration.
+// 8-column grid: chevron | Started | Agent | Trace | Routine | Summary | Status | Duration.
 // Hard-coded literal class strings so Tailwind's JIT scanner picks them up.
-const GRID_HEADER_CLASSES = "grid-cols-[140px_130px_90px_140px_1fr_110px_100px]";
-const GRID_ROW_CLASSES = "lg:grid-cols-[140px_130px_90px_140px_1fr_110px_100px]";
+const GRID_HEADER_CLASSES = "grid-cols-[24px_140px_130px_90px_140px_1fr_110px_100px]";
+const GRID_ROW_CLASSES = "lg:grid-cols-[24px_140px_130px_90px_140px_1fr_110px_100px]";
 
 /**
  * Routine start times are full absolute timestamps (matches every other
@@ -58,56 +58,96 @@ function StatusIcon({ status }: { status: RoutineJobStatus }) {
 }
 
 /**
- * Summary cell with an expand affordance.
- *
- * Renders truncated text (up to ~3 lines via line-clamp). When the rendered
- * text overflows we expose a chevron the operator can click to toggle the
- * full multi-line text. Avoids native `title` on long text — multi-paragraph
- * summaries don't render well in a tooltip.
+ * Truncated summary text. Expansion is now driven at the row level by
+ * the caller via a chevron in the leading column — this component just
+ * line-clamps when collapsed and renders full text when expanded.
  */
-function SummaryCell({ text }: { text: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const [truncated, setTruncated] = useState(false);
-  const ref = useRef<HTMLParagraphElement | null>(null);
-
-  // Detect whether the rendered text actually overflows. Re-runs whenever
-  // the text changes; the resize/scrollHeight check is cheap.
-  useEffect(() => {
-    if (!ref.current) return;
-    const el = ref.current;
-    setTruncated(el.scrollHeight - el.clientHeight > 1);
-  }, [text]);
-
+function SummaryCell({ text, expanded }: { text: string; expanded: boolean }) {
   if (!text) {
     return <span className="text-xs text-muted-foreground/40">—</span>;
   }
+  return (
+    <p
+      className={cn(
+        "text-sm text-muted-foreground min-w-0 whitespace-pre-wrap break-words",
+        !expanded && "line-clamp-2"
+      )}
+    >
+      {text}
+    </p>
+  );
+}
+
+/**
+ * Full-row expansion panel — surfaces the parts of the routine job that
+ * don't fit in the table cells: the full result payload (status,
+ * handoff_reason), the raw error message if any, and the full text body
+ * (for routines that emit a long-form summary). Lives below the table
+ * row, not inside one of its cells, so the layout stays clean.
+ */
+function ExpandedDetails({ job }: { job: RoutineJob }) {
+  const showResult = !!(job.result && (job.result.status || job.result.handoff_reason));
+  const showText = !!job.text && job.text !== job.result?.summary;
+  const showError = !!job.error;
+
+  if (!showResult && !showText && !showError) {
+    return (
+      <div className="px-4 pb-4 -mt-2 text-xs italic text-muted-foreground/70">
+        No additional details.
+      </div>
+    );
+  }
 
   return (
-    <div className="flex items-start gap-1.5">
-      <p
-        ref={ref}
-        className={cn(
-          "text-sm text-muted-foreground flex-1 min-w-0",
-          !expanded && "line-clamp-2"
-        )}
-      >
-        {text}
-      </p>
-      {(truncated || expanded) && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded((v) => !v);
-          }}
-          className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-          title={expanded ? "Collapse" : "Expand summary"}
-          aria-label={expanded ? "Collapse summary" : "Expand summary"}
-        >
-          <ChevronDown
-            className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-180")}
-          />
-        </button>
+    <div className="grid gap-3 border-t border-border/40 bg-background/50 px-4 py-3 text-xs">
+      <div className="grid gap-3 lg:grid-cols-[140px_1fr]">
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+          Job ID
+        </div>
+        <div className="font-mono text-muted-foreground break-all">{job.id}</div>
+      </div>
+      {job.trace_id && (
+        <div className="grid gap-3 lg:grid-cols-[140px_1fr]">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+            Trace ID
+          </div>
+          <div className="font-mono text-muted-foreground break-all">{job.trace_id}</div>
+        </div>
+      )}
+      {showResult && job.result && (
+        <div className="grid gap-3 lg:grid-cols-[140px_1fr]">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+            Result status
+          </div>
+          <div className="font-mono text-foreground/80 space-y-1">
+            <div>{job.result.status}</div>
+            {job.result.handoff_reason && (
+              <div className="text-muted-foreground">
+                Handoff: {job.result.handoff_reason}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {showError && (
+        <div className="grid gap-3 lg:grid-cols-[140px_1fr]">
+          <div className="text-[10px] uppercase tracking-wider text-destructive/80">
+            Error
+          </div>
+          <div className="font-mono text-destructive/90 whitespace-pre-wrap break-words">
+            {job.error}
+          </div>
+        </div>
+      )}
+      {showText && (
+        <div className="grid gap-3 lg:grid-cols-[140px_1fr]">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+            Output
+          </div>
+          <div className="font-mono text-muted-foreground whitespace-pre-wrap break-words">
+            {job.text}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -137,6 +177,21 @@ export default function RoutinesPage() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Set of job ids whose row is currently expanded. Click anywhere on the
+   * row to toggle — surfaces the full job details (trace ID, error,
+   * result payload, text body) without leaving the table.
+   */
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   async function loadJobs() {
     setError(null);
@@ -272,6 +327,7 @@ export default function RoutinesPage() {
               GRID_HEADER_CLASSES
             )}
           >
+            <div />
             <div>Started</div>
             <div>Agent</div>
             <div>Trace</div>
@@ -289,42 +345,58 @@ export default function RoutinesPage() {
             <div className="divide-y divide-border">
               {visibleJobs.map((job) => {
                 const summaryText = job.error ?? job.result?.summary ?? job.text ?? "";
+                const isExpanded = expandedIds.has(job.id);
                 return (
-                  <article
-                    key={job.id}
-                    className={cn(
-                      "grid gap-3 px-4 py-4 lg:items-start",
-                      GRID_ROW_CLASSES
-                    )}
-                  >
-                    <div className="font-mono text-xs text-muted-foreground">
-                      {formatStartedAt(job.started_at)}
-                    </div>
-                    <div className="min-w-0 font-mono text-sm text-foreground">{job.agent}</div>
-                    <div className="min-w-0">
-                      <TraceCell traceId={job.trace_id} />
-                    </div>
-                    <div className="min-w-0 font-medium text-foreground truncate" title={job.routine}>
-                      {job.routine}
-                    </div>
-                    <div className="min-w-0">
-                      <SummaryCell text={summaryText} />
-                    </div>
-                    <div>
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1.5 border px-2 py-1 text-xs capitalize",
-                          statusClasses(job.status),
-                        )}
-                      >
-                        <StatusIcon status={job.status} />
-                        {job.status}
-                      </span>
-                    </div>
-                    <div className="font-mono text-sm text-muted-foreground lg:text-right">
-                      {formatDuration(job.duration_ms)}
-                    </div>
-                  </article>
+                  <div key={job.id}>
+                    <article
+                      onClick={() => toggleExpand(job.id)}
+                      className={cn(
+                        "grid gap-3 px-4 py-4 lg:items-start cursor-pointer transition-colors hover:bg-secondary/30",
+                        isExpanded && "bg-secondary/20",
+                        GRID_ROW_CLASSES
+                      )}
+                      aria-expanded={isExpanded}
+                      role="button"
+                    >
+                      <div className="flex items-start justify-center pt-0.5">
+                        <ChevronDown
+                          className={cn(
+                            "h-4 w-4 text-muted-foreground/70 transition-transform",
+                            isExpanded && "rotate-180"
+                          )}
+                          aria-hidden="true"
+                        />
+                      </div>
+                      <div className="font-mono text-xs text-muted-foreground">
+                        {formatStartedAt(job.started_at)}
+                      </div>
+                      <div className="min-w-0 font-mono text-sm text-foreground">{job.agent}</div>
+                      <div className="min-w-0">
+                        <TraceCell traceId={job.trace_id} />
+                      </div>
+                      <div className="min-w-0 font-medium text-foreground truncate" title={job.routine}>
+                        {job.routine}
+                      </div>
+                      <div className="min-w-0">
+                        <SummaryCell text={summaryText} expanded={isExpanded} />
+                      </div>
+                      <div>
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1.5 border px-2 py-1 text-xs capitalize",
+                            statusClasses(job.status),
+                          )}
+                        >
+                          <StatusIcon status={job.status} />
+                          {job.status}
+                        </span>
+                      </div>
+                      <div className="font-mono text-sm text-muted-foreground lg:text-right">
+                        {formatDuration(job.duration_ms)}
+                      </div>
+                    </article>
+                    {isExpanded && <ExpandedDetails job={job} />}
+                  </div>
                 );
               })}
             </div>

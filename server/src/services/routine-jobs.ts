@@ -105,6 +105,21 @@ interface RoutineJobRow {
 export function loadRecentRoutineJobs(limit = 50): void {
   if (!getDbIfInitialized()) return;
   try {
+    // Any rows still marked "running" at startup are abandoned — the previous
+    // process exited without completing them. Mark them error so the dashboard
+    // doesn't render them as live forever.
+    const abandoned = queryRun(
+      `UPDATE routine_jobs
+       SET status = 'error',
+           result_status = 'error',
+           error = COALESCE(error, 'abandoned: server restart'),
+           result_summary = COALESCE(result_summary, 'abandoned: server restart')
+       WHERE status = 'running'`,
+    );
+    if (abandoned > 0) {
+      log.info("marked stale running routines as abandoned", { count: abandoned });
+    }
+
     const rows = queryAll<RoutineJobRow>(
       `SELECT id, agent, routine, trace_id, status, started_at,
               duration_ms, result_status, result_summary, handoff_reason, error

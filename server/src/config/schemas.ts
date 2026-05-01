@@ -15,6 +15,15 @@ export const AgentConfigSchema = z.object({
   socksPort: z.number().optional(),
   mcpVersion: z.enum(["v1", "v2", "overseer"]).optional(),
   mcpPreset: z.enum(["basic", "standard", "full"]).optional(),
+  /**
+   * Game-server API protocol Gantry's HttpGameClient speaks UPSTREAM to game.spacemolt.com.
+   * Distinct from `mcpVersion` (which is the agent-facing MCP endpoint Gantry SERVES).
+   * - "v1": legacy 60+ individual tools, current default. Uses HttpGameClient + V2_TO_V1_PARAM_MAP shim.
+   * - "v2": consolidated action-dispatch tools (16 namespaces), uses HttpGameClientV2 (no shim).
+   * Defaults to "v1" for backwards compatibility during the v2 migration. Once all agents are
+   * stable on v2, this field and the v1 client can be removed.
+   */
+  gameApiVersion: z.enum(["v1", "v2"]).optional(),
   toolResultFormat: z.enum(["json", "yaml"]).optional(),
   homeSystem: z.string().optional(),
   roleType: z.enum(["trader", "miner", "explorer", "combat", "crafter", "hauler", "salvager", "diplomat", "prospector"]).optional(),

@@ -517,19 +517,19 @@ describe("SessionManager — mockMode wiring", () => {
     expect(client).toBeInstanceOf(MockGameClient);
   });
 
-  it("returns real HttpGameClient when mockMode not set", () => {
-    const { HttpGameClient } = require("./game-client.js");
+  it("returns real HttpGameClientV2 when mockMode not set", () => {
+    const { HttpGameClientV2 } = require("./http-game-client-v2.js");
     const mgr = new SessionManager(baseConfig, breakerRegistry, new MetricsWindow());
     const client = mgr.getOrCreateClient("test-agent");
-    expect(client).toBeInstanceOf(HttpGameClient);
+    expect(client).toBeInstanceOf(HttpGameClientV2);
   });
 
-  it("returns real HttpGameClient when mockMode.enabled = false", () => {
-    const { HttpGameClient } = require("./game-client.js");
+  it("returns real HttpGameClientV2 when mockMode.enabled = false", () => {
+    const { HttpGameClientV2 } = require("./http-game-client-v2.js");
     const config = { ...baseConfig, mockMode: { enabled: false } };
     const mgr = new SessionManager(config, breakerRegistry, new MetricsWindow());
     const client = mgr.getOrCreateClient("test-agent");
-    expect(client).toBeInstanceOf(HttpGameClient);
+    expect(client).toBeInstanceOf(HttpGameClientV2);
   });
 
   it("mock client can login without network", async () => {

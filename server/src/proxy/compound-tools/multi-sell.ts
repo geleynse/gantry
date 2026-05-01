@@ -22,6 +22,7 @@ export async function multiSell(
   calledTools: Set<string>,
 ): Promise<CompoundResult> {
   const { client, agentName, statusCache, sellLog } = deps;
+  const isV2 = typeof client.isV2 === "function" && client.isV2();
 
   // Fetch fresh status to avoid stale cache (e.g. agent just docked but cache hasn't updated)
   let cachedStatus = statusCache.get(agentName);
@@ -32,7 +33,9 @@ export async function multiSell(
   // Prerequisite 1: Must be docked — if cache says not docked, refresh before blocking
   if (!playerData?.docked_at_base) {
     log.debug("multi_sell: cache says not docked, fetching fresh status", { agent: agentName });
-    const freshStatus = await client.execute("get_status", {});
+    const freshStatus = isV2
+      ? await client.execute("spacemolt", { action: "get_status" })
+      : await client.execute("get_status", {});
     if (!freshStatus.error && freshStatus.result) {
       // Re-read from cache (get_status triggers onStateUpdate which populates statusCache)
       await client.waitForTick();
@@ -120,7 +123,9 @@ export async function multiSell(
         continue;
       }
     }
-    const resp = await client.execute("sell", { item_id, quantity }, { noRetry: true });
+    const resp = isV2
+      ? await client.execute("spacemolt", { action: "sell", item_id, quantity }, { noRetry: true })
+      : await client.execute("sell", { item_id, quantity }, { noRetry: true });
 
     if (resp.error) {
       results.push({ item_id, quantity, result: resp.error });

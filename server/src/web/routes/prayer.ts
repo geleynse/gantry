@@ -98,12 +98,34 @@ function parseJson<T>(s: string | null): T | null {
   try { return JSON.parse(s) as T; } catch { return null; }
 }
 
-// Status vocabulary note: there are two `status` fields in play here.
-//   - row.status              ← proxy_tool_calls.status column: 'pending' | 'complete' | 'error'
-//   - result.status           ← result_summary JSON payload: 'completed' | 'halted' |
-//                                'step_limit_reached' | 'interrupted' | 'error' | ...
-// The summary's `status` prefers the richer result_summary value and only
-// falls back to the column when the call is still pending or has no payload.
+// -----------------------------------------------------------------------
+// Status vocabulary note — DUAL STATUS, READ CAREFULLY.
+//
+// There are TWO `status` fields visible on every prayer record, and they
+// use different vocabularies. Mixing them up is the most common source
+// of UI rendering bugs in PrayerRow.
+//
+//   1. row.status                ← proxy_tool_calls.status column.
+//      Vocabulary: 'pending' | 'complete' | 'error'.
+//      Source of truth for whether the tool call has FINISHED. This is
+//      the column the database writes when the proxy resolves the call.
+//
+//   2. result.status             ← result_summary JSON payload.
+//      Vocabulary: 'completed' | 'halted' | 'step_limit_reached' |
+//                  'interrupted' | 'error' | 'pending' | …
+//      Source of truth for HOW the prayer terminated (e.g. the script
+//      ran out of steps, the interpreter halted on a guard, etc.).
+//      Only meaningful once row.status === 'complete' or 'error'.
+//
+// Note the spelling difference: row uses 'complete' (no 'd') while the
+// result payload uses 'completed' — yes, really. Don't normalize one
+// into the other; the UI components downstream depend on both spellings
+// to discriminate the two layers.
+//
+// `toSummary` below prefers the richer result.status when available and
+// falls back to the column when the call is still pending or has no
+// payload yet.
+// -----------------------------------------------------------------------
 function toSummary(
   row: PrayerRow,
   subcalls: SubcallRow[],

@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { useSSE } from "@/hooks/use-sse";
 import { apiFetch } from "@/lib/api";
 import { formatTime, formatDateTime } from "@/lib/time";
-import { formatNumber } from "@/lib/format";
+import { formatNumber, formatTokens } from "@/lib/format";
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Pickaxe, DollarSign, Navigation } from "lucide-react";
 import { PrayerRow } from "@/components/prayer-row";
 
@@ -227,12 +227,18 @@ function sortByTimestamp(entries: ToolCallRecord[]): ToolCallRecord[] {
   });
 }
 
-/** Format cost + tokens into a badge string (e.g., "$0.047 | 12k tok") */
+/**
+ * Format cost + tokens into a badge string (e.g., "$0.047 | 12.3k tok").
+ *
+ * Cost stays at 3-decimal precision here (rather than `formatCurrency`'s
+ * 2-decimal floor) because the per-turn cost is intentionally displayed
+ * with sub-cent resolution — the feed is a debugging surface, not the
+ * dashboard headline.
+ */
 function formatCostBadge(cost: number | null, inputTokens: number | null, outputTokens: number | null): string | null {
   if (cost === null || inputTokens === null || outputTokens === null) return null;
   const totalTokens = inputTokens + outputTokens;
-  const tokenDisplay = totalTokens >= 1000 ? `${Math.round(totalTokens / 1000)}k` : String(totalTokens);
-  return `$${cost.toFixed(3)} | ${tokenDisplay} tok`;
+  return `$${cost.toFixed(3)} | ${formatTokens(totalTokens)} tok`;
 }
 
 /** Find the turn that contains this tool call timestamp */

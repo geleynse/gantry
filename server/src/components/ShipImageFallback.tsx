@@ -82,11 +82,11 @@ const COLOR_PALETTES: Array<[string, string]> = [
 ];
 
 function hashString(s: string): number {
-  return s.toLowerCase().split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  return (s ?? "").toLowerCase().split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
 }
 
 function getShipCategory(shipClass: string): string {
-  const lower = shipClass.toLowerCase();
+  const lower = (shipClass ?? "").toLowerCase();
   for (const [classId, category] of Object.entries(CLASS_ID_TO_CATEGORY)) {
     if (lower === classId || lower.endsWith(`_${classId}`)) return category;
   }
@@ -97,11 +97,12 @@ function getShipCategory(shipClass: string): string {
 }
 
 function getAbbreviation(shipClass: string): string {
-  const parts = shipClass.toLowerCase().replace(/_/g, " ").split(" ");
+  const safe = shipClass ?? "";
+  const parts = safe.toLowerCase().replace(/_/g, " ").split(" ");
   if (parts.length >= 2) {
     return (parts[0].slice(0, 2) + parts[1][0]).toUpperCase();
   }
-  return shipClass.slice(0, 3).toUpperCase();
+  return safe.slice(0, 3).toUpperCase();
 }
 
 export function ShipImageFallback({
@@ -126,7 +127,7 @@ export function ShipImageFallback({
         background: `linear-gradient(135deg, ${color1}22, ${color2}22)`,
         ...style,
       }}
-      title={shipClass.replace(/_/g, " ")}
+      title={(shipClass ?? "").replace(/_/g, " ")}
     >
       <svg
         viewBox="0 0 100 100"

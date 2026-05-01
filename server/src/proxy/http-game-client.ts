@@ -119,6 +119,11 @@ export class HttpGameClient implements GameTransport {
     return this.authenticated;
   }
 
+  /** This is the v1 client. */
+  isV2(): boolean {
+    return false;
+  }
+
   getCredentials(): { username: string; password: string } | null {
     return this.credentials;
   }

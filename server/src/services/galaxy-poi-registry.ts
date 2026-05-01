@@ -105,9 +105,14 @@ interface PoiFallback {
 /**
  * Mark a POI as dockable or not. If the POI doesn't exist and fallback metadata
  * is provided, it will be inserted. Without fallback, unregistered POIs are silently skipped.
+ *
+ * Note: prefer recordDockFailure() over passing dockable=false here. A single
+ * transient dock failure can flag real stations (e.g. war_citadel) as undockable
+ * forever; the failure counter requires N consecutive misses before persisting.
  */
 export function markDockable(id: string, dockable: boolean, fallback?: PoiFallback): void {
   try {
+    if (dockable) dockFailures.delete(id);
     const changes = queryRun(
       `UPDATE galaxy_pois SET dockable = ?, updated_at = datetime('now') WHERE id = ?`,
       dockable ? 1 : 0,
@@ -125,6 +130,30 @@ export function markDockable(id: string, dockable: boolean, fallback?: PoiFallba
   } catch (e) {
     log.error(`Failed to mark dockable for POI ${id}`, { error: e });
   }
+}
+
+// In-memory consecutive-failure counter per POI. Reset on success or process restart.
+const dockFailures = new Map<string, number>();
+const DOCK_FAILURE_THRESHOLD = 3;
+
+/**
+ * Record a dock-verification failure for a POI. Returns the new failure count.
+ * Only persists dockable=false to the database after N consecutive failures —
+ * otherwise a single transient miss permanently flags a real station.
+ * Counter is reset by markDockable(id, true).
+ */
+export function recordDockFailure(id: string, fallback?: PoiFallback): number {
+  const next = (dockFailures.get(id) ?? 0) + 1;
+  dockFailures.set(id, next);
+  if (next >= DOCK_FAILURE_THRESHOLD) {
+    markDockable(id, false, fallback);
+  }
+  return next;
+}
+
+/** Test-only: reset the in-memory failure counter. */
+export function _resetDockFailures(): void {
+  dockFailures.clear();
 }
 
 /** Returns true/false based on stored dockable value, or null if unknown. */

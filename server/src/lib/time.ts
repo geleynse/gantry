@@ -41,7 +41,13 @@ function toDate(input: TimeInput): Date | null {
   return Number.isFinite(d.getTime()) ? d : null;
 }
 
-/** Relative time string like "2h ago". Accepts string|Date|number. */
+/**
+ * Relative time string like "2h ago". Accepts string|Date|number.
+ *
+ * Also exported as `formatRelativeTime` (the canonical "format*" name)
+ * so call sites pulling shared formatting helpers don't need to remember
+ * which family this one belongs to.
+ */
 export function relativeTime(input: TimeInput): string {
   const d = toDate(input);
   if (!d) return "—";
@@ -137,6 +143,13 @@ export function formatWithTooltip(
     ? { display: abs, tooltip: rel }
     : { display: rel, tooltip: abs };
 }
+
+/**
+ * Canonical-named alias for `relativeTime`. Prefer this in new code so the
+ * import line at a call site reads consistently with the other format helpers
+ * (`formatAbsolute`, `formatDateTime`, …).
+ */
+export const formatRelativeTime = relativeTime;
 
 /** Check whether an ISO timestamp is within a threshold of now (default 2 minutes). */
 export function isRecent(isoTimestamp: string | null | undefined, thresholdMs: number = 2 * 60 * 1000): boolean {

@@ -142,10 +142,17 @@ describe("PARAM_REMAPS", () => {
 
 describe("V2_TO_V1_PARAM_MAP", () => {
   it("contains known v2-to-v1 remaps", () => {
-    expect(V2_TO_V1_PARAM_MAP.jump).toEqual({ id: "target_system" });
+    expect(V2_TO_V1_PARAM_MAP.jump).toEqual({ id: "target_system", system_id: "target_system" });
     expect(V2_TO_V1_PARAM_MAP.travel).toEqual({ id: "target_poi" });
     expect(V2_TO_V1_PARAM_MAP.send_gift).toEqual({ id: "target_id", text: "item_id" });
     expect(V2_TO_V1_PARAM_MAP.faction_upgrade).toEqual({ id: "facility_id", text: "facility_type" });
+  });
+
+  it("jump tolerates agent confusion sending system_id (placeholder misread from prompt)", () => {
+    // Sable-thorn (and possibly future agents) misread `id="system_id"` placeholders in
+    // common-rules.txt as a literal param name. The proxy now remaps both forms to
+    // target_system, so the agent's request hits the game server in a valid shape.
+    expect(V2_TO_V1_PARAM_MAP.jump.system_id).toBe("target_system");
   });
 
   it("install_mod and uninstall_mod map id to module_id", () => {

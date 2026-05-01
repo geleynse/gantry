@@ -13,6 +13,9 @@
  *   - `formatCreditsDelta(n)`        → "+1,234 cr" / "-1,234 cr"
  *   - `formatCreditsDeltaCompact(n)` → "+1.23M cr"
  *   - `formatCompactNumber(n)`       → "1.23M"            (compact, no suffix)
+ *   - `formatCurrency(n)`            → "$1.23" / "<$0.01" (USD costs)
+ *   - `formatTokens(n)`              → "12.3k" / "987"    (LLM token counts)
+ *   - `formatDuration(ms)`           → "1m 30s" / "2.5s"  (human duration)
  *
  * All helpers safely handle `null` / `undefined` (returning "—") and
  * non-finite numbers.
@@ -115,4 +118,67 @@ function trimZeros(n: number, maxDecimals: number): string {
   // Round to maxDecimals first, then strip trailing zeros + dangling dot.
   const fixed = n.toFixed(maxDecimals);
   return fixed.replace(/\.?0+$/, "");
+}
+
+/**
+ * USD currency, sensible precision.
+ *
+ *   - >= $1000  → compact ("$1.5M", "$2.3K")
+ *   - >= $10    → 2 decimals ("$12.34")
+ *   - >= $1     → 2 decimals ("$2.50")
+ *   - >= $0.01  → 2 decimals ("$0.43")
+ *   - >  $0     → "<$0.01" (avoids the dreaded "$0.000043" axis tick)
+ *   - == $0     → "$0.00"
+ *
+ * The "<$0.01" floor is deliberate. Showing micro-dollar precision in
+ * the UI is noise; the analytics backend keeps the full value.
+ */
+export function formatCurrency(n: NumInput): string {
+  const v = safeNumber(n);
+  if (v == null) return "—";
+  if (v === 0) return "$0.00";
+  const abs = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  if (abs >= 1_000) return `${sign}$${formatCompactNumber(abs)}`;
+  if (abs < 0.01) return `${sign}<$0.01`;
+  return `${sign}$${abs.toFixed(2)}`;
+}
+
+/**
+ * LLM token counts. Compact "k" form for >= 1000, raw count otherwise.
+ *
+ *   - 12_345 → "12.3k"
+ *   - 987    → "987"
+ *
+ * Lowercase "k" matches existing dashboard usage (analytics tooltips,
+ * tool-call-feed cost badges).
+ */
+export function formatTokens(n: NumInput): string {
+  const v = safeNumber(n);
+  if (v == null) return "—";
+  if (v < 1000) return formatNumber(v);
+  return `${(v / 1000).toFixed(1)}k`;
+}
+
+/**
+ * Human duration from milliseconds.
+ *
+ *   - < 1s   → "750ms"
+ *   - < 60s  → "12.3s"  (one decimal so 2.5s and 12s read consistently)
+ *   - >= 60s → "1m 30s" (no decimals at minute scale)
+ *
+ * Replaces the duplicate `formatDuration` shims in routines/helpers.ts,
+ * analytics-charts.tsx, overseer/page.tsx — each with slightly different
+ * thresholds. Pick one canonical form.
+ */
+export function formatDuration(ms: NumInput): string {
+  const v = safeNumber(ms);
+  if (v == null || v < 0) return "—";
+  if (v < 1000) return `${Math.round(v)}ms`;
+  const seconds = v / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const wholeSeconds = Math.round(seconds);
+  const minutes = Math.floor(wholeSeconds / 60);
+  const remainder = wholeSeconds % 60;
+  return `${minutes}m ${remainder}s`;
 }

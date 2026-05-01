@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createDatabase, closeDb } from "../../services/database.js";
-import { travelTo } from "./travel-to.js";
+import { travelTo, resolveCrossSystem } from "./travel-to.js";
 import { systemPoiCache } from "../poi-resolver.js";
 import type { CompoundToolDeps, GameClientLike } from "./types.js";
 import { SellLog } from "../sell-log.js";
@@ -614,5 +614,132 @@ describe("travel-to fuzzy POI matching", () => {
 
     expect(result.status).toBe("completed");
     expect(travelCallCount).toBe(2);
+  });
+
+  // -------------------------------------------------------------------------
+  // Cross-system resolution (Task #14) — `go sirius` from Sol must route to
+  // Sirius via jumpRoute, not fail with "Unknown destination". The PrayerLang
+  // docs explicitly promise this, and 80% of soak3 prayers failed because the
+  // resolver only looked at local-system POIs.
+  // -------------------------------------------------------------------------
+
+  describe("cross-system fuzzy resolution", () => {
+    function makeGalaxyGraphWithSystems(systems: Array<{ id: string; name: string; connections?: string[] }>): GalaxyGraph {
+      const g = new GalaxyGraph();
+      for (const s of systems) g.addSystem(s.id, s.name);
+      for (const s of systems) {
+        for (const c of s.connections ?? []) g.addEdge(s.id, c);
+      }
+      return g;
+    }
+
+    it("resolveCrossSystem: matches an exact system name", () => {
+      const g = makeGalaxyGraphWithSystems([
+        { id: "sol", name: "Sol", connections: ["sirius"] },
+        { id: "sirius", name: "Sirius" },
+      ]);
+      const r = resolveCrossSystem("sirius", g, "sol");
+      expect(r.kind).toBe("route");
+      if (r.kind === "route") {
+        expect(r.finalSystemId).toBe("sirius");
+        expect(r.systemIds).toEqual(["sirius"]);
+      }
+    });
+
+    it("resolveCrossSystem: matches a partial system name", () => {
+      const g = makeGalaxyGraphWithSystems([
+        { id: "sol", name: "Sol", connections: ["sirius_observatory"] },
+        { id: "sirius_observatory", name: "Sirius Observatory" },
+      ]);
+      // The agent typed "sirius" — only one system contains that substring.
+      const r = resolveCrossSystem("sirius", g, "sol");
+      expect(r.kind).toBe("route");
+      if (r.kind === "route") {
+        expect(r.finalSystemId).toBe("sirius_observatory");
+      }
+    });
+
+    it("resolveCrossSystem: ambiguous match (multiple systems contain 'sirius') errors clearly", () => {
+      const g = makeGalaxyGraphWithSystems([
+        { id: "sol", name: "Sol" },
+        { id: "sirius_alpha", name: "Sirius Alpha" },
+        { id: "sirius_beta", name: "Sirius Beta" },
+      ]);
+      const r = resolveCrossSystem("sirius", g, "sol");
+      expect(r.kind).toBe("ambiguous");
+      if (r.kind === "ambiguous") {
+        expect(r.matches.length).toBe(2);
+        expect(r.matches).toContain("sirius_alpha");
+        expect(r.matches).toContain("sirius_beta");
+      }
+    });
+
+    it("resolveCrossSystem: no match returns no_match (caller falls through to local POI travel)", () => {
+      const g = makeGalaxyGraphWithSystems([
+        { id: "sol", name: "Sol" },
+      ]);
+      const r = resolveCrossSystem("not_a_real_system", g, "sol");
+      expect(r.kind).toBe("no_match");
+    });
+
+    it("resolveCrossSystem: empty galaxy graph returns noop (don't break travel_to flow)", () => {
+      const g = new GalaxyGraph();
+      const r = resolveCrossSystem("sirius", g, "sol");
+      expect(r.kind).toBe("noop");
+    });
+
+    it("resolveCrossSystem: exact match to current system returns noop (already there)", () => {
+      const g = makeGalaxyGraphWithSystems([{ id: "sol", name: "Sol" }]);
+      const r = resolveCrossSystem("sol", g, "sol");
+      expect(r.kind).toBe("noop");
+    });
+
+    it("travelTo: returns ambiguous_destination error when destination matches multiple systems", async () => {
+      const cache = makeStatusCache("agent", {
+        player: { current_system: "sol", current_poi: "sol_belt", docked_at_base: null },
+      });
+      // POI cache empty — local resolution will fail and we'll proceed to cross-system.
+      const client = makeClient({
+        execute: async () => ({ result: {} }),
+      });
+      const deps = makeDeps("agent", client, cache);
+      // Replace galaxy graph with one that has ambiguous matches
+      deps.galaxyGraph = (() => {
+        const g = new GalaxyGraph();
+        g.addSystem("sol", "Sol");
+        g.addSystem("sirius_alpha", "Sirius Alpha");
+        g.addSystem("sirius_beta", "Sirius Beta");
+        return g;
+      })();
+
+      const result = await travelTo(deps, "sirius", identityResolver, false);
+      expect(result.status).toBe("error");
+      expect(result.error).toBe("ambiguous_destination");
+      expect(String(result.message)).toContain("sirius_alpha");
+      expect(String(result.message)).toContain("sirius_beta");
+    });
+
+    it("travelTo: cross-system fall-through is a noop when galaxyGraph is empty", async () => {
+      // Sanity: when we have no galaxy data, cross-system path doesn't run, and
+      // travel_to behaves exactly like the legacy code path (call travel + fail).
+      const cache = makeStatusCache("agent", {
+        player: { current_system: "sol", current_poi: "sol_belt", docked_at_base: null },
+      });
+      let travelCalls = 0;
+      const client = makeClient({
+        execute: async (tool) => {
+          if (tool === "travel") {
+            travelCalls++;
+            return { error: { message: "Unknown destination: sirius" } };
+          }
+          return { result: {} };
+        },
+      });
+      const deps = makeDeps("agent", client, cache);
+      // empty galaxy graph
+      const result = await travelTo(deps, "sirius", identityResolver, false);
+      expect(result.status).toBe("error");
+      expect(travelCalls).toBe(1); // travel was attempted; cross-system path was a noop
+    });
   });
 });

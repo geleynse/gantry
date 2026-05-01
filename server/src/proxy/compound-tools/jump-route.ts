@@ -24,6 +24,7 @@ export async function jumpRoute(
   fuelThreshold = 20,
 ): Promise<CompoundResult> {
   const { client, agentName, statusCache } = deps;
+  const isV2 = typeof client.isV2 === "function" && client.isV2();
 
   const clamped = systemIds.slice(0, 30);
   const jumps: Array<{ system: string; result: unknown }> = [];
@@ -67,11 +68,17 @@ export async function jumpRoute(
   ) {
     // Likely docked — try to refuel and undock
     try {
-      await client.execute("refuel", undefined, { timeoutMs: 30_000, noRetry: true });
+      if (isV2) {
+        await client.execute("spacemolt", { action: "refuel" }, { timeoutMs: 30_000, noRetry: true });
+      } else {
+        await client.execute("refuel", undefined, { timeoutMs: 30_000, noRetry: true });
+      }
     } catch {
       log.warn("jump_route: pre-jump refuel timed out, continuing", { agent: agentName });
     }
-    const undockResp = await client.execute("undock", undefined, { noRetry: true });
+    const undockResp = isV2
+      ? await client.execute("spacemolt", { action: "undock" }, { noRetry: true })
+      : await client.execute("undock", undefined, { noRetry: true });
     if (
       undockResp.error &&
       !String(undockResp.error).includes("already undocked")
@@ -142,18 +149,28 @@ export async function jumpRoute(
       if (fuel < fuelThreshold) {
         let dockResp: Awaited<ReturnType<typeof client.execute>>;
         try {
-          dockResp = await client.execute("dock", undefined, { timeoutMs: 30_000, noRetry: true });
+          dockResp = isV2
+            ? await client.execute("spacemolt", { action: "dock" }, { timeoutMs: 30_000, noRetry: true })
+            : await client.execute("dock", undefined, { timeoutMs: 30_000, noRetry: true });
         } catch {
           log.warn("jump_route: mid-route dock timed out, skipping refuel", { agent: agentName, jump_num: i });
           dockResp = { error: "dock timed out" };
         }
         if (!dockResp.error) {
           try {
-            await client.execute("refuel", undefined, { timeoutMs: 30_000, noRetry: true });
+            if (isV2) {
+              await client.execute("spacemolt", { action: "refuel" }, { timeoutMs: 30_000, noRetry: true });
+            } else {
+              await client.execute("refuel", undefined, { timeoutMs: 30_000, noRetry: true });
+            }
           } catch {
             log.warn("jump_route: mid-route refuel timed out", { agent: agentName, jump_num: i });
           }
-          await client.execute("undock");
+          if (isV2) {
+            await client.execute("spacemolt", { action: "undock" });
+          } else {
+            await client.execute("undock");
+          }
         }
       }
     }
@@ -172,9 +189,9 @@ export async function jumpRoute(
     // waitForNextArrival because beforeTick=null matches the fast-return check.
     const arrivalTickBeforeJump = client.lastArrivalTick;
 
-    let jumpResp = await client.execute("jump", {
-      target_system: systemId,
-    });
+    let jumpResp = isV2
+      ? await client.execute("spacemolt", { action: "jump", target_system: systemId })
+      : await client.execute("jump", { target_system: systemId });
 
     // Retry on connection_lost — wait for reconnect instead of aborting the route
     if (jumpResp.error) {
@@ -190,7 +207,9 @@ export async function jumpRoute(
           jump_num: `${i + 1}/${finalSystemIds.length}`,
         });
         await new Promise((r) => setTimeout(r, 5_000));
-        jumpResp = await client.execute("jump", { target_system: systemId });
+        jumpResp = isV2
+          ? await client.execute("spacemolt", { action: "jump", target_system: systemId })
+          : await client.execute("jump", { target_system: systemId });
       }
     }
 

@@ -33,6 +33,7 @@ import economyRoutes from "./economy.js";
 import knowledgeRoutes from "./knowledge.js";
 import directivesRoutes from "./directives.js";
 import { agentFleetControlRouter, routinesRouter } from "./fleet-control.js";
+import broadcastRoutes from "./broadcast.js";
 import { createSurvivabilityRouter } from "./survivability.js";
 import { createFleetCapacityRouter } from "./fleet-capacity.js";
 import { createContextSummaryRouter } from "./context-summary.js";
@@ -44,6 +45,7 @@ import diagnosticsRoutes from "./diagnostics.js";
 import leaderboardRoutes from "./leaderboard.js";
 import prayerCanaryRoutes from "./prayer-canary.js";
 import facilitiesScanRoutes from "./facilities-scan.js";
+import { createFacilitiesRouter } from "./facilities.js";
 import prayerRoutes from "./prayer.js";
 import { createEnrollmentRouter } from "./enrollment.js";
 import { createCredentialsRouter } from "./credentials.js";
@@ -89,6 +91,9 @@ export function createApiRoutes(deps: ApiRouteDeps): Router {
   // --- Agent sub-routers ---
   const agentRouter = createAgentRouter(sharedState.cache.battle, sharedState.proxy.breakerRegistry, fleetDir, config);
   const logsRouter = createLogsRouter(fleetDir, config);
+  // Enrollment must mount before agentRouter — agentRouter uses /:name as a
+  // catch-all and would otherwise match /enrollment-options as an agent name.
+  router.use("/agents", createEnrollmentRouter());
   router.use("/agents", agentRouter);
   router.use("/agents", logsRouter);
   router.use("/agents", injectRoutes);
@@ -96,7 +101,6 @@ export function createApiRoutes(deps: ApiRouteDeps): Router {
   router.use("/agents", agentFleetControlRouter);
   router.use("/agents", agentReasoningRouter);
   router.use("/agents", createContextSummaryRouter(sharedState.cache.status, sharedState.cache.events));
-  router.use("/agents", createEnrollmentRouter());
 
   // --- Routines ---
   router.use("/routines", routinesRouter);
@@ -178,7 +182,9 @@ export function createApiRoutes(deps: ApiRouteDeps): Router {
   router.use("/leaderboard", leaderboardRoutes);
   router.use("/prayer-canary", prayerCanaryRoutes);
   router.use("/facilities-scan", facilitiesScanRoutes);
+  router.use("/facilities", createFacilitiesRouter(sharedState.cache.status));
   router.use("/prayer", prayerRoutes);
+  router.use("/fleet/broadcast", broadcastRoutes);
 
   // Health monitor watchdog (optional — only when healthMonitor is provided)
   if (healthMonitor) {

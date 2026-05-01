@@ -33,12 +33,15 @@ export async function flee(
   targetPoi?: string,
 ): Promise<CompoundResult> {
   const { client, agentName, statusCache, persistBattleState, upsertNote } = deps;
+  const isV2 = typeof client.isV2 === "function" && client.isV2();
   const t0 = Date.now();
 
   log.info("flee START", { agent: agentName, target_poi: targetPoi ?? "auto" });
 
   // Step 1: Get current battle status
-  const battleStatusResp = await client.execute("get_battle_status");
+  const battleStatusResp = isV2
+    ? await client.execute("spacemolt_battle", { action: "status" })
+    : await client.execute("get_battle_status");
 
   // The game returns error.code === "not_in_battle" instead of a result when no battle exists.
   // Treat that as "no active battle" rather than an opaque failure.
@@ -69,7 +72,9 @@ export async function flee(
       agent: agentName, battle_status: currentBattle ?? "not_in_battle_err",
     });
 
-    const dockProbe = await client.execute("dock", undefined, { noRetry: true });
+    const dockProbe = isV2
+      ? await client.execute("spacemolt", { action: "dock" }, { noRetry: true })
+      : await client.execute("dock", undefined, { noRetry: true });
     const probeErrStr = dockProbe.error
       ? (typeof dockProbe.error === "string" ? dockProbe.error : JSON.stringify(dockProbe.error))
       : "";
@@ -108,10 +113,9 @@ export async function flee(
 
   // Step 2: Attempt flee stance
   log.debug("flee: attempting flee stance", { agent: agentName });
-  const fleeStanceResp = await client.execute("battle", {
-    action: "stance",
-    stance: "flee",
-  });
+  const fleeStanceResp = isV2
+    ? await client.execute("spacemolt_battle", { action: "stance", stance: "flee" })
+    : await client.execute("battle", { action: "stance", stance: "flee" });
 
   if (fleeStanceResp.error) {
     log.warn("flee: stance change failed", { agent: agentName, error: fleeStanceResp.error });
@@ -129,7 +133,9 @@ export async function flee(
   for (let tick = 0; tick < 5; tick++) {
     await client.waitForTick();
 
-    const statusResp = await client.execute("get_status");
+    const statusResp = isV2
+      ? await client.execute("spacemolt", { action: "get_status" })
+      : await client.execute("get_status");
     if (!statusResp.error && statusResp.result && typeof statusResp.result === "object") {
       const shipData = (statusResp.result as Record<string, unknown>).ship as Record<string, unknown> | undefined;
       if (shipData?.battle_id === null || shipData?.battle_id === undefined) {
@@ -144,7 +150,9 @@ export async function flee(
   // Step 4: Undock (force safe state even if battle persists)
   const escapeStatus = fleeSucceeded ? "success" : "timeout";
 
-  const undockResp = await client.execute("undock", undefined, { noRetry: true });
+  const undockResp = isV2
+    ? await client.execute("spacemolt", { action: "undock" }, { noRetry: true })
+    : await client.execute("undock", undefined, { noRetry: true });
   if (undockResp.error) {
     log.warn("flee: undock failed", { agent: agentName, error: undockResp.error });
     return {
@@ -162,7 +170,9 @@ export async function flee(
 
   const destination = targetPoi ?? "station"; // Default to nearest station
 
-  const travelResp = await client.execute("travel", { target_poi: destination }, { noRetry: true });
+  const travelResp = isV2
+    ? await client.execute("spacemolt", { action: "travel", target_poi: destination }, { noRetry: true })
+    : await client.execute("travel", { target_poi: destination }, { noRetry: true });
   if (travelResp.error) {
     log.warn("flee: travel to safety failed", {
       agent: agentName,

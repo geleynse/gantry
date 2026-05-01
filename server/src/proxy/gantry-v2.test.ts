@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "bun:test";
-import { createGantryServerV2, mapV2ToV1, V2_ACTION_TO_V1_NAME, withPrayerScriptSchema, type V2SharedState } from "./gantry-v2.js";
+import { createGantryServerV2, withPrayerScriptSchema, type V2SharedState } from "./gantry-v2.js";
 import { serverSchemaToZod, type ServerTool } from "./schema.js";
 import type { GantryConfig } from "../config.js";
 import { SessionManager } from "./session-manager.js";
@@ -166,6 +166,58 @@ describe("createGantryServerV2", () => {
     expect(eventBuffers).toBe(shared.cache.events);
     expect(callTrackers).toBe(shared.proxy.callTrackers);
   });
+
+  // -------------------------------------------------------------------------
+  // craft_chains schema injection (Task #16) — proxy-only catalog actions must
+  // be added to the upstream `type` enum so client-side schema validation
+  // (serverSchemaToZod) accepts agent calls. Otherwise calls are rejected
+  // before reaching the v2 dispatcher and craft_chains adoption stays at 0%.
+  // -------------------------------------------------------------------------
+
+  it("withPrayerScriptSchema injects craft_chains into spacemolt_catalog type enum", () => {
+    const serverTool: ServerTool = {
+      name: "spacemolt_catalog",
+      inputSchema: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["catalog", "weapons", "ships"] },
+          id: { type: "string" },
+        },
+        required: ["type"],
+      },
+    };
+
+    const patched = withPrayerScriptSchema("spacemolt_catalog", serverTool)!;
+    const typeProp = patched.inputSchema?.properties?.type as { enum?: string[] };
+    expect(typeProp.enum).toContain("craft_chains");
+    // Existing values preserved
+    expect(typeProp.enum).toContain("catalog");
+    expect(typeProp.enum).toContain("weapons");
+
+    // Round-trip through Zod: agent call with type=craft_chains must validate
+    const parsed = serverSchemaToZod(patched).safeParse({
+      type: "craft_chains",
+      id: "iron_ore",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("withPrayerScriptSchema is idempotent on spacemolt_catalog (no duplicate craft_chains)", () => {
+    const serverTool: ServerTool = {
+      name: "spacemolt_catalog",
+      inputSchema: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["catalog", "craft_chains"] },
+        },
+        required: ["type"],
+      },
+    };
+    const patched = withPrayerScriptSchema("spacemolt_catalog", serverTool)!;
+    const typeProp = patched.inputSchema?.properties?.type as { enum?: string[] };
+    const occurrences = typeProp.enum!.filter(v => v === "craft_chains").length;
+    expect(occurrences).toBe(1);
+  });
 });
 
 describe("createGantryServerV2 - not logged in guard", () => {
@@ -248,146 +300,6 @@ describe("createGantryServerV2 - STATE_CHANGING_TOOLS and CONTAMINATION_WORDS ex
   });
 });
 
-// ---------------------------------------------------------------------------
-// mapV2ToV1 unit tests
-// ---------------------------------------------------------------------------
-
-describe("mapV2ToV1", () => {
-  it("maps known V2_ACTION_TO_V1_NAME entries correctly", () => {
-    const { v1ToolName } = mapV2ToV1("spacemolt_storage", "view", {});
-    expect(v1ToolName).toBe("view_storage");
-  });
-
-  it("maps spacemolt_storage deposit to deposit_items", () => {
-    const { v1ToolName } = mapV2ToV1("spacemolt_storage", "deposit", { item_id: "iron_ore", quantity: 10 });
-    expect(v1ToolName).toBe("deposit_items");
-  });
-
-  it("maps spacemolt_storage withdraw to withdraw_items", () => {
-    const { v1ToolName } = mapV2ToV1("spacemolt_storage", "withdraw", { item_id: "iron_ore", quantity: 10 });
-    expect(v1ToolName).toBe("withdraw_items");
-  });
-
-  it("remaps claim_commission id to commission_id", () => {
-    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt_ship", "claim_commission", { id: "abc123" });
-    expect(v1ToolName).toBe("claim_commission");
-    expect(v1Args.commission_id).toBe("abc123");
-    expect(v1Args.id).toBeUndefined();
-  });
-
-  it("remaps cancel_commission id to commission_id", () => {
-    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt_ship", "cancel_commission", { id: "abc123" });
-    expect(v1ToolName).toBe("cancel_commission");
-    expect(v1Args.commission_id).toBe("abc123");
-    expect(v1Args.id).toBeUndefined();
-  });
-
-  it("install_mod: remaps id to module_id", () => {
-    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt_ship", "install_mod", { id: "engine_t2" });
-    expect(v1ToolName).toBe("install_mod");
-    expect(v1Args.module_id).toBe("engine_t2");
-    expect(v1Args.id).toBeUndefined();
-  });
-
-  it("install_mod: passes module_id through unchanged", () => {
-    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt_ship", "install_mod", { module_id: "engine_t2" });
-    expect(v1ToolName).toBe("install_mod");
-    expect(v1Args.module_id).toBe("engine_t2");
-  });
-
-  it("uninstall_mod: remaps id to module_id", () => {
-    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt_ship", "uninstall_mod", { id: "engine_t1" });
-    expect(v1ToolName).toBe("uninstall_mod");
-    expect(v1Args.module_id).toBe("engine_t1");
-    expect(v1Args.id).toBeUndefined();
-  });
-
-  it("uninstall_mod: passes module_id through unchanged", () => {
-    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt_ship", "uninstall_mod", { module_id: "engine_t1" });
-    expect(v1ToolName).toBe("uninstall_mod");
-    expect(v1Args.module_id).toBe("engine_t1");
-  });
-
-  it("maps spacemolt get_status correctly", () => {
-    const { v1ToolName } = mapV2ToV1("spacemolt", "get_status", {});
-    expect(v1ToolName).toBe("get_status");
-  });
-
-  it("maps spacemolt_catalog to catalog regardless of action", () => {
-    const { v1ToolName } = mapV2ToV1("spacemolt_catalog", "weapons", {});
-    expect(v1ToolName).toBe("catalog");
-  });
-
-  it("maps battle sub-actions to battle tool", () => {
-    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt_battle", "advance", {});
-    expect(v1ToolName).toBe("battle");
-    expect(v1Args.action).toBe("advance");
-  });
-
-  it("maps spacemolt sell explicitly (no action param leakage)", () => {
-    const { v1ToolName, v1Args } = mapV2ToV1("spacemolt", "sell", { action: "sell", item_id: "iron_ore", quantity: 5 });
-    expect(v1ToolName).toBe("sell");
-    expect(v1Args).toEqual({ item_id: "iron_ore", quantity: 5 });
-    expect(v1Args.action).toBeUndefined();
-  });
-
-  it("maps spacemolt buy explicitly", () => {
-    const { v1ToolName } = mapV2ToV1("spacemolt", "buy", { action: "buy", item_id: "fuel" });
-    expect(v1ToolName).toBe("buy");
-  });
-
-  it("maps spacemolt mine explicitly", () => {
-    const { v1ToolName } = mapV2ToV1("spacemolt", "mine", {});
-    expect(v1ToolName).toBe("mine");
-  });
-
-  it("falls through to action as v1ToolName for unknown actions", () => {
-    // This is the fallback that the #578 guardrail catches in the handler
-    const { v1ToolName } = mapV2ToV1("spacemolt", "get_faction", {});
-    expect(v1ToolName).toBe("get_faction");
-  });
-
-  it("falls through for hallucinated actions on any tool", () => {
-    const { v1ToolName } = mapV2ToV1("spacemolt_ship", "totally_fake", {});
-    expect(v1ToolName).toBe("totally_fake");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// #578 — unknown action guardrail (handler-level)
-// ---------------------------------------------------------------------------
-
-describe("#578 unknown action guardrail", () => {
-  it("gameTools list is available on shared state for guardrail check", () => {
-    const shared = createTestSharedState();
-    // Simulate gameTools populated by mcp-factory after schema fetch
-    shared.proxy.gameTools = ["mine", "sell", "jump", "travel", "get_status", "scan"];
-    const { mcpServer } = createGantryServerV2(testConfig, shared);
-    expect(mcpServer).toBeDefined();
-    // The handler will use shared.proxy.gameTools to validate v1ToolName
-    expect(shared.proxy.gameTools).toContain("mine");
-    expect(shared.proxy.gameTools).not.toContain("get_faction");
-  });
-
-  it("V2_ACTION_TO_V1_NAME is exported for error message construction", () => {
-    expect(V2_ACTION_TO_V1_NAME).toBeDefined();
-    expect(V2_ACTION_TO_V1_NAME.spacemolt_storage).toBeDefined();
-    expect(V2_ACTION_TO_V1_NAME.spacemolt_storage.view).toBe("view_storage");
-  });
-
-  it("unknown action produces v1ToolName that won't be in gameTools", () => {
-    // Simulates the guardrail flow: mapV2ToV1 produces a v1ToolName,
-    // then the handler checks if it's in gameTools
-    const gameTools = ["mine", "sell", "jump", "travel", "get_status", "scan"];
-    const { v1ToolName } = mapV2ToV1("spacemolt", "get_faction", {});
-    expect(v1ToolName).toBe("get_faction");
-    expect(gameTools.includes(v1ToolName)).toBe(false);
-  });
-
-  it("known action produces v1ToolName that IS in gameTools", () => {
-    const gameTools = ["mine", "sell", "jump", "travel", "get_status", "scan", "view_storage", "deposit_items", "withdraw_items"];
-    const { v1ToolName } = mapV2ToV1("spacemolt_storage", "view", {});
-    expect(v1ToolName).toBe("view_storage");
-    expect(gameTools.includes(v1ToolName)).toBe(true);
-  });
-});
+// mapV2ToV1 + V2_ACTION_TO_V1_NAME tests removed in Chunk F2 — the v1 dispatch
+// path is gone. v2-action validation now happens at the MCP Zod layer (action
+// enum on the consolidated tool schema) plus the gameTools guard in mcp-factory.

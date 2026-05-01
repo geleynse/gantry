@@ -10,19 +10,25 @@
 
 /**
  * Sanitize a tool name by stripping XML/HTML artifact suffixes that AI clients
- * occasionally append (e.g. `logout" />` → `logout`).
+ * occasionally append (e.g. `logout" />` → `logout`), and collapsing repeated
+ * leading `mcp__gantry__` prefixes (e.g. `mcp__gantry__mcp__gantry__logout` →
+ * `mcp__gantry__logout`).
  *
  * Returns `{ name, sanitized }` where `sanitized` is true when the name changed.
  */
 export function sanitizeToolName(raw: string): { name: string; sanitized: boolean } {
   // Strip trailing XML/HTML self-closing tag artifacts: `" />`, `/>`, `">`, trailing `"` or `'`
   // Pattern covers: `mcp__gantry__logout" />` → `mcp__gantry__logout`
-  const cleaned = raw
+  let cleaned = raw
     .replace(/\s*"\s*\/>\s*$/, "")   // trailing " />
     .replace(/\s*\/>\s*$/, "")       // trailing />
     .replace(/\s*">\s*$/, "")        // trailing ">
     .replace(/['"]\s*$/, "")         // trailing " or '
     .trim();
+  // Collapse repeated leading `mcp__gantry__` prefixes — agents occasionally
+  // emit `mcp__gantry__mcp__gantry__logout`, which the MCP layer otherwise
+  // rejects as an unknown tool.
+  cleaned = cleaned.replace(/^(mcp__gantry__)+/, "mcp__gantry__");
   return { name: cleaned, sanitized: cleaned !== raw };
 }
 

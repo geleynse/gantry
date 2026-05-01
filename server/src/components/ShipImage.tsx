@@ -84,7 +84,7 @@ export function ShipImage({
       onKeyDown={isInteractive ? (e) => { if (e.key === "Enter" || e.key === " ") onClick?.(); } : undefined}
       role={isInteractive ? "button" : "img"}
       tabIndex={isInteractive ? 0 : -1}
-      aria-label={alt || `Ship: ${shipClass.replace(/_/g, " ")}`}
+      aria-label={alt || `Ship: ${(shipClass ?? "").replace(/_/g, " ")}`}
     >
       {/* SVG silhouette — always rendered as base layer */}
       <div className="absolute inset-0">

@@ -157,6 +157,11 @@ export class GalaxyGraph {
     return this.adj.size;
   }
 
+  /** Iterate all known system IDs. Order is insertion order (depends on graph build). */
+  systemIds(): IterableIterator<string> {
+    return this.adj.keys();
+  }
+
   /**
    * Start periodic background refresh of the galaxy graph.
    * Non-blocking initial fetch. Compares system count to detect topology changes.

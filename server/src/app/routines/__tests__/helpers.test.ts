@@ -18,11 +18,15 @@ describe("abbreviateTrace", () => {
   });
 });
 
-describe("formatDuration", () => {
-  test("renders sub-minute durations in seconds", () => {
-    expect(formatDuration(0)).toBe("0s");
-    expect(formatDuration(500)).toBe("1s");
-    expect(formatDuration(45_000)).toBe("45s");
+describe("formatDuration (re-export of lib/format helper)", () => {
+  test("renders sub-second durations in ms", () => {
+    expect(formatDuration(0)).toBe("0ms");
+    expect(formatDuration(500)).toBe("500ms");
+  });
+
+  test("renders sub-minute durations as Ns with one decimal", () => {
+    expect(formatDuration(2_500)).toBe("2.5s");
+    expect(formatDuration(45_000)).toBe("45.0s");
   });
 
   test("renders minute-scale durations as `Xm Ys`", () => {
@@ -30,8 +34,8 @@ describe("formatDuration", () => {
     expect(formatDuration(125_000)).toBe("2m 5s");
   });
 
-  test("clamps invalid input to 0s", () => {
-    expect(formatDuration(NaN)).toBe("0s");
-    expect(formatDuration(-100)).toBe("0s");
+  test("returns em-dash for invalid input", () => {
+    expect(formatDuration(NaN)).toBe("—");
+    expect(formatDuration(-100)).toBe("—");
   });
 });

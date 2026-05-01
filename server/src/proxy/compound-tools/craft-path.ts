@@ -208,7 +208,10 @@ export async function craftPathTo(
   }
 
   // Get market prices for cost estimation
-  const marketResp = await client.execute("analyze_market");
+  const isV2 = typeof client.isV2 === "function" && client.isV2();
+  const marketResp = isV2
+    ? await client.execute("spacemolt", { action: "analyze_market" })
+    : await client.execute("analyze_market");
   if (marketResp.error) {
     return { error: marketResp.error };
   }

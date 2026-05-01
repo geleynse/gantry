@@ -22,6 +22,10 @@ export interface GameClientLike {
   /** Optional: wait for the game tick to reach a specific value.
    *  Used to wait until the ship actually arrives at the arrival_tick. */
   waitForTickToReach?: (targetTick: number, timeoutMs?: number) => Promise<boolean>;
+  /** Optional: returns true when the underlying transport is the v2 HTTP client.
+   *  Compound tools branch on this to dispatch v2 tool/action pairs instead of
+   *  v1 flat tool names. Optional so test mocks (which omit it) default to v1. */
+  isV2?: () => boolean;
 }
 
 /** Dependencies injected into compound tool functions. */

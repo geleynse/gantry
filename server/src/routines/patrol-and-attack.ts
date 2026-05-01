@@ -63,7 +63,9 @@ async function run(ctx: RoutineContext, params: PatrolAndAttackParams): Promise<
   const status = statusResp.result as Record<string, unknown> | undefined;
   const ship = status?.ship as Record<string, unknown> | undefined;
   const hullCurrent = typeof ship?.hull === "number" ? ship.hull : undefined;
-  const hullMax = typeof ship?.hull_max === "number" ? ship.hull_max : undefined;
+  const hullMax = typeof ship?.max_hull === "number" ? ship.max_hull
+                : typeof ship?.hull_max === "number" ? ship.hull_max
+                : undefined;
   const hullPct = (hullCurrent !== undefined && hullMax !== undefined && hullMax > 0)
     ? (hullCurrent / hullMax) * 100 : 100;
 
@@ -146,7 +148,9 @@ async function run(ctx: RoutineContext, params: PatrolAndAttackParams): Promise<
       const postStatus = postStatusResp.result as Record<string, unknown> | undefined;
       const postShip = postStatus?.ship as Record<string, unknown> | undefined;
       const postHull = typeof postShip?.hull === "number" ? postShip.hull : hullCurrent;
-      const postHullMax = typeof postShip?.hull_max === "number" ? postShip.hull_max : hullMax;
+      const postHullMax = typeof postShip?.max_hull === "number" ? postShip.max_hull
+                        : typeof postShip?.hull_max === "number" ? postShip.hull_max
+                        : hullMax;
       const postHullPct = (postHull !== undefined && postHullMax !== undefined && postHullMax > 0)
         ? (postHull / postHullMax) * 100 : 0;
 
@@ -180,7 +184,9 @@ async function run(ctx: RoutineContext, params: PatrolAndAttackParams): Promise<
     const postCombatStatus = await ctx.client.execute("get_status");
     const postShip = (postCombatStatus.result as Record<string, unknown> | undefined)?.ship as Record<string, unknown> | undefined;
     const postHull = typeof postShip?.hull === "number" ? postShip.hull : undefined;
-    const postHullMax2 = typeof postShip?.hull_max === "number" ? postShip.hull_max : undefined;
+    const postHullMax2 = typeof postShip?.max_hull === "number" ? postShip.max_hull
+                       : typeof postShip?.hull_max === "number" ? postShip.hull_max
+                       : undefined;
     const postHullPct = (postHull !== undefined && postHullMax2 !== undefined && postHullMax2 > 0)
       ? (postHull / postHullMax2) * 100 : 100;
 

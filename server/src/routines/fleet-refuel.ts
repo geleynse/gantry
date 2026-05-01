@@ -102,7 +102,9 @@ async function run(ctx: RoutineContext, params: FleetRefuelParams): Promise<Rout
   const dockedAt = player?.docked_at_base as string | undefined;
 
   const selfFuel = typeof ship?.fuel === "number" ? ship.fuel : undefined;
-  const selfFuelMax = typeof ship?.fuel_max === "number" ? ship.fuel_max : undefined;
+  const selfFuelMax = typeof ship?.max_fuel === "number" ? ship.max_fuel
+                    : typeof ship?.fuel_max === "number" ? ship.fuel_max
+                    : undefined;
   const selfFuelPct = (selfFuel !== undefined && selfFuelMax !== undefined && selfFuelMax > 0)
     ? (selfFuel / selfFuelMax) * 100 : 100;
 

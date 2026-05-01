@@ -520,7 +520,7 @@ export const DENIED_ACTIONS_V2: Record<string, Set<string>> = {
  */
 export const V2_TO_V1_PARAM_MAP: Record<string, Record<string, string>> = {
   // spacemolt tool — core gameplay
-  jump: { id: "target_system" },
+  jump: { id: "target_system", system_id: "target_system" },
   travel: { id: "target_poi" },
   sell: { id: "item_id" },
   buy: { id: "item_id" },

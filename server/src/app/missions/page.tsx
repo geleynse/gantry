@@ -179,7 +179,9 @@ function AgentMissionsSection({ data }: { data: AgentMissions }) {
 
       {data.error ? (
         <div className="px-4 py-3 text-xs text-error">
-          Error: {data.error}
+          {/^API 429:/.test(data.error)
+            ? "Rate limited — backing off."
+            : `Error: ${data.error}`}
         </div>
       ) : data.missions.length === 0 ? (
         <div className="px-4 py-4 text-center text-xs text-muted-foreground italic">

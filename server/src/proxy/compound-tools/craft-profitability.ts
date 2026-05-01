@@ -153,7 +153,10 @@ export async function getCraftProfitability(
   log.info("get_craft_profitability START", { agent: agentName, limit, skillFilter });
 
   // --- Step 1: Get available recipes from catalog ---
-  const catalogResp = await client.execute("catalog", { type: "recipes" });
+  const isV2 = typeof client.isV2 === "function" && client.isV2();
+  const catalogResp = isV2
+    ? await client.execute("spacemolt_catalog", { type: "recipes" })
+    : await client.execute("catalog", { type: "recipes" });
   if (catalogResp.error) {
     return { error: catalogResp.error };
   }
@@ -168,7 +171,9 @@ export async function getCraftProfitability(
   }
 
   // --- Step 2: Get market prices ---
-  const marketResp = await client.execute("analyze_market");
+  const marketResp = isV2
+    ? await client.execute("spacemolt", { action: "analyze_market" })
+    : await client.execute("analyze_market");
   if (marketResp.error) {
     return { error: marketResp.error };
   }
