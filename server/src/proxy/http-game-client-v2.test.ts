@@ -154,6 +154,56 @@ describe("parseGetStatusText (parser)", () => {
     expect(p.modules).toHaveLength(2);
     expect(p.modules.map((m) => m.id)).toEqual(["abc123", "def456"]);
   });
+
+  it("parses cargo items from the Cargo section", () => {
+    const text = [
+      "Drifter Gale [Drifter] | 12,345cr | Sol System",
+      "Fuel: 41/130 | Cargo: 75/100",
+      "Modules (1):",
+      "id\ttype\tslot\tsize\twear",
+      "abc123\tmining_laser_i\tutility\t10\tPristine",
+      "Cargo (2 items):",
+      "item\tqty\tsize",
+      "Gold Ore\t14\t1",
+      "Iron Ore\t61\t1",
+      "Skills (1):",
+      "skill\tlevel\txp\tnext_level",
+      "mining\t13\t478\t6885",
+    ].join("\n");
+    const p = parseGetStatusText(text);
+    expect(p.cargo).toHaveLength(2);
+    expect(p.cargo[0]).toEqual({ name: "Gold Ore", quantity: 14 });
+    expect(p.cargo[1]).toEqual({ name: "Iron Ore", quantity: 61 });
+  });
+
+  it("returns empty cargo array when no Cargo section", () => {
+    const text = "Drifter Gale [Drifter] | 100cr | Sol\nHull: 10/10\nFuel: 5/10\nCargo: 0/10\n";
+    const p = parseGetStatusText(text);
+    expect(p.cargo).toEqual([]);
+  });
+
+  it("parses skills from the Skills section", () => {
+    const text = [
+      "Drifter Gale [Drifter] | 12,345cr | Sol System",
+      "Fuel: 41/130 | Cargo: 75/100",
+      "Skills (3):",
+      "skill\tlevel\txp\tnext_level",
+      "mining\t13\t478\t6885",
+      "exploration\t12\t4810\t5940",
+      "trading\t17\t1118\t11365",
+    ].join("\n");
+    const p = parseGetStatusText(text);
+    expect(p.skills).toHaveLength(3);
+    expect(p.skills[0]).toEqual({ name: "mining", level: 13, xp: 478, xpToNext: 6885 });
+    expect(p.skills[1]).toEqual({ name: "exploration", level: 12, xp: 4810, xpToNext: 5940 });
+    expect(p.skills[2]).toEqual({ name: "trading", level: 17, xp: 1118, xpToNext: 11365 });
+  });
+
+  it("returns empty skills array when no Skills section", () => {
+    const text = "Drifter Gale [Drifter] | 100cr | Sol\nHull: 10/10\nFuel: 5/10\nCargo: 0/10\n";
+    const p = parseGetStatusText(text);
+    expect(p.skills).toEqual([]);
+  });
 });
 
 describe("HttpGameClientV2", () => {

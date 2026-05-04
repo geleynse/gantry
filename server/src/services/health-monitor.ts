@@ -18,6 +18,7 @@ import { startAgent } from "./agent-manager.js";
 import { hasSession } from "./process-manager.js";
 import type { AgentConfig } from "../config.js";
 import { getFleetDisabledState } from "./fleet-control.js";
+import { isRestartSuppressed } from "./overseer-stop-cooldown.js";
 
 const log = createLogger("health-monitor");
 
@@ -125,6 +126,23 @@ export function createHealthMonitor(agents: AgentConfig[]): HealthMonitor {
     const shutdownPending = hasSignal(name, "shutdown");
     if (stoppedGracefully || shutdownPending) {
       // Agent stopped intentionally via the stop API — don't auto-restart.
+      state.desiredState = "stopped";
+      return;
+    }
+
+    // Case 2b: Overseer stop cooldown — the overseer force-stopped this agent
+    // and the 1-hour cooldown is still active.  Block auto-restart so we don't
+    // immediately undo the overseer's intervention.  Operator can override by
+    // calling startAgent directly (which calls clearCooldownForOperatorStart).
+    const cooldown = isRestartSuppressed(name);
+    if (cooldown.suppressed && cooldown.stoppedUntil) {
+      const remainingMin = Math.round((cooldown.stoppedUntil.getTime() - Date.now()) / 60_000);
+      log.info("Auto-restart suppressed — overseer stop cooldown active", {
+        agent: name,
+        stoppedUntil: cooldown.stoppedUntil.toISOString(),
+        remainingMin,
+        reason: cooldown.reason,
+      });
       state.desiredState = "stopped";
       return;
     }

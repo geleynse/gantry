@@ -693,6 +693,15 @@ export class HttpGameClientV2 implements GameTransport {
       return locationData;
     })();
 
+    // Build skills map from parsed text dashboard.
+    // Keys are skill names (lowercased), values match the SkillData shape expected
+    // by game-state.ts normalizeSkills() and the dashboard.
+    const skillsFromText: Record<string, { name: string; level: number; xp: number; xp_to_next: number }> = {};
+    for (const s of parsed.skills) {
+      const key = s.name.toLowerCase().replace(/\s+/g, '_');
+      skillsFromText[key] = { name: s.name, level: s.level, xp: s.xp, xp_to_next: s.xpToNext };
+    }
+
     const player: Record<string, unknown> = {
       username: parsed.username,
       empire: parsed.empire,
@@ -700,6 +709,9 @@ export class HttpGameClientV2 implements GameTransport {
       current_system: locInner.system_id,
       current_poi: locInner.poi_id,
       docked_at_base: locInner.docked_at,
+      // Include skills from the status text so they update on every status refresh.
+      // This supplements (and can replace) the separate get_skills fetch at login.
+      ...(parsed.skills.length > 0 ? { skills: skillsFromText } : {}),
     };
 
     const ship: Record<string, unknown> = {
@@ -721,6 +733,9 @@ export class HttpGameClientV2 implements GameTransport {
       power_used: parsed.powerUsed,
       power_capacity: parsed.powerCapacity,
       modules: parsed.modules,
+      // Cargo items parsed from the status text dashboard.
+      // These are the named items the game shows in the Cargo section.
+      cargo: parsed.cargo.map((c) => ({ name: c.name, quantity: c.quantity })),
     };
 
     const stitched: Record<string, unknown> = {
@@ -840,6 +855,8 @@ export interface ParsedGetStatus {
   powerUsed?: number;
   powerCapacity?: number;
   modules: Array<{ id?: string; class_id?: string; slot?: string; size?: string; wear?: string }>;
+  cargo: Array<{ name: string; quantity: number }>;
+  skills: Array<{ name: string; level: number; xp: number; xpToNext: number }>;
 }
 
 /**
@@ -848,7 +865,7 @@ export interface ParsedGetStatus {
  * others. See plan §A for the regex contracts.
  */
 export function parseGetStatusText(text: string): ParsedGetStatus {
-  const out: ParsedGetStatus = { modules: [] };
+  const out: ParsedGetStatus = { modules: [], cargo: [], skills: [] };
 
   // Header: "Username [Empire] | 1,234,567cr | System Display Name"
   // Empire token is \w+ (e.g. "Drifter") but the username can have arbitrary
@@ -883,25 +900,66 @@ export function parseGetStatusText(text: string): ParsedGetStatus {
   [out.cpuUsed, out.cpuCapacity] = numPair(/CPU:\s*(\d+)\/(\d+)/);
   [out.powerUsed, out.powerCapacity] = numPair(/Power:\s*(\d+)\/(\d+)/);
 
+  // Section parser helper: extracts tab-delimited rows from named sections.
+  // Stops at the next section header (Word (N): or Word:) or end of text.
+  // Skips the header row (first row where cols[0] matches an expected header name).
+  const parseSection = (sectionRe: RegExp): string[][] => {
+    const m = text.match(sectionRe);
+    if (!m) return [];
+    const rows: string[][] = [];
+    for (const row of m[1].split("\n")) {
+      if (!row.includes("\t")) continue;
+      const cols = row.split("\t").map((c) => c.trim()).filter((c) => c.length > 0);
+      if (cols.length < 2) continue;
+      rows.push(cols);
+    }
+    return rows;
+  };
+
   // Modules: tab-split rows under a "Modules (N):" header. The section ends
   // at the next "Word (...)" section header (Cargo, Skills, Active missions,
   // etc) — relying on `\n\n` was wrong because get_status uses single newlines
   // between sections, which let skill rows leak into out.modules.
-  const moduleSection = text.match(/Modules\s*(?:\(\d+\))?:\n([\s\S]*?)(?:\n\n|\n[A-Za-z][\w ]*\(|$)/);
-  if (moduleSection) {
-    for (const row of moduleSection[1].split("\n")) {
-      if (!row.includes("\t")) continue;
-      const cols = row.split("\t").map((c) => c.trim()).filter((c) => c.length > 0);
-      if (cols.length < 4) continue;
-      // Skip the header row if it's literally column names.
-      if (cols[0].toLowerCase() === "id" || cols[0].toLowerCase() === "module") continue;
-      out.modules.push({
-        id: cols[0],
-        class_id: cols[1],
-        slot: cols[2],
-        size: cols[3],
-        wear: cols[4],
-      });
+  const SECTION_END = /(?:\n\n|\n[A-Za-z][\w ]*(?:\(|:)|$)/;
+  const moduleSectionRe = new RegExp(`Modules\\s*(?:\\(\\d+\\))?:\\n([\\s\\S]*?)${SECTION_END.source}`);
+  for (const cols of parseSection(moduleSectionRe)) {
+    // Skip the header row if it's literally column names.
+    if (cols[0].toLowerCase() === "id" || cols[0].toLowerCase() === "module") continue;
+    if (cols.length < 4) continue;
+    out.modules.push({
+      id: cols[0],
+      class_id: cols[1],
+      slot: cols[2],
+      size: cols[3],
+      wear: cols[4],
+    });
+  }
+
+  // Cargo: tab-split rows under "Cargo (N items):" or "Cargo:".
+  // Format: "item\tqty\tsize" header, then "Gold Ore\t14\t1" rows.
+  const cargoSectionRe = new RegExp(`Cargo\\s*(?:\\([^)]*\\))?:\\n([\\s\\S]*?)${SECTION_END.source}`);
+  for (const cols of parseSection(cargoSectionRe)) {
+    // Skip header row
+    if (cols[0].toLowerCase() === "item" || cols[0].toLowerCase() === "name") continue;
+    const name = cols[0];
+    const quantity = parseInt(cols[1], 10);
+    if (name && !isNaN(quantity) && quantity > 0) {
+      out.cargo.push({ name, quantity });
+    }
+  }
+
+  // Skills: tab-split rows under "Skills (N):" header.
+  // Format: "skill\tlevel\txp\tnext_level" header, then "mining\t13\t478\t6885" rows.
+  const skillsSectionRe = new RegExp(`Skills\\s*(?:\\([^)]*\\))?:\\n([\\s\\S]*?)${SECTION_END.source}`);
+  for (const cols of parseSection(skillsSectionRe)) {
+    // Skip header row
+    if (cols[0].toLowerCase() === "skill" || cols[0].toLowerCase() === "name") continue;
+    const name = cols[0];
+    const level = parseInt(cols[1], 10);
+    const xp = parseInt(cols[2], 10);
+    const xpToNext = parseInt(cols[3], 10);
+    if (name && !isNaN(level)) {
+      out.skills.push({ name, level, xp: isNaN(xp) ? 0 : xp, xpToNext: isNaN(xpToNext) ? 0 : xpToNext });
     }
   }
 

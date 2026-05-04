@@ -55,7 +55,7 @@ function Sparkline({ data, successRate }: { data: number[]; successRate: number 
 }
 
 export default function DiagnosticsPage() {
-  const { data: fleetStatus, connected } = useFleetStatus();
+  const { data: fleetStatus, connected, error: sseError } = useFleetStatus();
   const agentNames = useAgentNames();
 
   // Accumulate per-agent success rate history from SSE updates
@@ -81,30 +81,32 @@ export default function DiagnosticsPage() {
     }
   }, [fleetStatus]);
 
-  if (!fleetStatus || !connected) {
-    return (
-      <div className="space-y-4">
-        <h1 className="text-lg font-semibold text-primary uppercase tracking-wider">
-          Diagnostics
-        </h1>
-        <div className="text-muted-foreground">Loading health diagnostics...</div>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <h1 className="text-lg font-semibold text-primary uppercase tracking-wider">
         Health Diagnostics
       </h1>
 
+      {/* SSE connection status banner — only shown when disconnected */}
+      {!connected && (
+        <div className="bg-warning/10 border border-warning/30 text-warning text-xs px-3 py-2 rounded-sm">
+          {sseError ?? "Connecting to fleet status stream…"}
+        </div>
+      )}
+
       <RateLimitPanel />
       <HealthMonitorPanel />
       <PrayerAdoptionCard />
 
       <div className="space-y-4">
+        {/* Agent cards require live fleet data */}
+        {!fleetStatus && (
+          <div className="text-muted-foreground text-sm italic">
+            Waiting for fleet status data…
+          </div>
+        )}
         {agentNames.map((agentName) => {
-          const agent = fleetStatus.agents.find((a) => a.name === agentName);
+          const agent = fleetStatus?.agents.find((a) => a.name === agentName);
           if (!agent) return null;
 
           const isStopped = agent.state === 'stopped';

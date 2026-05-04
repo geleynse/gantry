@@ -59,7 +59,7 @@ describe("fleet_jump routine", () => {
       let jumped = false;
       const ctx = mockContext(async (tool) => {
         toolsCalled.push(tool);
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           if (!jumped) {
             return fleetStatus(
               [{ username: "test-agent" }, { username: "ally-1" }],
@@ -90,7 +90,7 @@ describe("fleet_jump routine", () => {
       expect(result.status).toBe("completed");
       expect(result.summary).toContain("sirius");
       expect(result.summary).toContain("All");
-      expect(toolsCalled).toContain("fleet");
+      expect(toolsCalled).toContain("spacemolt_fleet");
       expect(toolsCalled).toContain("jump_route");
     });
 
@@ -98,7 +98,7 @@ describe("fleet_jump routine", () => {
       const toolsCalled: string[] = [];
       const ctx = mockContext(async (tool) => {
         toolsCalled.push(tool);
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return fleetStatus(
             [{ username: "test-agent" }, { username: "ally-1" }],
             "sirius",
@@ -121,7 +121,7 @@ describe("fleet_jump routine", () => {
       // But if the fleet somehow reports different systems per member (edge case),
       // the routine should detect it. We test with per-member system fields.
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return {
             result: {
               in_fleet: true,
@@ -146,18 +146,18 @@ describe("fleet_jump routine", () => {
 
     it("hands off when fleet(status) fails", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") return { error: { code: "no_fleet" } };
+        if (tool === "spacemolt_fleet") return { error: { code: "no_fleet" } };
         return { result: {} };
       });
 
       const result = await fleetJumpRoutine.run(ctx, { destination: "sirius" });
       expect(result.status).toBe("handoff");
-      expect(result.handoffReason).toContain("fleet(status) failed");
+      expect(result.handoffReason).toContain("spacemolt_fleet(status) failed");
     });
 
     it("hands off when jump fails", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return fleetStatus([{ username: "test-agent" }], "sol");
         }
         if (tool === "get_status") {
@@ -174,7 +174,7 @@ describe("fleet_jump routine", () => {
 
     it("hands off when combat detected during jump", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return fleetStatus([{ username: "test-agent" }], "sol");
         }
         if (tool === "get_status") {
@@ -193,7 +193,7 @@ describe("fleet_jump routine", () => {
 
     it("hands off when still in transit after jump", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return fleetStatus([{ username: "test-agent" }], "sol");
         }
         if (tool === "get_status") {
@@ -214,7 +214,7 @@ describe("fleet_jump routine", () => {
     it("hands off when some members haven't arrived after successful jump", async () => {
       let jumped = false;
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           if (!jumped) {
             return fleetStatus(
               [{ username: "test-agent" }, { username: "ally-1" }],
@@ -253,7 +253,7 @@ describe("fleet_jump routine", () => {
 
     it("hands off when already at destination but some members are not", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           // Fleet-level system says sirius, but one member reports different
           return {
             result: {
@@ -280,7 +280,7 @@ describe("fleet_jump routine", () => {
 
     it("handles legacy per-member system fields as fallback", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           // No fleet-level system_id, per-member fields only
           return {
             result: {

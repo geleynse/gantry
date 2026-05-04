@@ -9,9 +9,10 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  ReferenceLine,
 } from "recharts";
 import { formatAbsolute, formatTimeShort } from "@/lib/time";
-import { formatCompactNumber, formatCredits as formatCreditsFull } from "@/lib/format";
+import { formatCredits as formatCreditsFull, formatCreditsCompact } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,14 +30,16 @@ interface ChartDataPoint {
   credits: number;
   fullTimestamp: string;
   system: string;
+  /** Non-empty string ("Apr 24") on the first point of a new local day. */
+  dayStart?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Y-axis tick labels — compact form, no suffix (the chart label says "cr").
-const formatCredits = (n: number) => formatCompactNumber(n);
+// Y-axis tick labels — compact credits form with "cr" suffix.
+const formatCreditsAxis = (n: number) => formatCreditsCompact(n);
 
 // X-axis tick labels — short HH:MM via the shared helper.
 const formatTimestamp = formatTimeShort;
@@ -110,13 +113,27 @@ export function CreditChart({ agentName }: CreditChartProps) {
           const step = Math.ceil(pts.length / MAX_POINTS);
           pts = pts.filter((_, i) => i % step === 0 || i === pts.length - 1);
         }
+        // Track day boundaries for reference line markers
+        let prevDate: string | null = null;
         setData(
-          pts.map((pt) => ({
-            time: formatTimestamp(pt.timestamp),
-            credits: pt.credits,
-            fullTimestamp: formatFullTimestamp(pt.timestamp),
-            system: pt.system ?? "",
-          }))
+          pts.map((pt) => {
+            const d = new Date(
+              pt.timestamp.includes("T")
+                ? pt.timestamp
+                : pt.timestamp.replace(" ", "T") + "Z"
+            );
+            const localDate = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+            const isDayStart = prevDate !== null && localDate !== prevDate;
+            prevDate = localDate;
+            const dayLabel = `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()}`;
+            return {
+              time: formatTimestamp(pt.timestamp),
+              credits: pt.credits,
+              fullTimestamp: formatFullTimestamp(pt.timestamp),
+              system: pt.system ?? "",
+              dayStart: isDayStart ? dayLabel : undefined,
+            };
+          })
         );
       })
       .catch((err: unknown) => {
@@ -169,13 +186,31 @@ export function CreditChart({ agentName }: CreditChartProps) {
             interval="preserveStartEnd"
           />
           <YAxis
-            tickFormatter={formatCredits}
+            tickFormatter={formatCreditsAxis}
             tick={{ fill: "#616e88", fontSize: 10 }}
             tickLine={false}
             axisLine={{ stroke: "#4c566a" }}
-            width={48}
+            width={60}
           />
           <Tooltip content={<CustomTooltip />} />
+          {/* Midnight reference lines — one per day boundary in the visible range */}
+          {data
+            .filter((pt) => pt.dayStart)
+            .map((pt) => (
+              <ReferenceLine
+                key={`day-${pt.time}`}
+                x={pt.time}
+                stroke="#4c566a"
+                strokeDasharray="4 3"
+                strokeOpacity={0.6}
+                label={{
+                  value: pt.dayStart as string,
+                  position: "insideTopRight",
+                  fill: "#616e88",
+                  fontSize: 9,
+                }}
+              />
+            ))}
           <Line
             type="monotone"
             dataKey="credits"

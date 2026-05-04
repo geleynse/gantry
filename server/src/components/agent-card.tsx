@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { cn, formatCredits, getItemName, formatModuleName } from "@/lib/utils";
+import { cn, getItemName, formatModuleName } from "@/lib/utils";
+import { formatCreditsCompact } from "@/lib/format";
 import { formatAbsolute, relativeTime } from "@/lib/time";
 import { HealthBar } from "./health-bar";
 import { ShipImage } from "./ShipImage";
@@ -89,7 +90,7 @@ export function AgentCard({ agent, gameState, name, compact }: AgentCardProps) {
         <span className="font-bold text-foreground w-32 truncate">{displayName}</span>
         <span className={cn("inline-block w-2 h-2 rounded-full shrink-0", stateColor)} title={agent.state} />
         <span className="font-mono text-foreground shrink-0 w-24 text-right">
-          {formatCredits(gameState?.credits ?? null)}
+          {formatCreditsCompact(gameState?.credits ?? null)}
         </span>
         <span className="text-muted-foreground truncate flex-1 text-right">{location}</span>
       </div>
@@ -274,7 +275,7 @@ export function AgentCard({ agent, gameState, name, compact }: AgentCardProps) {
           {gameState && (
             <div className="flex items-center gap-1">
               <span className="font-mono text-foreground">
-                {formatCredits(gameState.credits)}
+                {formatCreditsCompact(gameState.credits)}
               </span>
               {agent.state === 'stopped' && gameState.data_age_s !== undefined && (
                 <span

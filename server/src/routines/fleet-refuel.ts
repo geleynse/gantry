@@ -55,12 +55,12 @@ async function run(ctx: RoutineContext, params: FleetRefuelParams): Promise<Rout
 
   // --- Phase 1: Check fleet status ---
   const fleetPhase = phase("check_fleet");
-  const fleetResp = await ctx.client.execute("fleet", { action: "status" });
+  const fleetResp = await ctx.client.execute("spacemolt_fleet", { action: "status" });
 
   if (fleetResp.error) {
     phases.push(completePhase(fleetPhase, { error: fleetResp.error }));
     return handoff(
-      `fleet(status) failed: ${JSON.stringify(fleetResp.error)}. You may not be in a fleet — use fleet(action="create") or fleet(action="invite") first.`,
+      `spacemolt_fleet(status) failed: ${JSON.stringify(fleetResp.error)}. You may not be in a fleet — use spacemolt_fleet(action="create") or spacemolt_fleet(action="invite", id=<player>) first.`,
       { error: fleetResp.error },
       phases,
     );

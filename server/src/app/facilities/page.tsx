@@ -340,6 +340,13 @@ export default function FacilitiesPage() {
               ))}
             </select>
           )}
+          {selectedAgent && (
+            <RequestScanButton
+              agent={selectedAgent}
+              tab={activeTab}
+              onSuccess={scheduleAutoRefresh}
+            />
+          )}
           <button
             onClick={fetchFacilities}
             disabled={loading}

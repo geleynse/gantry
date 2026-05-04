@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, ChevronDown, Clock3, RefreshCw, Route, Search, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, Clock3, RefreshCw, Search, XCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useAgentNames } from "@/hooks/use-agent-names";
@@ -242,167 +242,166 @@ export default function RoutinesPage() {
   }, [jobs]);
 
   return (
-    <main className="min-h-screen bg-background">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 lg:px-8">
-        <header className="flex flex-col gap-4 border-b border-border pb-5 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-sm uppercase tracking-wider text-muted-foreground">
-              <Route className="h-4 w-4" />
-              Routine Jobs
-            </div>
-            <h1 className="mt-2 text-2xl font-semibold text-foreground">Async Routine History</h1>
-          </div>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-primary/20 pb-4">
+        <div>
+          <h1 className="text-lg font-semibold text-primary uppercase tracking-wider">
+            Routines
+          </h1>
+          <p className="text-xs text-muted-foreground mt-1">
+            Async routine history: status, trace, duration.
+          </p>
+        </div>
+        <button
+          onClick={loadJobs}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground border border-border hover:bg-secondary transition-colors disabled:opacity-50"
+          disabled={loading}
+          title="Refresh routine jobs"
+        >
+          <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
+          Refresh
+        </button>
+      </div>
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        {STATUS_CARD_OPTIONS.map((option) => (
           <button
-            onClick={loadJobs}
-            className="inline-flex h-9 items-center gap-2 border border-border px-3 text-sm text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
-            disabled={loading}
-            title="Refresh routine jobs"
-          >
-            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
-            Refresh
-          </button>
-        </header>
-
-        <section className="grid gap-3 sm:grid-cols-3">
-          {STATUS_CARD_OPTIONS.map((option) => (
-            <button
-              key={option}
-              onClick={() => setStatus(option === status ? "all" : option)}
-              className={cn(
-                "flex items-center justify-between border px-4 py-3 text-left transition-colors hover:bg-secondary/60",
-                status === option ? statusClasses(option) : "border-border bg-card text-foreground",
-              )}
-            >
-              <span className="inline-flex items-center gap-2 text-sm font-medium capitalize">
-                <StatusIcon status={option} />
-                {option}
-              </span>
-              <span className="font-mono text-lg">{counts[option]}</span>
-            </button>
-          ))}
-        </section>
-
-        <section className="flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-center">
-          <label className="flex min-w-0 flex-1 items-center gap-2 border border-border bg-card px-3 py-2">
-            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search agent, routine, trace, summary"
-              className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-            />
-          </label>
-          <select
-            value={agent}
-            onChange={(event) => setAgent(event.target.value)}
-            className="h-10 border border-border bg-card px-3 text-sm text-foreground outline-none"
-          >
-            <option value="all">All agents</option>
-            {agentNames.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-          <select
-            value={status}
-            onChange={(event) => setStatus(event.target.value as "all" | RoutineJobStatus)}
-            className="h-10 border border-border bg-card px-3 text-sm text-foreground outline-none"
-          >
-            {STATUS_OPTIONS.map((option) => (
-              <option key={option} value={option}>{option === "all" ? "All statuses" : option}</option>
-            ))}
-          </select>
-        </section>
-
-        {error && (
-          <div className="flex items-center gap-2 border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            <AlertCircle className="h-4 w-4" />
-            {error}
-          </div>
-        )}
-
-        <section className="overflow-hidden border border-border">
-          <div
+            key={option}
+            onClick={() => setStatus(option === status ? "all" : option)}
             className={cn(
-              "grid gap-3 border-b border-border bg-muted/30 px-4 py-2 text-xs uppercase tracking-wider text-muted-foreground max-lg:hidden",
-              GRID_HEADER_CLASSES
+              "flex items-center justify-between border px-4 py-3 text-left transition-colors hover:bg-secondary/60",
+              status === option ? statusClasses(option) : "border-border bg-card text-foreground",
             )}
           >
-            <div />
-            <div>Started</div>
-            <div>Agent</div>
-            <div>Trace</div>
-            <div>Routine</div>
-            <div>Summary</div>
-            <div>Status</div>
-            <div className="text-right">Duration</div>
-          </div>
+            <span className="inline-flex items-center gap-2 text-sm font-medium capitalize">
+              <StatusIcon status={option} />
+              {option}
+            </span>
+            <span className="font-mono text-lg">{counts[option]}</span>
+          </button>
+        ))}
+      </section>
 
-          {loading && visibleJobs.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm text-muted-foreground">Loading routine jobs...</div>
-          ) : visibleJobs.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm text-muted-foreground">No routine jobs match the current filters.</div>
-          ) : (
-            <div className="divide-y divide-border">
-              {visibleJobs.map((job) => {
-                const summaryText = job.error ?? job.result?.summary ?? job.text ?? "";
-                const isExpanded = expandedIds.has(job.id);
-                return (
-                  <div key={job.id}>
-                    <article
-                      onClick={() => toggleExpand(job.id)}
-                      className={cn(
-                        "grid gap-3 px-4 py-4 lg:items-start cursor-pointer transition-colors hover:bg-secondary/30",
-                        isExpanded && "bg-secondary/20",
-                        GRID_ROW_CLASSES
-                      )}
-                      aria-expanded={isExpanded}
-                      role="button"
-                    >
-                      <div className="flex items-start justify-center pt-0.5">
-                        <ChevronDown
-                          className={cn(
-                            "h-4 w-4 text-muted-foreground/70 transition-transform",
-                            isExpanded && "rotate-180"
-                          )}
-                          aria-hidden="true"
-                        />
-                      </div>
-                      <div className="font-mono text-xs text-muted-foreground">
-                        {formatStartedAt(job.started_at)}
-                      </div>
-                      <div className="min-w-0 font-mono text-sm text-foreground">{job.agent}</div>
-                      <div className="min-w-0">
-                        <TraceCell traceId={job.trace_id} />
-                      </div>
-                      <div className="min-w-0 font-medium text-foreground truncate" title={job.routine}>
-                        {job.routine}
-                      </div>
-                      <div className="min-w-0">
-                        <SummaryCell text={summaryText} expanded={isExpanded} />
-                      </div>
-                      <div>
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1.5 border px-2 py-1 text-xs capitalize",
-                            statusClasses(job.status),
-                          )}
-                        >
-                          <StatusIcon status={job.status} />
-                          {job.status}
-                        </span>
-                      </div>
-                      <div className="font-mono text-sm text-muted-foreground lg:text-right">
-                        {formatDuration(job.duration_ms)}
-                      </div>
-                    </article>
-                    {isExpanded && <ExpandedDetails job={job} />}
-                  </div>
-                );
-              })}
-            </div>
+      <section className="flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-center">
+        <label className="flex min-w-0 flex-1 items-center gap-2 border border-border bg-card px-3 py-2">
+          <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search agent, routine, trace, summary"
+            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+          />
+        </label>
+        <select
+          value={agent}
+          onChange={(event) => setAgent(event.target.value)}
+          className="h-10 border border-border bg-card px-3 text-sm text-foreground outline-none"
+        >
+          <option value="all">All agents</option>
+          {agentNames.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+        <select
+          value={status}
+          onChange={(event) => setStatus(event.target.value as "all" | RoutineJobStatus)}
+          className="h-10 border border-border bg-card px-3 text-sm text-foreground outline-none"
+        >
+          {STATUS_OPTIONS.map((option) => (
+            <option key={option} value={option}>{option === "all" ? "All statuses" : option}</option>
+          ))}
+        </select>
+      </section>
+
+      {error && (
+        <div className="flex items-center gap-2 border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4" />
+          {error}
+        </div>
+      )}
+
+      <section className="overflow-hidden border border-border">
+        <div
+          className={cn(
+            "grid gap-3 border-b border-border bg-muted/30 px-4 py-2 text-xs uppercase tracking-wider text-muted-foreground max-lg:hidden",
+            GRID_HEADER_CLASSES
           )}
-        </section>
-      </div>
-    </main>
+        >
+          <div />
+          <div>Started</div>
+          <div>Agent</div>
+          <div>Trace</div>
+          <div>Routine</div>
+          <div>Summary</div>
+          <div>Status</div>
+          <div className="text-right">Duration</div>
+        </div>
+
+        {loading && visibleJobs.length === 0 ? (
+          <div className="px-4 py-10 text-center text-sm text-muted-foreground">Loading routine jobs...</div>
+        ) : visibleJobs.length === 0 ? (
+          <div className="px-4 py-10 text-center text-sm text-muted-foreground">No routine jobs match the current filters.</div>
+        ) : (
+          <div className="divide-y divide-border">
+            {visibleJobs.map((job) => {
+              const summaryText = job.error ?? job.result?.summary ?? job.text ?? "";
+              const isExpanded = expandedIds.has(job.id);
+              return (
+                <div key={job.id}>
+                  <article
+                    onClick={() => toggleExpand(job.id)}
+                    className={cn(
+                      "grid gap-3 px-4 py-4 lg:items-start cursor-pointer transition-colors hover:bg-secondary/30",
+                      isExpanded && "bg-secondary/20",
+                      GRID_ROW_CLASSES
+                    )}
+                    aria-expanded={isExpanded}
+                    role="button"
+                  >
+                    <div className="flex items-start justify-center pt-0.5">
+                      <ChevronDown
+                        className={cn(
+                          "h-4 w-4 text-muted-foreground/70 transition-transform",
+                          isExpanded && "rotate-180"
+                        )}
+                        aria-hidden="true"
+                      />
+                    </div>
+                    <div className="font-mono text-xs text-muted-foreground">
+                      {formatStartedAt(job.started_at)}
+                    </div>
+                    <div className="min-w-0 font-mono text-sm text-foreground">{job.agent}</div>
+                    <div className="min-w-0">
+                      <TraceCell traceId={job.trace_id} />
+                    </div>
+                    <div className="min-w-0 font-medium text-foreground truncate" title={job.routine}>
+                      {job.routine}
+                    </div>
+                    <div className="min-w-0">
+                      <SummaryCell text={summaryText} expanded={isExpanded} />
+                    </div>
+                    <div>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1.5 border px-2 py-1 text-xs capitalize",
+                          statusClasses(job.status),
+                        )}
+                      >
+                        <StatusIcon status={job.status} />
+                        {job.status}
+                      </span>
+                    </div>
+                    <div className="font-mono text-sm text-muted-foreground lg:text-right">
+                      {formatDuration(job.duration_ms)}
+                    </div>
+                  </article>
+                  {isExpanded && <ExpandedDetails job={job} />}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }

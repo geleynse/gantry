@@ -58,8 +58,8 @@ type MockClient = ReturnType<typeof makeClient>;
 function makeSessionManager(agentName = "test-agent", client?: MockClient) {
   const mgr = {
     resolveAgentName: (_username: string) => agentName,
-    getOrCreateClient: () => (client ?? makeClient()) as unknown as InstanceType<typeof import("./game-client.js").HttpGameClient>,
-    getClient: () => (client ?? undefined) as unknown as InstanceType<typeof import("./game-client.js").HttpGameClient> | undefined,
+    getOrCreateClient: () => (client ?? makeClient()) as unknown as InstanceType<typeof import("./http-game-client-v2.js").HttpGameClientV2>,
+    getClient: () => (client ?? undefined) as unknown as InstanceType<typeof import("./http-game-client-v2.js").HttpGameClientV2> | undefined,
     removeClient: (_name: string) => {},
     persistSessions: () => {},
     // Account pool methods — always return null in tests (no pool configured)
@@ -320,7 +320,6 @@ describe("handleLogin", () => {
     // Mock a client that returns null data on first call, then valid data on retry
     let callCount = 0;
     const slowClient = makeClient();
-    const originalRefreshStatus = slowClient.refreshStatus.bind(slowClient);
     slowClient.refreshStatus = async () => {
       callCount++;
       if (callCount === 1) {
@@ -607,7 +606,6 @@ describe("handleLogout", () => {
     const deps = makeDeps({ client, sessionAgentMap });
 
     // Set agent to draining state
-    const db = deps.statusCache; // Just using this to verify DB access works
     (await import("../services/agent-shutdown-db.js")).setShutdownState("test-agent", "draining");
 
     const result = await handleLogout(deps, "sess-drain");

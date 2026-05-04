@@ -423,27 +423,49 @@ export function GalaxyMap({
     [mapData, positions]
   );
 
-  // Zoom-to-fit once after the graph has nodes. react-force-graph starts at
-  // an arbitrary zoom level that often crops to just a handful of systems
-  // (report #4: "only 2-3 systems visible though 505 exist"). Run once per
-  // mount; operator can still pan/zoom manually afterward.
+  // Zoom-to-fit once the ForceGraph2D ref is populated and graphData has
+  // landed. We use cooldownTicks={0} so the physics engine never runs,
+  // meaning onEngineStop won't fire reliably. Instead, poll for the ref +
+  // data and call zoomToFit explicitly. Stops as soon as it succeeds.
+  // Symptom prevented: only 4-5 of 505 systems visible in the corner.
   const hasFitRef = useRef(false);
   useEffect(() => {
     if (hasFitRef.current) return;
     if (!graphData || graphData.nodes.length === 0) return;
-    // Defer one tick so the force-graph layout has a chance to compute bounds.
-    const timer = setTimeout(() => {
-      if (graphRef.current && typeof graphRef.current.zoomToFit === "function") {
+    let cancelled = false;
+    let attempts = 0;
+    const tryFit = () => {
+      if (cancelled || hasFitRef.current) return;
+      attempts++;
+      const g = graphRef.current;
+      if (g && typeof g.zoomToFit === "function") {
         try {
-          graphRef.current.zoomToFit(400, 60);
+          g.zoomToFit(400, 60);
           hasFitRef.current = true;
+          return;
         } catch {
-          // Non-fatal — fall back to default zoom.
+          // fall through and retry
         }
       }
-    }, 200);
-    return () => clearTimeout(timer);
+      if (attempts < 30) {
+        setTimeout(tryFit, 100);
+      }
+    };
+    tryFit();
+    return () => {
+      cancelled = true;
+    };
   }, [graphData]);
+  const handleEngineStop = useCallback(() => {
+    if (hasFitRef.current) return;
+    if (!graphRef.current || typeof graphRef.current.zoomToFit !== "function") return;
+    try {
+      graphRef.current.zoomToFit(400, 60);
+      hasFitRef.current = true;
+    } catch {
+      // Non-fatal — fall back to default zoom.
+    }
+  }, []);
 
   // Build node lookup by id AND name for trail rendering
   // (trails use system names like "Mimosa", graph uses IDs like "mimosa")
@@ -900,6 +922,7 @@ export function GalaxyMap({
         backgroundColor="transparent"
         enableNodeDrag={false}
         onRenderFramePre={renderFramePre}
+        onEngineStop={handleEngineStop}
       />
     </div>
   );

@@ -71,12 +71,13 @@ export class ProxyHealthService {
   }
 }
 
-// Default instance for backward compatibility
-const defaultService = new ProxyHealthService();
+// Module-level singleton. Prefer importing this directly over the
+// deprecated getProxyStatuses() wrapper.
+export const proxyHealthService = new ProxyHealthService();
 
 /**
- * @deprecated Use ProxyHealthService instance directly. This function delegates to a module-level default instance.
+ * @deprecated Use `proxyHealthService.getProxyStatuses()` directly.
  */
 export async function getProxyStatuses(): Promise<ProxyInfo[]> {
-  return defaultService.getProxyStatuses();
+  return proxyHealthService.getProxyStatuses();
 }

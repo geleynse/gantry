@@ -44,8 +44,22 @@ export default function LogsPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-200px)]">
-        <LogPane agents={agents} defaultAgent={firstAgent} />
-        <LogPane agents={agents} defaultAgent={secondAgent} />
+        <div className="flex flex-col gap-1 min-h-0">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono px-0.5">
+            Left
+          </div>
+          <div className="flex-1 min-h-0">
+            <LogPane agents={agents} defaultAgent={firstAgent} />
+          </div>
+        </div>
+        <div className="flex flex-col gap-1 min-h-0">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono px-0.5">
+            Right
+          </div>
+          <div className="flex-1 min-h-0">
+            <LogPane agents={agents} defaultAgent={secondAgent} />
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -254,3 +254,57 @@ describe('game-state flatten — full persist/restore round-trip', () => {
     expect(agent.last_seen).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Module normalization — v2 class_id name resolution
+// ---------------------------------------------------------------------------
+
+describe('game-state flatten — v2 module class_id name resolution', () => {
+  it('uses class_id as module name when item_name is absent', async () => {
+    // v2 get_status produces modules with { id, class_id, slot, size, wear }
+    // where class_id is e.g. "laser_mk2" or "engineering_efficiency_1".
+    // The normalizeModules function should format class_id as a friendly name.
+    const v2Data = {
+      player: {
+        credits: 1000,
+        current_system: 'Solara',
+        current_poi: 'Solara Base',
+      },
+      ship: {
+        name: 'Wanderer',
+        class_id: 'scout',
+        hull: 80,
+        max_hull: 100,
+        shield: 50,
+        max_shield: 50,
+        fuel: 60,
+        max_fuel: 100,
+        cargo_used: 0,
+        cargo_capacity: 50,
+        modules: [
+          { id: 'c648082443cca6d8f30054cec3ea0d49', class_id: 'engineering_efficiency_1', slot: 'utility', size: 'medium', wear: '5%' },
+          { id: 'abc123def456abc123def456abc123de', class_id: 'laser_mk2', slot: 'weapon', size: 'large', wear: '0%' },
+        ],
+        cargo: [
+          { name: 'Gold Ore', quantity: 14 },
+        ],
+      },
+    };
+    const app = createTestApp({
+      'test-v2': { data: v2Data, fetchedAt: Date.now() },
+    });
+    const res = await request(app).get('/api/game-state/all');
+    expect(res.status).toBe(200);
+    const agent = res.body['test-v2'];
+    expect(agent.ship.modules).toHaveLength(2);
+    // class_id "engineering_efficiency_1" should be formatted as "Engineering Efficiency 1"
+    expect(agent.ship.modules[0].item_name).toBe('Engineering Efficiency 1');
+    // class_id "laser_mk2" → "Laser Mk 2" (or similar friendly name)
+    expect(agent.ship.modules[1].item_name).toBeTruthy();
+    expect(agent.ship.modules[1].item_name).not.toMatch(/^[a-f0-9]{8,}$/i); // not a raw hex
+    // Cargo items from the status text (v2 format uses name, not item_id)
+    expect(agent.ship.cargo).toHaveLength(1);
+    expect(agent.ship.cargo[0].name).toBe('Gold Ore');
+    expect(agent.ship.cargo[0].quantity).toBe(14);
+  });
+});

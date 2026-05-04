@@ -56,7 +56,7 @@ describe("fleet_refuel routine", () => {
       const toolsCalled: string[] = [];
       const ctx = mockContext(async (tool) => {
         toolsCalled.push(tool);
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return fleetStatus([
             { username: "test-agent", fuel: 90, max_fuel: 100 },
             { username: "ally-1", fuel: 85, max_fuel: 100 },
@@ -77,7 +77,7 @@ describe("fleet_refuel routine", () => {
       expect(result.status).toBe("completed");
       expect(result.summary).toContain("sufficient fuel");
       expect(result.data.self_refueled).toBe(false);
-      expect(toolsCalled).toContain("fleet");
+      expect(toolsCalled).toContain("spacemolt_fleet");
       expect(toolsCalled).toContain("get_status");
       expect(toolsCalled).not.toContain("refuel");
     });
@@ -86,7 +86,7 @@ describe("fleet_refuel routine", () => {
       const toolsCalled: string[] = [];
       const ctx = mockContext(async (tool) => {
         toolsCalled.push(tool);
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return fleetStatus([
             { username: "test-agent", fuel: 30, max_fuel: 100 },
             { username: "ally-1", fuel: 90, max_fuel: 100 },
@@ -112,7 +112,7 @@ describe("fleet_refuel routine", () => {
 
     it("hands off when other fleet members need fuel", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return fleetStatus([
             { username: "test-agent", fuel: 90, max_fuel: 100 },
             { username: "ally-low", fuel: 20, max_fuel: 100 },
@@ -138,20 +138,20 @@ describe("fleet_refuel routine", () => {
 
     it("hands off when fleet(status) fails (not in fleet)", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") return { error: { code: "no_fleet", message: "Not in a fleet" } };
+        if (tool === "spacemolt_fleet") return { error: { code: "no_fleet", message: "Not in a fleet" } };
         return { result: {} };
       });
 
       const result = await fleetRefuelRoutine.run(ctx, {});
       expect(result.status).toBe("handoff");
-      expect(result.handoffReason).toContain("fleet(status) failed");
+      expect(result.handoffReason).toContain("spacemolt_fleet(status) failed");
     });
 
     it("travels to station when not already there", async () => {
       const toolsCalled: string[] = [];
       const ctx = mockContext(async (tool) => {
         toolsCalled.push(tool);
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return fleetStatus(
             [{ username: "test-agent", fuel: 90, max_fuel: 100 }],
             { poi_id: "asteroid_belt", system_id: "sol" },
@@ -178,7 +178,7 @@ describe("fleet_refuel routine", () => {
 
     it("hands off when travel fails", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return fleetStatus(
             [{ username: "test-agent", fuel: 50, max_fuel: 100 }],
             { poi_id: "deep_space" },
@@ -203,7 +203,7 @@ describe("fleet_refuel routine", () => {
 
     it("uses current station when no station param provided and docked", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return fleetStatus(
             [{ username: "test-agent", fuel: 95, max_fuel: 100 }],
             { poi_id: "mars_dock" },
@@ -227,7 +227,7 @@ describe("fleet_refuel routine", () => {
 
     it("handles legacy top-level fuel fields as fallback", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           // Legacy shape without ship sub-object
           return {
             result: {
@@ -256,7 +256,7 @@ describe("fleet_refuel routine", () => {
 
     it("does not count self in othersNeedFuel when self needs fuel", async () => {
       const ctx = mockContext(async (tool) => {
-        if (tool === "fleet") {
+        if (tool === "spacemolt_fleet") {
           return fleetStatus([{ username: "test-agent", fuel: 30, max_fuel: 100 }]);
         }
         if (tool === "get_status") {

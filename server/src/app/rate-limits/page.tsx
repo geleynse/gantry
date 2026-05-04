@@ -3,8 +3,8 @@
 import { Timer } from "lucide-react";
 import { useRateLimits } from "@/hooks/use-rate-limits";
 import { useAgentNames } from "@/hooks/use-agent-names";
-import { getAgentColor, relativeTime } from "@/lib/utils";
-import { cn } from "@/lib/utils";
+import { getAgentColor, cn } from "@/lib/utils";
+import { relativeTime } from "@/lib/time";
 import type { IpStats } from "@/hooks/use-rate-limits";
 
 // ---------------------------------------------------------------------------

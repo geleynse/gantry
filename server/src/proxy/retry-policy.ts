@@ -6,7 +6,7 @@
  */
 
 import { classifyGameError, type ClassifiedError } from "./error-classifier.js";
-import type { GameResponse } from "./game-client.js";
+import type { GameResponse } from "./game-transport.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("retry");

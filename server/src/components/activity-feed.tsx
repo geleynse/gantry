@@ -622,7 +622,7 @@ export function ActivityFeed() {
 
         {loading && !isConnecting && (
           <div className="px-3 py-8 text-center text-xs text-muted-foreground italic">
-            Loading\u2026
+            {"Loading\u2026"}
           </div>
         )}
 

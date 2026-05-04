@@ -3,10 +3,8 @@ import {
   calculateDelay,
   isRetryableError,
   withRetry,
-  DEFAULT_RETRY_POLICY,
   type RetryPolicy,
 } from "./retry-policy.js";
-import type { GameResponse } from "./game-client.js";
 import { MUTATION_COMMANDS, STATE_CHANGING_TOOLS } from "./proxy-constants.js";
 
 describe("calculateDelay", () => {

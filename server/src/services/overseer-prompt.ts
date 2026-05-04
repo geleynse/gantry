@@ -100,6 +100,18 @@ export function buildUserPrompt(
 
     // Offline agents
     if (!agent.isOnline) {
+      // Perma-stranded check: agent logged out with 0 fuel and is sitting at a non-refueling
+      // POI (or no POI). Restarting just burns cost cycling logout/login until external rescue
+      // arrives. Flag for operator attention instead of auto-restart.
+      const lastFuel = agent.fuel;
+      const isStranded = lastFuel !== undefined && lastFuel <= 1;
+      if (isStranded) {
+        const loc = agent.poi || agent.system || "unknown location";
+        triageItems.push(
+          `🚫 ${name}: PERMA-STRANDED (offline, last seen with ${lastFuel} fuel at ${loc}) — DO NOT call start_agent. The agent has been logging out compliantly because it has no fuel. Restarting only cycles logout/login and burns cost. Required action: write a fleet_report describing the rescue need (system, POI, fuel needed). Operator must grant fuel or teleport. Skip this triage item until the agent moves or fuel changes.`,
+        );
+        continue;
+      }
       triageItems.push(`⚠ ${name}: OFFLINE → call start_agent(agent="${name}")`);
       continue;
     }
@@ -144,10 +156,17 @@ export function buildUserPrompt(
       triageItems.push(`⚠ ${name}: ZERO CREDITS → call trigger_routine(agent="${name}", routine="mining_loop")`);
     }
 
-    // Low fuel (<20%)
+    // Low fuel (<20%) — but distinguish PERMA-STRANDED (0 fuel + undocked) from
+    // recoverable LOW FUEL. refuel_repair routine needs to travel to a station,
+    // and travel requires fuel — so 0-fuel-undocked agents can't self-rescue.
     if (agent.fuel !== undefined && agent.fuelMax !== undefined && agent.fuelMax > 0) {
       const fuelPct = agent.fuel / agent.fuelMax;
-      if (fuelPct < 0.2) {
+      if (agent.fuel <= 1 && agent.docked !== true) {
+        const loc = agent.poi || agent.system || "unknown location";
+        triageItems.push(
+          `🚫 ${name}: PERMA-STRANDED (online, ${agent.fuel} fuel, undocked at ${loc}) — DO NOT call trigger_routine refuel_repair. Travel needs fuel; the routine will fail. Required action: write a fleet_report describing the rescue need (system, POI, fuel needed) and identify a fleetmate within 5 jumps with a Refueling Pump fitted who can deliver. One report per stranded agent per hour — do not repeat.`,
+        );
+      } else if (fuelPct < 0.2) {
         triageItems.push(`⚠ ${name}: LOW FUEL (${Math.round(fuelPct * 100)}%) → call trigger_routine(agent="${name}", routine="refuel_repair")`);
       }
     }

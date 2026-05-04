@@ -1,5 +1,6 @@
 import { createLogger } from "../lib/logger.js";
 import type { OverseerAction, ActionResult } from "../shared/types/overseer.js";
+import { recordOverseerStop } from "./overseer-stop-cooldown.js";
 
 const log = createLogger("overseer-actions");
 const LIFECYCLE_COOLDOWN_MS = 5 * 60 * 1000;
@@ -75,6 +76,10 @@ export function createActionExecutor(deps: ActionExecutorDeps) {
             type === "start_agent"
               ? await deps.agentManager.startAgent(agent)
               : await deps.agentManager.stopAgent(agent, `overseer: ${overseerReason}`);
+          // Record overseer-initiated stops for cooldown + escalation tracking.
+          if (type === "stop_agent" && result.ok) {
+            recordOverseerStop(agent, overseerReason);
+          }
           return { action, success: result.ok, message: result.message };
         }
         case "reassign_role": {

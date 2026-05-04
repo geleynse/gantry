@@ -280,4 +280,100 @@ describe("buildUserPrompt", () => {
     expect(prompt).toContain("TRANSIT STUCK");
     expect(prompt).not.toContain("TRANSIT IDLE");
   });
+
+  it("shows PERMA-STRANDED for offline agent last seen with 0 fuel — does NOT recommend start_agent", () => {
+    const snapshot = makeSnapshot({
+      agents: [
+        {
+          name: "stranded-agent",
+          role: "Combat",
+          credits: 1380000,
+          system: "the_rampart",
+          poi: "the_sentinel",
+          cargoUsed: 15,
+          cargoMax: 110,
+          fuel: 0,
+          fuelMax: 90,
+          isOnline: false,
+          isInCombat: false,
+        },
+      ],
+    });
+    const prompt = buildUserPrompt(snapshot, []);
+    expect(prompt).toContain("PERMA-STRANDED");
+    expect(prompt).toContain("DO NOT call start_agent");
+    expect(prompt).not.toContain("OFFLINE → call start_agent");
+  });
+
+  it("shows normal OFFLINE → start_agent for offline agent with fuel remaining", () => {
+    const snapshot = makeSnapshot({
+      agents: [
+        {
+          name: "offline-but-fueled",
+          role: "Trader",
+          credits: 5000,
+          system: "Sol",
+          poi: "Earth Station",
+          cargoUsed: 0,
+          cargoMax: 50,
+          fuel: 60,
+          fuelMax: 100,
+          isOnline: false,
+          isInCombat: false,
+        },
+      ],
+    });
+    const prompt = buildUserPrompt(snapshot, []);
+    expect(prompt).toContain("OFFLINE → call start_agent");
+    expect(prompt).not.toContain("PERMA-STRANDED");
+  });
+
+  it("shows PERMA-STRANDED for online agent with 0 fuel undocked — does NOT recommend refuel_repair", () => {
+    const snapshot = makeSnapshot({
+      agents: [
+        {
+          name: "online-stranded",
+          role: "Combat",
+          credits: 1380000,
+          system: "the_rampart",
+          poi: "the_sentinel",
+          docked: false,
+          cargoUsed: 15,
+          cargoMax: 110,
+          fuel: 0,
+          fuelMax: 90,
+          isOnline: true,
+          isInCombat: false,
+        },
+      ],
+    });
+    const prompt = buildUserPrompt(snapshot, []);
+    expect(prompt).toContain("PERMA-STRANDED");
+    expect(prompt).toContain("DO NOT call trigger_routine refuel_repair");
+    expect(prompt).not.toContain("LOW FUEL");
+  });
+
+  it("shows LOW FUEL (not PERMA-STRANDED) for online agent docked at a base with 0 fuel", () => {
+    const snapshot = makeSnapshot({
+      agents: [
+        {
+          name: "docked-empty-tank",
+          role: "Trader",
+          credits: 5000,
+          system: "Sol",
+          poi: "Earth Station",
+          docked: true,
+          cargoUsed: 0,
+          cargoMax: 50,
+          fuel: 0,
+          fuelMax: 100,
+          isOnline: true,
+          isInCombat: false,
+        },
+      ],
+    });
+    const prompt = buildUserPrompt(snapshot, []);
+    expect(prompt).toContain("LOW FUEL");
+    expect(prompt).not.toContain("PERMA-STRANDED");
+  });
 });

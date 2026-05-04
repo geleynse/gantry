@@ -51,7 +51,7 @@ function getCachedCredentials(agentName: string): { username: string; password: 
   }
   return _credentialsCache?.[agentName] ?? null;
 }
-import type { GameResponse } from "./game-client.js";
+import type { GameResponse } from "./game-transport.js";
 import { getSessionShutdownManager } from "./session-shutdown.js";
 import { persistGameState } from "./cache-persistence.js";
 import { runDiscovery } from "./discovery-service.js";

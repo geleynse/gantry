@@ -36,47 +36,6 @@ export function getAgentColor(name: string): string {
   return `hsl(${hue}, 55%, 65%)`;
 }
 
-/**
- * Format a number as credits with K/M suffixes and null safety.
- *
- * NOTE: This is the legacy compact format used by agent cards and the
- * fleet capacity panel — kept for backwards compatibility. New code should
- * use the canonical helpers in `@/lib/format`:
- *   - `formatCredits`        → full precision ("1,234,567 cr")
- *   - `formatCreditsCompact` → 3-sig-fig compact ("1.23M cr")
- */
-export function formatCredits(n: number | null | undefined): string {
-  if (n == null) return "---";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M cr`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k cr`;
-  return `${n.toLocaleString()} cr`;
-}
-
-/** Format a timestamp as relative time (e.g., "2m ago") */
-export function relativeTime(ts: string | number | null | undefined): string {
-  if (ts == null) return "—";
-  const now = Date.now();
-  // SQLite datetime('now') returns "YYYY-MM-DD HH:MM:SS" (space, no Z).
-  // Some browsers don't parse this — normalize to ISO 8601.
-  let then: number;
-  if (typeof ts === "string") {
-    const iso = ts.includes("T") ? ts : ts.replace(" ", "T") + "Z";
-    then = new Date(iso).getTime();
-  } else {
-    then = ts;
-  }
-  if (isNaN(then)) return "—";
-  const diff = Math.max(0, now - then);
-  const secs = Math.floor(diff / 1000);
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
-
 // Hardcoded mappings for common items/modules (keys are lowercase)
 const ITEM_MAPPING: Record<string, string> = {
   'mining_laser_1': 'Mining Laser I',

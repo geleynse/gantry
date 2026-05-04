@@ -308,7 +308,7 @@ describe('AgentCard', () => {
     it('formats credits with k/M suffix', () => {
       const gameState = createMockGameState({ credits: 12345 });
       render(<AgentCard agent={createMockAgentStatus()} gameState={gameState} />);
-      expect(screen.getByText(/12\.3k cr/)).toBeInTheDocument();
+      expect(screen.getByText(/12\.35K cr/)).toBeInTheDocument();
     });
   });
 

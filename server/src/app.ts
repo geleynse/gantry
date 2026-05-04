@@ -6,7 +6,7 @@ import { createMcpServer } from "./proxy/server.js";
 import { createAuthAdapter } from "./web/auth/index.js";
 import { authMiddleware } from "./web/auth/middleware.js";
 import { createApiRoutes } from "./web/routes/api-routes.js";
-import { generalPostLimiter, sessionLimiter, agentControlLimiter, secretRotationLimiter } from "./web/middleware/rate-limit.js";
+import { generalPostLimiter, bulkStateLimiter } from "./web/middleware/rate-limit.js";
 import { createLogger } from "./lib/logger.js";
 import type { HealthMonitor } from "./services/health-monitor.js";
 
@@ -189,16 +189,23 @@ export async function createApp(config: GantryConfig, options?: { bindHost?: str
     next();
   });
 
-  // General POST rate limiter (60 req/min per IP, localhost exempt).
-  // Specific sensitive endpoints apply stricter limiters before this one runs.
-  app.use(generalPostLimiter);
-
-  // Stricter limiters for sensitive endpoints
-  app.use("/sessions", sessionLimiter);
-  app.use("/api/security/rotate-secret", secretRotationLimiter);
-  app.use("/api/agents/:name/inject", agentControlLimiter);
-  app.use("/api/agents/:name/order", agentControlLimiter);
-  app.use("/api/agents/:name/shutdown", agentControlLimiter);
+  // Rate limiting — scoped to /api/* only.
+  // Page routes, RSC prefetch (.txt?_rsc=*), and static assets are never
+  // rate-limited; they are served before /api routes and must not return JSON
+  // 429 errors to browser navigation.
+  //
+  // SSE endpoints (/api/*/stream, Accept: text/event-stream) are exempt inside
+  // the limiter itself — they are long-lived single connections, not per-request
+  // traffic, and rate-limiting them causes reconnect storms.
+  //
+  // Stricter per-endpoint limiters (sessionLimiter, agentControlLimiter, etc.)
+  // are applied directly on those route handlers; no duplicate mounts needed here.
+  //
+  // /api/game-state/all is exempted from the general limiter (see rate-limit.ts)
+  // and bounded separately at 600/min — it's hit on every dashboard reload +
+  // agent-detail page mount and bursts can briefly exceed the general default.
+  app.use("/api/game-state/all", bulkStateLimiter);
+  app.use("/api", generalPostLimiter);
 
   // --- Auth middleware ---
   const adapter = await createAuthAdapter(config.auth);

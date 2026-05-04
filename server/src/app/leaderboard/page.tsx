@@ -4,7 +4,8 @@ import { useState } from "react";
 import { Trophy, RefreshCw } from "lucide-react";
 import { useLeaderboard } from "@/hooks/use-leaderboard";
 import { LeaderboardTable, LeaderboardSkeleton } from "@/components/leaderboard-table";
-import { AGENT_COLORS, relativeTime, cn } from "@/lib/utils";
+import { AGENT_COLORS, cn } from "@/lib/utils";
+import { relativeTime } from "@/lib/time";
 import { useAgentNames } from "@/hooks/use-agent-names";
 import type { LeaderboardEntry, LeaderboardCategory, LeaderboardTimeRange } from "@/hooks/use-leaderboard";
 

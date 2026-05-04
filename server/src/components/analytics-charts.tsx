@@ -12,10 +12,12 @@ import {
   ResponsiveContainer,
   CartesianGrid,
   Legend,
+  ReferenceLine,
 } from "recharts";
 import { apiFetch } from "@/lib/api";
 import { AGENT_COLORS, getAgentColor } from "@/lib/utils";
-import { formatTimeShort, formatAbsolute, relativeTime } from "@/lib/time";
+import { useAgentNames } from "@/hooks/use-agent-names";
+import { formatTimeShort, formatAbsolute } from "@/lib/time";
 import {
   formatCompactNumber,
   formatCreditsCompact,
@@ -86,11 +88,6 @@ const formatCost = formatCurrency;
  * dreaded "$0.000043" axis ticks the old `.toFixed(4)` ladder produced.
  */
 const formatCostAxis = formatCurrency;
-
-// Local compact-credits shim — keeps existing call sites working while
-// pointing at the canonical helper. Drop "M" / "k" / raw is now handled
-// uniformly in lib/format.
-const formatCredits = (n: number) => formatCompactNumber(n);
 
 // ---------------------------------------------------------------------------
 // Custom Tooltips
@@ -209,6 +206,9 @@ export function CostChart({ hours }: CostChartProps) {
   const [data, setData] = useState<ChartCostPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Use the canonical roster so agents with zero data in this time window
+  // still get a Line element (connectNulls handles the gaps).
+  const rosterAgents = useAgentNames();
 
   useEffect(() => {
     setLoading(true);
@@ -303,7 +303,7 @@ export function CostChart({ hours }: CostChartProps) {
 
   return (
     <div className="h-[300px] w-full">
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height="100%" minHeight={300}>
         <LineChart
           data={data}
           margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
@@ -338,15 +338,36 @@ export function CostChart({ hours }: CostChartProps) {
             iconType="line"
             height={20}
           />
-          {/* Derive agent list from data keys (AGENT_COLORS is empty at runtime) */}
+          {/* Midnight reference lines — one per day boundary in the visible range */}
+          {data
+            .filter((pt) => pt.dayStart)
+            .map((pt) => (
+              <ReferenceLine
+                key={`day-${pt.time}`}
+                x={pt.time}
+                stroke="#4c566a"
+                strokeDasharray="4 3"
+                strokeOpacity={0.6}
+                label={{
+                  value: pt.dayStart as string,
+                  position: "insideTopRight",
+                  fill: "#616e88",
+                  fontSize: 9,
+                }}
+              />
+            ))}
+          {/* Use the canonical roster as the source of agent lines so agents
+              with zero data in this time window aren't silently dropped.
+              Include any data-only agents (e.g. retired names) as a fallback. */}
           {Array.from(
-            new Set(
-              data.flatMap((pt) =>
+            new Set([
+              ...rosterAgents,
+              ...data.flatMap((pt) =>
                 Object.keys(pt).filter(
                   (k) => k !== "time" && k !== "fullTimestamp" && k !== "dayStart",
                 ),
               ),
-            ),
+            ]),
           ).map((agent) => {
             const color = getAgentColor(agent);
             return (
@@ -461,7 +482,7 @@ export function ToolUsageChart({ hours }: ToolUsageChartProps) {
 
   return (
     <div className="h-[300px] w-full">
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height="100%" minHeight={300}>
         <BarChart
           layout="vertical"
           data={data}
@@ -1260,9 +1281,13 @@ interface SessionCreditPoint {
 
 export function SessionCreditChart() {
   const [data, setData] = useState<SessionCreditPoint[]>([]);
-  const [agents, setAgents] = useState<string[]>([]);
+  const [dataAgents, setDataAgents] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Canonical roster — agents with no sessions in the window still get a Bar.
+  const rosterAgents = useAgentNames();
+  // Union of roster + any agents that appear in data (covers retired agents).
+  const agents = Array.from(new Set([...rosterAgents, ...dataAgents]));
 
   useEffect(() => {
     setLoading(true);
@@ -1277,7 +1302,7 @@ export function SessionCreditChart() {
         // One bar per session end time, keyed by agent
         const agentSet = new Set<string>();
         raw.sessions.forEach((s) => agentSet.add(s.agent));
-        setAgents(Array.from(agentSet));
+        setDataAgents(Array.from(agentSet));
 
         // Sort sessions oldest-first so chart reads left-to-right
         const sorted = [...raw.sessions].sort(
@@ -1328,7 +1353,7 @@ export function SessionCreditChart() {
 
   return (
     <div className="h-[300px] w-full">
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height="100%" minHeight={300}>
         <BarChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#3b4252" strokeOpacity={0.4} />
           <XAxis
@@ -1339,11 +1364,11 @@ export function SessionCreditChart() {
             interval="preserveStartEnd"
           />
           <YAxis
-            tickFormatter={(v) => formatCompactNumber(v)}
+            tickFormatter={(v) => formatCreditsCompact(v)}
             tick={{ fill: "#8892a8", fontSize: 10 }}
             tickLine={false}
             axisLine={{ stroke: "#3b4252" }}
-            width={48}
+            width={60}
           />
           <Tooltip
             formatter={(value, name) => {

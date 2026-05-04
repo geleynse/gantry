@@ -26,7 +26,7 @@ function generateId(): string {
 /**
  * POST /api/fleet/broadcast
  * Send a directive to all (or selected) agents simultaneously.
- * Body: { message: string, targets?: string[], priority?: 'normal' | 'high' | 'urgent' }
+ * Body: { message: string, targets?: string[], priority?: 'low' | 'normal' | 'high' | 'critical' }
  * Returns: { sent: string[], failed: string[], id: string }
  */
 router.post('/', (req, res) => {
@@ -38,11 +38,10 @@ router.post('/', (req, res) => {
     return;
   }
 
-  // Accept the same vocabulary as Comms (normal/high/urgent). "high" maps
-  // to a non-urgent but elevated order in createOrder.
-  const VALID_PRIORITIES = new Set(['normal', 'high', 'urgent']);
+  // Same 4-level vocabulary as the Comms "Send Order" panel.
+  const VALID_PRIORITIES = new Set(['low', 'normal', 'high', 'critical']);
   if (priority !== undefined && !VALID_PRIORITIES.has(priority)) {
-    res.status(400).json({ error: 'priority must be "normal", "high", or "urgent"' });
+    res.status(400).json({ error: 'priority must be "low", "normal", "high", or "critical"' });
     return;
   }
 

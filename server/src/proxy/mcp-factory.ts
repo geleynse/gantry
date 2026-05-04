@@ -647,7 +647,7 @@ export async function createMcpServer(config: GantryConfig) {
     getAgentHealth: (agentName: string) => {
       const client = sessions.getClient(agentName);
       if (!client || !('getConnectionHealth' in client)) return null;
-      return (client as import("./game-client.js").HttpGameClient).getConnectionHealth();
+      return (client as import("./game-transport.js").GameTransport).getConnectionHealth();
     },
     getActiveAgents: () => sessions.listActive(),
     getConfiguredFleetSize: () => config.agents.length,
@@ -976,7 +976,7 @@ export async function createMcpServer(config: GantryConfig) {
         for (const name of activeAgents) {
           const client = sessions.getClient(name);
           if (client && 'getConnectionHealth' in client) {
-            health[name] = (client as import("./game-client.js").HttpGameClient).getConnectionHealth();
+            health[name] = (client as import("./game-transport.js").GameTransport).getConnectionHealth();
           }
         }
         // Use configured fleet size (not active count) so the threshold is

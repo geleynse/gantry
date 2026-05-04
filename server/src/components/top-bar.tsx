@@ -1,7 +1,8 @@
 "use client";
 
 import { Menu, Shield } from "lucide-react";
-import { cn, formatCredits } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { formatCreditsCompact } from "@/lib/format";
 import { useAuth } from "@/hooks/use-auth";
 import { useFleetStatus } from "@/hooks/use-fleet-status";
 import { useGameState } from "@/hooks/use-game-state";
@@ -33,7 +34,7 @@ export function TopBar() {
 
   // Bug 5: use formatCredits() for consistent abbreviated display (e.g. "1.6M cr")
   const creditsDisplay =
-    totalCredits !== null ? formatCredits(totalCredits) : "\u2014 cr";
+    totalCredits !== null ? formatCreditsCompact(totalCredits) : "\u2014 cr";
 
   // Bug 1: show "running / total" so header matches fleet page total
   const agentsDisplay =

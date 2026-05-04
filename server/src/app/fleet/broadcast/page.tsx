@@ -32,7 +32,7 @@ interface HistoryResponse {
   history: BroadcastRecord[];
 }
 
-type Priority = "normal" | "high" | "urgent";
+type Priority = "low" | "normal" | "high" | "critical";
 
 // ---------------------------------------------------------------------------
 // Page
@@ -109,10 +109,10 @@ export default function BroadcastPage() {
       return;
     }
 
-    // Confirmation for Urgent fleet-wide broadcasts — protects against
+    // Confirmation for Critical fleet-wide broadcasts — protects against
     // accidental mass "wake up now" pings. Show the count so the operator
     // knows what they're about to do.
-    if (priority === "urgent" && !confirmOpen) {
+    if (priority === "critical" && !confirmOpen) {
       setConfirmOpen(true);
       return;
     }
@@ -192,13 +192,13 @@ export default function BroadcastPage() {
           </div>
         </div>
 
-        {/* Priority selector — aligned with Comms (normal / high / urgent) */}
+        {/* Priority selector — aligned with Comms (low / normal / high / critical) */}
         <div className="flex items-center gap-3">
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground shrink-0">
             Priority
           </span>
           <div className="flex gap-2">
-            {(["normal", "high", "urgent"] as Priority[]).map((p) => (
+            {(["low", "normal", "high", "critical"] as Priority[]).map((p) => (
               <button
                 key={p}
                 onClick={() => setPriority(p)}
@@ -206,7 +206,7 @@ export default function BroadcastPage() {
                 className={cn(
                   "px-3 py-1 text-[10px] uppercase tracking-wider transition-colors",
                   priority === p
-                    ? p === "urgent"
+                    ? p === "critical"
                       ? "bg-error text-error-content"
                       : p === "high"
                       ? "bg-warning text-warning-content"
@@ -309,7 +309,7 @@ export default function BroadcastPage() {
         )}
       </div>
 
-      {/* Urgent-broadcast confirmation modal */}
+      {/* Critical-broadcast confirmation modal */}
       {confirmOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
@@ -322,10 +322,10 @@ export default function BroadcastPage() {
               id="broadcast-confirm-title"
               className="text-sm font-bold uppercase tracking-wider text-error flex items-center gap-2"
             >
-              <Radio className="w-4 h-4" /> Confirm Urgent Broadcast
+              <Radio className="w-4 h-4" /> Confirm Critical Broadcast
             </h2>
             <p className="text-xs text-foreground">
-              You are about to send an <span className="font-bold text-error">URGENT</span>{" "}
+              You are about to send a <span className="font-bold text-error">CRITICAL</span>{" "}
               broadcast to <span className="font-bold">{selectedAgents.size}</span>{" "}
               agent{selectedAgents.size === 1 ? "" : "s"}
               {selectedAgents.size === agentList.length && agentList.length > 0
@@ -348,7 +348,7 @@ export default function BroadcastPage() {
                 onClick={handleSend}
                 className="px-3 py-1.5 text-[10px] uppercase tracking-wider bg-error text-error-content font-bold hover:opacity-90 transition-opacity"
               >
-                Send Urgent
+                Send Critical
               </button>
             </div>
           </div>

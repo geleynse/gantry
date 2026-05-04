@@ -69,12 +69,12 @@ async function run(ctx: RoutineContext, params: FleetJumpParams): Promise<Routin
 
   // --- Phase 1: Check fleet status ---
   const fleetPhase = phase("check_fleet");
-  const fleetResp = await ctx.client.execute("fleet", { action: "status" });
+  const fleetResp = await ctx.client.execute("spacemolt_fleet", { action: "status" });
 
   if (fleetResp.error) {
     phases.push(completePhase(fleetPhase, { error: fleetResp.error }));
     return handoff(
-      `fleet(status) failed: ${JSON.stringify(fleetResp.error)}. You may not be in a fleet — use fleet(action="create") or fleet(action="invite") first.`,
+      `spacemolt_fleet(status) failed: ${JSON.stringify(fleetResp.error)}. You may not be in a fleet — use spacemolt_fleet(action="create") or spacemolt_fleet(action="invite", id=<player>) first.`,
       { error: fleetResp.error, destination: params.destination },
       phases,
     );
@@ -177,7 +177,7 @@ async function run(ctx: RoutineContext, params: FleetJumpParams): Promise<Routin
   }
 
   // --- Phase 6: Check if other members also need to jump ---
-  const postFleetResp = await ctx.client.execute("fleet", { action: "status" });
+  const postFleetResp = await ctx.client.execute("spacemolt_fleet", { action: "status" });
   const postFleetData = postFleetResp.result as Record<string, unknown> | undefined;
   const postRawMembers = (postFleetData?.members ?? []) as Array<Record<string, unknown>>;
   const postMembers = parseMembers(postRawMembers, postFleetData);

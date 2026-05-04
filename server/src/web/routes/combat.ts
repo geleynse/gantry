@@ -100,11 +100,12 @@ router.get('/systems', (req, res) => {
     ? `AND datetime(created_at) >= datetime('now', '-${hours} hours')`
     : '';
 
-  // Include systems that have deaths *or* encounters. The previous HAVING
-  // required encounter_count > 0, which silently hid death-only rows (e.g.
-  // an agent died from non-pirate damage in a system we otherwise had no
-  // encounter events for). Operator report #5: 58 deaths across the fleet
-  // but "No data" in High-Risk Systems.
+  // Include ALL events regardless of whether the system field is populated.
+  // The previous WHERE (system IS NOT NULL AND system != '') silently excluded
+  // every death event whose system field was null — which is common because
+  // player_died events are often inserted before the proxy has a chance to
+  // inject the current-system context.  That caused "No data" in the panel even
+  // when summary showed 30+ deaths. Group null-system rows under '(unknown)'.
   const rows = queryAll<{
     system: string;
     encounter_count: number;
@@ -112,16 +113,16 @@ router.get('/systems', (req, res) => {
     total_damage: number;
   }>(`
     SELECT
-      system,
+      COALESCE(system, '(unknown)') AS system,
       COUNT(CASE WHEN event_type IN ('pirate_combat', 'pirate_warning') THEN 1 END) AS encounter_count,
       COUNT(DISTINCT CASE WHEN event_type = 'player_died' THEN
         (agent || '_' || strftime('%Y-%m-%dT%H:%M', created_at))
       END) AS death_count,
       SUM(CASE WHEN event_type = 'pirate_combat' THEN COALESCE(damage, 0) ELSE 0 END) AS total_damage
     FROM combat_events
-    WHERE (system IS NOT NULL AND system != '')
+    WHERE 1=1
       ${timeClause}
-    GROUP BY system
+    GROUP BY COALESCE(system, '(unknown)')
     HAVING
       COUNT(CASE WHEN event_type IN ('pirate_combat', 'pirate_warning') THEN 1 END) > 0
       OR COUNT(CASE WHEN event_type = 'player_died' THEN 1 END) > 0

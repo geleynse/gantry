@@ -86,17 +86,37 @@ describe('POST /api/fleet/broadcast', () => {
     const app = makeApp();
     const res = await request(app)
       .post('/api/fleet/broadcast')
-      .send({ message: 'Test', priority: 'critical' });
+      .send({ message: 'Test', priority: 'superurgent' });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/priority/i);
   });
 
-  it('accepts urgent priority', async () => {
+  it('rejects legacy "urgent" priority', async () => {
     const app = makeApp();
     const res = await request(app)
       .post('/api/fleet/broadcast')
       .send({ message: 'Urgent order', priority: 'urgent' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/priority/i);
+  });
+
+  it('accepts critical priority', async () => {
+    const app = makeApp();
+    const res = await request(app)
+      .post('/api/fleet/broadcast')
+      .send({ message: 'Critical order', priority: 'critical' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.sent).toHaveLength(3);
+  });
+
+  it('accepts low priority', async () => {
+    const app = makeApp();
+    const res = await request(app)
+      .post('/api/fleet/broadcast')
+      .send({ message: 'Low priority notice', priority: 'low' });
 
     expect(res.status).toBe(200);
     expect(res.body.sent).toHaveLength(3);

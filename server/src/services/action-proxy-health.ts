@@ -46,19 +46,20 @@ export class ActionProxyHealthService {
   }
 }
 
-// Default instance for backward compatibility
-const defaultService = new ActionProxyHealthService();
+// Module-level singleton. Prefer importing this directly over the
+// deprecated bindProxySessions / getActionProxyStatus wrappers.
+export const actionProxyHealthService = new ActionProxyHealthService();
 
 /**
- * @deprecated Use ActionProxyHealthService instance directly.
+ * @deprecated Use `actionProxyHealthService.bindSessions()` directly.
  */
 export function bindProxySessions(sessions: ProxySessionHandle, toolCount: number): void {
-  defaultService.bindSessions(sessions, toolCount);
+  actionProxyHealthService.bindSessions(sessions, toolCount);
 }
 
 /**
- * @deprecated Use ActionProxyHealthService instance directly.
+ * @deprecated Use `actionProxyHealthService.getStatus()` directly.
  */
 export function getActionProxyStatus(): ActionProxyStatus {
-  return defaultService.getStatus();
+  return actionProxyHealthService.getStatus();
 }

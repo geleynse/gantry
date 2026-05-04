@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Play, Square, RotateCw, Power, Settings, Save, Loader2 } from "lucide-react";
-import { cn, formatModuleName, formatCredits } from "@/lib/utils";
-import { formatNumber } from "@/lib/format";
+import { cn, formatModuleName } from "@/lib/utils";
+import { formatNumber, formatCredits } from "@/lib/format";
 import { getAgentDisplayState } from "@/lib/agent-display-state";
 import { getProxyStatusText } from "@/lib/proxy-status";
 import { apiFetch } from "@/lib/api";
@@ -103,7 +103,10 @@ function ModulesPanel({ gameState }: { gameState: import("@/hooks/use-game-state
                           <div className="text-foreground font-medium">
                             {formatModuleName(mod.item_name, mod.item_id)}
                           </div>
-                          {mod.item_id && mod.item_name && (
+                          {/* Only show the raw ID when a friendly name exists (not a hex hash).
+                              When both item_name and item_id are the same hex, formatModuleName
+                              already renders a short form — no need to repeat the full hash. */}
+                          {mod.item_id && mod.item_name && mod.item_name !== mod.item_id && !/^[a-f0-9]{8,}$/i.test(mod.item_id) && (
                             <div className="text-[10px] text-muted-foreground mt-0.5">
                               {mod.item_id}
                             </div>
@@ -552,14 +555,6 @@ function ThoughtsPanel({ agentName }: { agentName: string }) {
   );
 }
 
-function PlaceholderTab({ label }: { label: string }) {
-  return (
-    <div className="py-16 text-center text-muted-foreground text-sm italic">
-      {label} — coming soon
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Client Component
 // ---------------------------------------------------------------------------
@@ -680,10 +675,19 @@ export function AgentDetailClient() {
   const { isAdmin } = useAuth();
   const name = Array.isArray(params.name) ? params.name[0] : (params.name ?? "");
 
-  // Overseer has its own dedicated page
+  // Overseer has its own dedicated page — redirect immediately.
+  // We return null below to prevent rendering the agent-detail layout
+  // for overseer (which has no ship, no game state, etc.) while we wait
+  // for the client-side router to navigate away.
   useEffect(() => {
     if (name === "overseer") router.replace("/overseer");
   }, [name, router]);
+
+  // Short-circuit render for overseer — the useEffect above will redirect.
+  // Without this guard the component renders with overseer data (no ship,
+  // no game state) and can throw hydration errors or uncaught exceptions
+  // in child components that assume a fleet agent shape.
+  if (name === "overseer") return null;
 
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     if (typeof window === "undefined") return "ship";

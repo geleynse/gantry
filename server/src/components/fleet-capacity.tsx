@@ -3,7 +3,9 @@
 import Link from "next/link";
 
 import { useEffect, useState } from "react";
-import { cn, formatCredits, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { formatCreditsCompact } from "@/lib/format";
+import { relativeTime } from "@/lib/time";
 
 // ---------------------------------------------------------------------------
 // Types (mirrored from API shape — no server imports in client bundle)
@@ -256,7 +258,7 @@ function AgentTable({ agents }: { agents: AgentCapacity[] }) {
                 <td className="py-1.5 pr-4 font-mono text-[10px]">{agent.zone ?? "—"}</td>
                 <td className="py-1.5 pr-4 text-muted-foreground">{agent.system ?? "—"}</td>
                 <td className={cn("py-1.5 pr-4 text-right font-mono", agent.isStale && "opacity-50 italic")}>
-                  {formatCredits(agent.credits)}
+                  {formatCreditsCompact(agent.credits)}
                 </td>
                 <td className="py-1.5 pr-4 text-right">
                   <span className={cn(
@@ -345,7 +347,7 @@ export function FleetCapacity() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <SummaryCard
           label="Fleet Credits"
-          value={formatCredits(totals.totalCredits)}
+          value={formatCreditsCompact(totals.totalCredits)}
           sub={`${totals.onlineCount}/${totals.agentCount} agents online`}
         />
         <SummaryCard

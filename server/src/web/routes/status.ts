@@ -3,13 +3,13 @@ import type { AgentStatus, FleetStatus, BattleState } from '../../shared/types.j
 import { createLogger } from '../../lib/logger.js';
 import { FleetStatusSchema } from '../../shared/schemas.js';
 
-import { AGENTS, TURN_INTERVAL, getAgentLabel, getConfig } from '../config.js';
+import { AGENTS, TURN_SLEEP_MS, getAgentLabel, getConfig } from '../config.js';
 import * as proc from '../../services/process-manager.js';
 import { parseAgentLog, formatAge } from '../../services/log-parser.js';
 import { getHealthScore } from '../../services/health-scorer.js';
 import { hasSignal } from '../../services/signals-db.js';
-import { getProxyStatuses } from '../../services/proxy-health.js';
-import { getActionProxyStatus } from '../../services/action-proxy-health.js';
+import { proxyHealthService } from '../../services/proxy-health.js';
+import { actionProxyHealthService } from '../../services/action-proxy-health.js';
 import { getSessionInfo, getLatencyMetrics, getErrorRateBreakdown, getTurnCountFromDb } from '../../services/session-metrics.js';
 import { getSessionShutdownManager } from '../../proxy/session-shutdown.js';
 import { hasActiveProxySession, getLastActivityAt } from '../../services/agent-queries.js';
@@ -132,14 +132,14 @@ async function buildAgentStatus(agent: typeof AGENTS[number]): Promise<AgentStat
 async function buildFleetStatus(): Promise<FleetStatus> {
   const [agents, proxies, actionProxy] = await Promise.all([
     Promise.all(AGENTS.map(buildAgentStatus)),
-    getProxyStatuses(),
-    getActionProxyStatus(),
+    proxyHealthService.getProxyStatuses(),
+    actionProxyHealthService.getStatus(),
   ]);
   const payload = {
     agents,
     proxies,
     actionProxy,
-    turnSleepMs: TURN_INTERVAL,
+    turnSleepMs: TURN_SLEEP_MS,
     timestamp: new Date().toISOString(),
     fleetName: getConfig().fleetName,
   };
@@ -153,7 +153,7 @@ async function buildFleetStatus(): Promise<FleetStatus> {
   return payload;
 }
 
-router.get('/', async (req, res) => {
+router.get('/', async (_req, res) => {
   const status = await buildFleetStatus();
   res.json(status);
 });
@@ -190,10 +190,13 @@ const SERVER_START = Date.now();
 
 router.get('/startup', async (_req, res) => {
   const uptime = Math.round((Date.now() - SERVER_START) / 1000);
-  const agents = AGENTS;
+  // Exclude overseer from the startup count — it has a dedicated banner on the
+  // dashboard and is not part of the operational fleet. Keeps "Fleet Agents: X/Y"
+  // consistent with the top-bar and fleet-capacity counts.
+  const agents = AGENTS.filter((a) => a.name !== 'overseer');
   let connectedCount = 0;
   for (const agent of agents) {
-    if (await hasActiveProxySession(agent.name)) connectedCount++;
+    if (hasActiveProxySession(agent.name)) connectedCount++;
   }
   res.json({
     serverUptime: uptime,

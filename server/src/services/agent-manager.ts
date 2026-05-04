@@ -6,6 +6,7 @@ import { createLogger } from '../lib/logger.js';
 import type { AgentConfig } from '../config.js';
 import { getCredentialStartBlock } from './credential-health.js';
 import { disableFleet, enableFleet, getFleetDisabledState } from './fleet-control.js';
+import { clearCooldownForOperatorStart } from './overseer-stop-cooldown.js';
 
 const log = createLogger('agent-manager');
 
@@ -138,6 +139,11 @@ export async function startAgent(name: string): Promise<{ ok: boolean; message: 
     log.warn(`Agent ${name} is already running`);
     return { ok: false, message: `${name} already running` };
   }
+
+  // If an overseer stop cooldown is active, the operator is intentionally
+  // overriding it.  Clear the cooldown so the health monitor doesn't immediately
+  // flip desiredState back to "stopped" after this start.
+  clearCooldownForOperatorStart(name);
 
   const credentialBlock = getCredentialStartBlock(name);
   if (credentialBlock) {

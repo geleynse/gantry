@@ -113,6 +113,10 @@ function normalizeModules(modules: unknown[], marketCache?: MarketCache): Module
     const rawType = ((mod.slot_type ?? mod.type ?? mod.slot) as string | undefined)?.toLowerCase();
     const item_id = (mod.item_id ?? mod.id ?? mod.module_id) as string | undefined;
     const type_id = mod.type_id as string | undefined;
+    // class_id is the v2 semantic identifier (e.g. "laser_mk2", "engineering_efficiency_1").
+    // Use it as a name source when no friendlier name is available — getItemName() will
+    // format "engineering_efficiency_1" → "Engineering Efficiency 1".
+    const class_id = (mod.class_id ?? mod.class) as string | undefined;
     const item_name = (mod.item_name ?? mod.name ?? mod.module_name) as string | undefined;
     
     if (!item_id && !item_name) {
@@ -124,6 +128,10 @@ function normalizeModules(modules: unknown[], marketCache?: MarketCache): Module
       resolveName(item_id) ||
       registryItem?.name ||
       (type_id ? getFallbackName(type_id) : null) ||
+      // class_id is the v2 semantic identifier (e.g. "laser_mk2"). Use it before
+      // falling back to the raw hex item_id so modules get a readable name even
+      // when the learned-metadata registry hasn't seen this module instance yet.
+      (class_id ? getFallbackName(class_id) : null) ||
       (item_id ? (marketCache?.getItemName(item_id) || getFallbackName(item_id)) : 'Unknown');
     const resolvedType = rawType || getType(item_id) || registryItem?.type;
     const inferredType = !resolvedType && resolvedName ? inferSlotType(resolvedName) : undefined;

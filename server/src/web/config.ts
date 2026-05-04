@@ -12,6 +12,7 @@ export {
   AGENTS,
   AGENT_NAMES,
   TURN_INTERVAL,
+  TURN_SLEEP_MS,
   getAgent,
   validateAgentName,
   getAgentLabel,

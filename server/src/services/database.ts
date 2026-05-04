@@ -690,4 +690,27 @@ CREATE TABLE IF NOT EXISTS external_market_snapshots (
 CREATE INDEX IF NOT EXISTS idx_ext_snapshots_item_date ON external_market_snapshots(item_id, as_of_date DESC);
 CREATE INDEX IF NOT EXISTS idx_ext_snapshots_date ON external_market_snapshots(as_of_date DESC);
 
+-- Overseer stop cooldowns: one row per agent, upserted on every overseer-initiated stop.
+-- stopped_until: auto-restart suppressed until this ISO timestamp.
+-- alert_fired_at: non-null when an escalation alert has been fired for the current
+--   threshold crossing (cleared when rolling-24h count drops back below threshold).
+CREATE TABLE IF NOT EXISTS overseer_stop_cooldowns (
+  agent TEXT PRIMARY KEY,
+  stopped_until TEXT NOT NULL,
+  stop_reason TEXT NOT NULL DEFAULT '',
+  alert_fired_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Overseer stop history: append-only log of every overseer-initiated stop.
+-- Used for the rolling 24h escalation window query.
+CREATE TABLE IF NOT EXISTS overseer_stop_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  stopped_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_overseer_stop_history_agent_at
+  ON overseer_stop_history(agent, stopped_at DESC);
+
 `;

@@ -1,13 +1,12 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { createGameClient } from "./game-client.js";
 import { HttpGameClientV2 } from "./http-game-client-v2.js";
 import type { GameTransport } from "./game-transport.js";
 import { MockGameClient } from "./mock-game-client.js";
 import type { BreakerRegistry } from "./circuit-breaker.js";
 import type { MetricsWindow } from "./instability-metrics.js";
 import type { GantryConfig, AgentConfig } from "../config.js";
-import { getDb, getDbIfInitialized } from "../services/database.js";
+import { getDbIfInitialized } from "../services/database.js";
 import { encrypt, decrypt, isEncrypted, getEncryptionSecret } from "../services/crypto.js";
 import { AccountPool } from "./account-pool.js";
 import { createLogger } from "../lib/logger.js";
@@ -157,28 +156,14 @@ export class SessionManager {
       return client;
     }
 
-    // gameApiVersion defaults to "v2". Only opt into legacy "v1" if the agent
-    // explicitly sets it — and that path is on its way out (Chunk F2 deletion).
-    if (agentConfig.gameApiVersion === "v1") {
-      log.warn(
-        `[session-manager] agent ${resolved} is on legacy gameApiVersion=v1 — this path is deprecated and will be removed`,
-      );
-    }
-    const client: GameTransport =
-      agentConfig.gameApiVersion === "v1"
-        ? createGameClient(
-            this.config.gameMcpUrl,
-            this.serverMetrics,
-            agentConfig.socksPort,
-          )
-        : new HttpGameClientV2(
-            this.config.gameMcpUrl,
-            undefined,
-            resolved,
-            (agentConfig.mcpPreset === "full" ? "full" : "standard"),
-            this.serverMetrics,
-            agentConfig.socksPort,
-          );
+    const client: GameTransport = new HttpGameClientV2(
+      this.config.gameMcpUrl,
+      undefined,
+      resolved,
+      (agentConfig.mcpPreset === "full" ? "full" : "standard"),
+      this.serverMetrics,
+      agentConfig.socksPort,
+    );
     client.label = resolved;
     if (this.config.credentialsPath) {
       client.credentialsPath = this.config.credentialsPath;
@@ -348,8 +333,11 @@ export class SessionManager {
       if (mockMode?.enabled) {
         client = new MockGameClient(mockMode);
       } else {
-          client = createGameClient(
+        client = new HttpGameClientV2(
           this.config.gameMcpUrl,
+          undefined,
+          entry.agentName,
+          (agentConfig.mcpPreset === "full" ? "full" : "standard"),
           this.serverMetrics,
           agentConfig.socksPort,
         );

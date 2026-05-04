@@ -2,13 +2,16 @@ import type { Metadata } from "next";
 import { AgentDetailClient } from "./client";
 
 // NOTE: Next.js static export (output: "export") requires generateStaticParams to list
-// all valid route segments at build time. We keep these hardcoded here because the
-// static exporter can't call the API at build time. If you add agents to fleet-config,
-// rebuild the frontend so their detail pages are included in the static output.
+// all valid route segments at build time. Keep this in sync with fleet-config.json.
+// If agents are added or removed, rebuild the frontend so their detail pages are
+// included (or excluded) from the static output.
 const STATIC_AGENT_NAMES = [
+  "drifter-gale",
+  "sable-thorn",
+  "rust-vane",
+  "lumen-shoal",
+  "cinder-wake",
   "overseer",
-  // Agent pages are generated at runtime from fleet config.
-  // Add agent names here only if you need static pre-rendering.
 ];
 
 export async function generateStaticParams(): Promise<Array<{ name: string }>> {
