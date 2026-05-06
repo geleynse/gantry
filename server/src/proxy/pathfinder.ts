@@ -8,6 +8,7 @@
 
 import { createLogger } from "../lib/logger.js";
 import { persistGalaxyGraph } from "./cache-persistence.js";
+import { abortSignalAny } from "./market-cache.js";
 
 const log = createLogger("pathfinder");
 
@@ -162,6 +163,11 @@ export class GalaxyGraph {
     return this.adj.keys();
   }
 
+  /** Iterate all known system names. */
+  systemNames(): IterableIterator<string> {
+    return this.names.values();
+  }
+
   /**
    * Start periodic background refresh of the galaxy graph.
    * Non-blocking initial fetch. Compares system count to detect topology changes.
@@ -229,7 +235,7 @@ export class GalaxyGraph {
             signal.addEventListener("abort", () => {
               clearTimeout(timer);
               reject(new Error("aborted"));
-            });
+            }, { once: true });
           });
         } catch (err) {
           return false; // Aborted during wait
@@ -263,8 +269,8 @@ export class GalaxyGraph {
 
     // Merge provided signal with a timeout signal
     const timeoutSignal = AbortSignal.timeout(15_000);
-    const combinedSignal = signal 
-      ? (AbortSignal as any).any([signal, timeoutSignal])
+    const combinedSignal = signal
+      ? abortSignalAny([signal, timeoutSignal])
       : timeoutSignal;
 
     const resp = await fetch(this.refreshUrl, { signal: combinedSignal });

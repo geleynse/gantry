@@ -90,11 +90,10 @@ export async function getHealthScore(agentName: string, breakerRegistry: Breaker
     );
 
     if (tracker) {
-      let tools: unknown[] = [];
-      try { tools = JSON.parse(tracker.called_tools_json); } catch { /* ignore */ }
-      if (tools.length === 0) {
-        issues.push('mcp_tools_missing');
-      }
+      try {
+        const tools = JSON.parse(tracker.called_tools_json);
+        if (Array.isArray(tools) && tools.length === 0) issues.push('mcp_tools_missing');
+      } catch { /* ignore */ }
     }
   } catch {
     // DB may not be initialized — skip DB checks
@@ -102,9 +101,7 @@ export async function getHealthScore(agentName: string, breakerRegistry: Breaker
 
   // Circuit breaker open
   try {
-    const breakers = breakerRegistry?.getAll();
-    const breaker = breakers?.get(agentName);
-    if (breaker && breaker.getState() === 'open') {
+    if (breakerRegistry?.getAll().get(agentName)?.getState() === 'open') {
       score -= 30;
       issues.push('circuit_breaker_open');
     }
@@ -112,13 +109,11 @@ export async function getHealthScore(agentName: string, breakerRegistry: Breaker
     // Circuit breaker registry may not be populated
   }
 
-  if (score < 0) score = 0;
-
   return {
     name: agentName,
     backend: getAgentLabel(agent),
     model: agent.model,
-    score,
+    score: Math.max(0, score),
     issues,
   };
 }

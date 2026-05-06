@@ -71,9 +71,7 @@ router.get('/log', (req, res) => {
   );
 
   const rows = queryAll<CombatEventRow>(
-    `SELECT
-      id, agent, event_type, pirate_name, pirate_tier, damage,
-      hull_after, max_hull, died, insurance_payout, system, created_at
+    `SELECT ${COMBAT_EVENT_COLS}
     FROM combat_events
     ${where}
     ORDER BY created_at DESC, id DESC
@@ -136,6 +134,9 @@ router.get('/systems', (req, res) => {
 // ---------------------------------------------------------------------------
 // Encounter grouping helpers
 // ---------------------------------------------------------------------------
+
+const COMBAT_EVENT_COLS = `id, agent, event_type, pirate_name, pirate_tier, damage,
+      hull_after, max_hull, died, insurance_payout, system, created_at`;
 
 interface CombatEventRow {
   id: number;
@@ -289,9 +290,7 @@ router.get('/encounters', (req, res) => {
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const allEvents = queryAll<CombatEventRow>(
-    `SELECT
-      id, agent, event_type, pirate_name, pirate_tier, damage,
-      hull_after, max_hull, died, insurance_payout, system, created_at
+    `SELECT ${COMBAT_EVENT_COLS}
     FROM combat_events
     ${where}
     ORDER BY agent, created_at`,
@@ -331,7 +330,7 @@ router.get('/encounters/:id', (req, res) => {
 
   // Find the starting event
   const startEvent = queryOne<CombatEventRow>(
-    `SELECT id, agent, event_type, pirate_name, pirate_tier, damage, hull_after, max_hull, died, insurance_payout, system, created_at
+    `SELECT ${COMBAT_EVENT_COLS}
     FROM combat_events
     WHERE id = ?`,
     startId
@@ -344,7 +343,7 @@ router.get('/encounters/:id', (req, res) => {
 
   // Fetch events for this agent+pirate_name starting from the start event
   const candidateEvents = queryAll<CombatEventRow>(
-    `SELECT id, agent, event_type, pirate_name, pirate_tier, damage, hull_after, max_hull, died, insurance_payout, system, created_at
+    `SELECT ${COMBAT_EVENT_COLS}
     FROM combat_events
     WHERE agent = ?
       AND (pirate_name = ? OR (pirate_name IS NULL AND ? IS NULL))

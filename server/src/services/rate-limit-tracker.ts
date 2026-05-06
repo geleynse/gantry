@@ -122,8 +122,10 @@ export class RateLimitTracker {
     // Count RPM per agent (requests in the last full minute bucket = currentBucket)
     const agentCurrentRpm = new Map<string, number>();
     const agent429Count = new Map<string, number>();
+    const allAgents = new Set<string>(agentToIp.keys());
 
     for (const rec of this.records) {
+      allAgents.add(rec.agentName);
       if (rec.bucketMinute === currentBucket) {
         agentCurrentRpm.set(rec.agentName, (agentCurrentRpm.get(rec.agentName) ?? 0) + 1);
       }
@@ -133,11 +135,6 @@ export class RateLimitTracker {
     }
 
     // Build by_agent
-    const allAgents = new Set<string>([...agentToIp.keys()]);
-    // Include any agents seen in records but not in config
-    for (const rec of this.records) {
-      allAgents.add(rec.agentName);
-    }
 
     const by_agent: Record<string, AgentStats> = {};
     const last429ByAgent = new Map<string, string>();

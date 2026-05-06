@@ -116,9 +116,7 @@ export async function batchMine(
     // Check cargo every 5 mines to see if full
     if ((i + 1) % 5 === 0 && i < clampedCount - 1) {
       const cached = statusCache.get(agentName);
-      const ship = cached
-        ? (cached.data.ship as Record<string, unknown> | undefined)
-        : undefined;
+      const ship = cached?.data.ship as Record<string, unknown> | undefined;
       if (
         ship &&
         typeof ship.cargo_used === "number" &&

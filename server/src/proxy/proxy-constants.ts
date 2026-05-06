@@ -127,36 +127,19 @@ export function stripPendingFields(result: unknown): void {
 }
 
 // ---------------------------------------------------------------------------
-// GameStatePersister
+// throttledPersistGameState
 // ---------------------------------------------------------------------------
 
 const PERSIST_THROTTLE_MS = 30_000;
+const lastPersistTime = new Map<string, number>();
 
-/**
- * GameStatePersister — Throttles game state persistence (every 30s per agent max).
- * Each instance maintains its own throttle state.
- */
-export class GameStatePersister {
-  private lastPersistTime = new Map<string, number>();
-
-  persist(agentName: string, state: { data: Record<string, unknown>; fetchedAt: number }): void {
-    const now = Date.now();
-    const last = this.lastPersistTime.get(agentName) ?? 0;
-    if (now - last >= PERSIST_THROTTLE_MS) {
-      this.lastPersistTime.set(agentName, now);
-      persistGameState(agentName, state);
-    }
-  }
-}
-
-// Default instance for backward compatibility
-const defaultPersister = new GameStatePersister();
-
-/**
- * @deprecated Use GameStatePersister instance directly.
- */
 export function throttledPersistGameState(agentName: string, state: { data: Record<string, unknown>; fetchedAt: number }): void {
-  defaultPersister.persist(agentName, state);
+  const now = Date.now();
+  const last = lastPersistTime.get(agentName) ?? 0;
+  if (now - last >= PERSIST_THROTTLE_MS) {
+    lastPersistTime.set(agentName, now);
+    persistGameState(agentName, state);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -41,7 +41,7 @@ export async function createSOCKS5Tunnel(
 
     return result.socket;
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
+    const message = err instanceof Error ? err.message : String(err);
     
     // Classify SOCKS5 errors for better debugging
     if (message.includes('ECONNREFUSED') || message.includes('unreachable')) {
@@ -134,9 +134,8 @@ export async function createSOCKS5Relay(
       }
 
       const host = bindCandidates[index];
-      const onError = (err: Error) => {
+      const onError = () => {
         server.off('listening', onListening);
-        // Try next loopback host.
         tryBind(index + 1);
       };
       const onListening = () => {

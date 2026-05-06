@@ -155,19 +155,16 @@ function insertRecord(rec: {
   }
 }
 
-/**
- * Log assistant text (narrative commentary between tool calls).
- * Stored as a special record with tool_name = '__assistant_text'.
- */
-export function logAssistantText(
+function logTextRecord(
   agent: string,
+  toolName: string,
   text: string,
   traceId?: string | null,
 ): void {
   if (!text.trim()) return;
   insertRecord({
     agent,
-    tool_name: "__assistant_text",
+    tool_name: toolName,
     args_summary: null,
     result_summary: null,
     success: true,
@@ -175,35 +172,17 @@ export function logAssistantText(
     duration_ms: 0,
     is_compound: false,
     status: "complete",
-    assistant_text: truncate(text, 2000) ?? text,
+    assistant_text: truncate(text, 2000),
     trace_id: traceId ?? null,
   });
 }
 
-/**
- * Log extended thinking/reasoning blocks from Claude's internal reasoning.
- * Stored as a special record with tool_name = '__reasoning'.
- * These precede subsequent tool calls and help explain WHY an agent acts.
- */
-export function logAgentReasoning(
-  agent: string,
-  reasoning: string,
-  traceId?: string | null,
-): void {
-  if (!reasoning.trim()) return;
-  insertRecord({
-    agent,
-    tool_name: "__reasoning",
-    args_summary: null,
-    result_summary: null,
-    success: true,
-    error_code: null,
-    duration_ms: 0,
-    is_compound: false,
-    status: "complete",
-    assistant_text: truncate(reasoning, 2000) ?? reasoning,
-    trace_id: traceId ?? null,
-  });
+export function logAssistantText(agent: string, text: string, traceId?: string | null): void {
+  logTextRecord(agent, "__assistant_text", text, traceId);
+}
+
+export function logAgentReasoning(agent: string, reasoning: string, traceId?: string | null): void {
+  logTextRecord(agent, "__reasoning", reasoning, traceId);
 }
 
 /** Event types too noisy / internal to log */

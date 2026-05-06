@@ -220,6 +220,21 @@ export class MetricsWindow {
     };
   }
 
+  /** Log a status transition and update lastStatus. Returns the result for chaining. */
+  private transition(
+    status: ServerStatus,
+    reason: string,
+    extra?: string,
+  ): { status: ServerStatus; reason: string } {
+    if (this.lastStatus !== status) {
+      const level = status === "down" || status === "unstable" ? "warn" : "info";
+      const suffix = extra ? ` | ${extra}` : "";
+      log[level](`Server status transition: ${this.lastStatus} → ${status} | ${reason}${suffix}`);
+      this.lastStatus = status;
+    }
+    return { status, reason };
+  }
+
   private deriveStatus(
     errorRate: number,
     now: number,
@@ -235,77 +250,40 @@ export class MetricsWindow {
     // Down: no successful calls in downTimeoutMs
     const timeSinceSuccess = now - this.lastSuccessTime;
     if (this.requests.length > 0 && timeSinceSuccess > this.config.downTimeoutMs) {
-      const result = { status: "down" as ServerStatus, reason: `No successful calls in ${Math.round(timeSinceSuccess / 1000)}s` };
-      if (this.lastStatus !== "down") {
-        log.warn(`Server status transition: ${this.lastStatus} → down | ${result.reason}`);
-        this.lastStatus = "down";
-      }
-      return result;
+      return this.transition("down", `No successful calls in ${Math.round(timeSinceSuccess / 1000)}s`);
     }
 
     // Recovering: was down, now getting successful calls but error rate still needs improvement
     // If error rate is still elevated (>degraded threshold), stay in recovering state
     // Otherwise fall through to check degraded/healthy thresholds below
     if ((this.lastStatus === "down" || this.lastStatus === "recovering") && successfulRequests > 0 && errorRate > this.config.degradedErrorRate) {
-      const result = { status: "recovering" as ServerStatus, reason: `Recovering (error rate ${(errorRate * 100).toFixed(1)}%, ${successfulRequests}/${totalRequests} successful)` };
-      if (this.lastStatus !== "recovering") {
-        log.info(`Server status transition: ${this.lastStatus} → recovering | ${result.reason}`);
-        this.lastStatus = "recovering";
-      }
-      return result;
+      return this.transition("recovering", `Recovering (error rate ${(errorRate * 100).toFixed(1)}%, ${successfulRequests}/${totalRequests} successful)`);
     }
 
     // Circuit breaker states bypass MIN_SAMPLES — they're direct indicators of problems
     if (this.cbState === "open") {
-      const result = { status: "unstable" as ServerStatus, reason: "Circuit breaker is open" };
-      if (this.lastStatus !== "unstable") {
-        log.warn(`Server status transition: ${this.lastStatus} → unstable | ${result.reason} | errors: ${this.errors.length}, errorRate: ${(errorRate * 100).toFixed(1)}%`);
-        this.lastStatus = "unstable";
-      }
-      return result;
+      return this.transition("unstable", "Circuit breaker is open", `errors: ${this.errors.length}, errorRate: ${(errorRate * 100).toFixed(1)}%`);
     }
     if (this.cbState === "half-open") {
-      const result = { status: "degraded" as ServerStatus, reason: "Circuit breaker is half-open (probing)" };
-      if (this.lastStatus !== "degraded") {
-        log.info(`Server status transition: ${this.lastStatus} → degraded | ${result.reason}`);
-        this.lastStatus = "degraded";
-      }
-      return result;
+      return this.transition("degraded", "Circuit breaker is half-open (probing)");
     }
 
     // Check if we have enough samples for error-rate evaluation
     if (this.requests.length < MIN_SAMPLES) {
-      if (this.lastStatus !== "healthy") {
-        this.lastStatus = "healthy";
-      }
+      this.lastStatus = "healthy";
       return { status: "healthy", reason: "insufficient samples" };
     }
 
     // Unstable: high error rate or latency
     if (errorRate > this.config.unstableErrorRate) {
-      const result = { status: "unstable" as ServerStatus, reason: `Error rate ${(errorRate * 100).toFixed(1)}% > ${this.config.unstableErrorRate * 100}%` };
-      if (this.lastStatus !== "unstable") {
-        log.warn(`Server status transition: ${this.lastStatus} → unstable | ${result.reason} | totalErrors: ${this.errors.length}, totalRequests: ${this.requests.length}`);
-        this.lastStatus = "unstable";
-      }
-      return result;
+      return this.transition("unstable", `Error rate ${(errorRate * 100).toFixed(1)}% > ${this.config.unstableErrorRate * 100}%`, `totalErrors: ${this.errors.length}, totalRequests: ${this.requests.length}`);
     }
     // Degraded: moderate error rate
     if (errorRate > this.config.degradedErrorRate) {
-      const result = { status: "degraded" as ServerStatus, reason: `Error rate ${(errorRate * 100).toFixed(1)}% > ${this.config.degradedErrorRate * 100}%` };
-      if (this.lastStatus !== "degraded") {
-        log.info(`Server status transition: ${this.lastStatus} → degraded | ${result.reason} | totalErrors: ${this.errors.length}, totalRequests: ${this.requests.length}`);
-        this.lastStatus = "degraded";
-      }
-      return result;
+      return this.transition("degraded", `Error rate ${(errorRate * 100).toFixed(1)}% > ${this.config.degradedErrorRate * 100}%`, `totalErrors: ${this.errors.length}, totalRequests: ${this.requests.length}`);
     }
     // Healthy: recovery from degraded/unstable
-    if (this.lastStatus !== "healthy") {
-      log.info(`Server status transition: ${this.lastStatus} → healthy | recovered | errorRate: ${(errorRate * 100).toFixed(2)}%`);
-      this.lastStatus = "healthy";
-    }
-
-    return { status: "healthy", reason: "" };
+    return this.transition("healthy", `recovered | errorRate: ${(errorRate * 100).toFixed(2)}%`);
   }
 }
 

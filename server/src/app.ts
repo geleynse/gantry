@@ -360,14 +360,24 @@ export async function createApp(config: GantryConfig, options?: { bindHost?: str
       }
       next();
     });
+
+    // Final fallback (dev/esbuild mode): serve index.html from disk
+    app.use((req, res) => {
+      if (req.method !== "GET") {
+        res.status(404).json({ error: "Not found" });
+        return;
+      }
+      const indexPath = path.join(publicDir, "index.html");
+      if (existsSync(indexPath)) {
+        res.sendFile(indexPath);
+        return;
+      }
+      res.status(404).end();
+    });
   }
 
-  // Final fallback: serve index.html for SPA client-side routing.
-  // This handles dynamic routes like /agent/[name] that aren't pre-rendered at build time.
-  // The React app uses client-side routing to handle these after hydration.
-  // API routes (/api/*) and MCP routes are defined before this handler, so they're not caught.
+  // Final fallback (compiled binary mode): serve index.html from embedded files for SPA routing.
   if (embeddedFileMap) {
-    // Compiled binary mode: serve index.html from embedded files
     app.use((req, res) => {
       if (req.method !== "GET") {
         res.status(404).json({ error: "Not found" });
@@ -381,21 +391,6 @@ export async function createApp(config: GantryConfig, options?: { bindHost?: str
       res.set("Content-Type", "text/html");
       res.set("Content-Length", String(indexFile.data.length));
       res.send(indexFile.data);
-    });
-  } else {
-    // Dev/esbuild mode: serve index.html from disk
-    const { existsSync } = await import("node:fs");
-    app.use((req, res) => {
-      if (req.method !== "GET") {
-        res.status(404).json({ error: "Not found" });
-        return;
-      }
-      const indexPath = path.join(publicDir, "index.html");
-      if (existsSync(indexPath)) {
-        res.sendFile(indexPath);
-        return;
-      }
-      res.status(404).end();
     });
   }
 

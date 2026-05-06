@@ -1,12 +1,5 @@
 export type { AgentConfig } from "../config.js";
 
-export interface FleetConfig {
-  agents: import("../config.js").AgentConfig[];
-  mcpGameUrl: string;
-  turnSleepMs: number;
-  staggerDelay: number;
-}
-
 export interface AgentStatus {
   name: string;
   backend: string;
@@ -155,28 +148,6 @@ export interface UsageSummary {
   // Codex fields
   totalTokens?: number;
   avgTokensPerTurn?: number;
-}
-
-export interface LogLineEvent {
-  line: string;
-  offset: number;
-}
-
-export interface LogMetaEvent {
-  fileSize: number;
-}
-
-export interface LogHistoryResponse {
-  lines: string[];
-  startOffset: number;
-  endOffset: number;
-  fileSize: number;
-}
-
-export interface LogSearchResult {
-  line: string;
-  lineNumber: number;
-  offset: number;
 }
 
 // Account pool types

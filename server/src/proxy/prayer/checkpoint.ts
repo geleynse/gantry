@@ -17,7 +17,7 @@
  * non-trivially-JSONable (closures, undefined) is dropped — the executor
  * never holds those on `ExecState`, so this is fine in practice.
  */
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "../../lib/atomic-write.js";
 import { createLogger } from "../../lib/logger.js";
@@ -53,7 +53,8 @@ function checkpointPath(agentName: string): string {
   // Sanitize: agent names are alphanumeric + dash in practice, but defend
   // against path traversal anyway.
   const safe = agentName.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return join(getPrayerStateDir(), `${safe}.json`);
+  const dir = _stateDir ?? defaultStateDir();
+  return join(dir, `${safe}.json`);
 }
 
 interface SerializedExecState {
@@ -133,7 +134,9 @@ function decodeMap<K, V>(value: unknown): Map<K, V> {
  */
 export function saveCheckpoint(agentName: string, state: ExecState): void {
   try {
-    atomicWriteFileSync(checkpointPath(agentName), serialize(state));
+    const path = checkpointPath(agentName);
+    mkdirSync(getPrayerStateDir(), { recursive: true });
+    atomicWriteFileSync(path, serialize(state));
   } catch (err) {
     log.warn("saveCheckpoint failed", { agent: agentName, error: String(err) });
   }
@@ -145,12 +148,13 @@ export function saveCheckpoint(agentName: string, state: ExecState): void {
  */
 export function loadCheckpoint(agentName: string): ExecState | null {
   const path = checkpointPath(agentName);
-  if (!existsSync(path)) return null;
   let raw: string;
   try {
     raw = readFileSync(path, "utf-8");
-  } catch (err) {
-    log.warn("loadCheckpoint read failed", { agent: agentName, path, error: String(err) });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.warn("loadCheckpoint read failed", { agent: agentName, path, error: String(err) });
+    }
     return null;
   }
   try {
@@ -168,10 +172,11 @@ export function loadCheckpoint(agentName: string): ExecState | null {
 /** Delete an agent's checkpoint. Idempotent — missing-file is not an error. */
 export function clearCheckpoint(agentName: string): void {
   const path = checkpointPath(agentName);
-  if (!existsSync(path)) return;
   try {
     unlinkSync(path);
-  } catch (err) {
-    log.warn("clearCheckpoint unlink failed", { agent: agentName, path, error: String(err) });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.warn("clearCheckpoint unlink failed", { agent: agentName, path, error: String(err) });
+    }
   }
 }

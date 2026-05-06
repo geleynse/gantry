@@ -164,7 +164,7 @@ export function syncCaptainsLogsFromServer(
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(agent, game_log_id) DO UPDATE SET
-      synced_at = ?
+      synced_at = excluded.synced_at
   `);
 
   const insertAll = db.transaction(() => {

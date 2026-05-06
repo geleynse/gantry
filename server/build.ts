@@ -73,11 +73,7 @@ async function buildBinary() {
   // This is the supported way to embed arbitrary files (including .html)
   // in a Bun compiled binary — CLI args treat .html as entry points.
   const imports = publicFiles
-    .map((f, i) => {
-      // Manifest is in dist/, so strip the dist/ prefix for relative imports
-      const relPath = f.startsWith('dist/') ? './' + f.slice('dist/'.length) : './' + f;
-      return `import f${i} from "${relPath}" with { type: "file" };`;
-    })
+    .map((f, i) => `import f${i} from "./${f.slice('dist/'.length)}" with { type: "file" };`)
     .join('\n');
   const manifest = `${imports}\nexport default [${publicFiles.map((_, i) => `f${i}`).join(', ')}];\n`;
   const manifestPath = resolve(__dirname, 'dist/_embedded-assets.ts');

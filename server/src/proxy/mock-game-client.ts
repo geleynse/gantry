@@ -71,6 +71,20 @@ function defaultState(initial?: MockInitialState): MockAgentState {
   };
 }
 
+function removeListener<T>(arr: T[], item: T): void {
+  const idx = arr.indexOf(item);
+  if (idx >= 0) arr.splice(idx, 1);
+}
+
+const MOCK_PRICE_TABLE: Record<string, number> = {
+  iron_ore: 12,
+  steel_plate: 45,
+  copper_ore: 10,
+  fuel_cell: 5,
+};
+const DEFAULT_SELL_PRICE = 8;
+const DEFAULT_BUY_PRICE = 10;
+
 function cargoUsed(cargo: MockCargoItem[]): number {
   return cargo.reduce((sum, c) => sum + c.quantity, 0);
 }
@@ -287,15 +301,13 @@ export class MockGameClient implements GameTransport {
     }
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
-        const idx = this.tickListeners.indexOf(listener);
-        if (idx >= 0) this.tickListeners.splice(idx, 1);
+        removeListener(this.tickListeners, listener);
         resolve(false);
       }, timeoutMs);
       const listener = (newTick: number) => {
         if (beforeTick === null || newTick > beforeTick) {
           clearTimeout(timer);
-          const idx = this.tickListeners.indexOf(listener);
-          if (idx >= 0) this.tickListeners.splice(idx, 1);
+          removeListener(this.tickListeners, listener);
           resolve(true);
         }
       };
@@ -310,15 +322,13 @@ export class MockGameClient implements GameTransport {
     if (this.lastSeenTick !== null && this.lastSeenTick >= targetTick) return true;
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
-        const idx = this.tickListeners.indexOf(listener);
-        if (idx >= 0) this.tickListeners.splice(idx, 1);
+        removeListener(this.tickListeners, listener);
         resolve(false);
       }, timeoutMs);
       const listener = (newTick: number) => {
         if (newTick >= targetTick) {
           clearTimeout(timer);
-          const idx = this.tickListeners.indexOf(listener);
-          if (idx >= 0) this.tickListeners.splice(idx, 1);
+          removeListener(this.tickListeners, listener);
           resolve(true);
         }
       };
@@ -335,8 +345,7 @@ export class MockGameClient implements GameTransport {
     }
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
-        const idx = this.arrivalListeners.indexOf(listener);
-        if (idx >= 0) this.arrivalListeners.splice(idx, 1);
+        removeListener(this.arrivalListeners, listener);
         resolve(false);
       }, timeoutMs);
       const listener = () => {
@@ -615,16 +624,13 @@ export class MockGameClient implements GameTransport {
 
     type SellItem = { item_id: string; quantity: number };
     const items = Array.isArray(payload.items) ? (payload.items as SellItem[]) : [];
-    const PRICE_TABLE: Record<string, number> = { iron_ore: 12, steel_plate: 45, copper_ore: 10 };
-    const DEFAULT_PRICE = 8;
-
     let totalCredits = 0;
     const sold: Array<{ item_id: string; quantity: number; price_per_unit: number; total_credits: number }> = [];
 
     for (const item of items) {
       const qty = removeCargo(this.state, item.item_id, item.quantity);
       if (qty > 0) {
-        const price = PRICE_TABLE[item.item_id] ?? DEFAULT_PRICE;
+        const price = MOCK_PRICE_TABLE[item.item_id] ?? DEFAULT_SELL_PRICE;
         const earned = qty * price;
         totalCredits += earned;
         sold.push({ item_id: item.item_id, quantity: qty, price_per_unit: price, total_credits: earned });
@@ -819,8 +825,7 @@ export class MockGameClient implements GameTransport {
       return { status: "error", error: { code: "missing_item_id", message: "item_id is required." } };
     }
 
-    const PRICE_TABLE: Record<string, number> = { iron_ore: 12, steel_plate: 45, copper_ore: 10 };
-    const price = PRICE_TABLE[itemId] ?? 8;
+    const price = MOCK_PRICE_TABLE[itemId] ?? DEFAULT_SELL_PRICE;
     const actual = removeCargo(this.state, itemId, qty);
 
     if (actual === 0) {
@@ -858,8 +863,7 @@ export class MockGameClient implements GameTransport {
       return { status: "error", error: { code: "missing_item_id", message: "item_id is required." } };
     }
 
-    const PRICE_TABLE: Record<string, number> = { iron_ore: 12, steel_plate: 45, copper_ore: 10, fuel_cell: 5 };
-    const price = PRICE_TABLE[itemId] ?? 10;
+    const price = MOCK_PRICE_TABLE[itemId] ?? DEFAULT_BUY_PRICE;
     const totalCost = qty * price;
 
     if (this.state.credits < totalCost) {

@@ -147,8 +147,8 @@ export interface DatabaseAdapter {
   searchAgentMemory: (agent: string, query: string, limit?: number) => unknown[];
   searchFleetMemory: (query: string, limit?: number, targetAgent?: string) => unknown[];
   updateImportance: (table: "diary" | "docs", id: number, importance: number) => boolean;
-queryToolCalls: (agent: string, excludeTool: string, count: number) => ToolCallRow[];
-createAlert: (agent: string, severity: string, category: string | null, message: string) => number;
+  queryToolCalls: (agent: string, excludeTool: string, count: number) => ToolCallRow[];
+  createAlert: (agent: string, severity: string, category: string | null, message: string) => number;
 }
 
 // Default database adapter uses the real database functions
@@ -161,7 +161,7 @@ const defaultDatabaseAdapter: DatabaseAdapter = {
   searchAgentMemory,
   searchFleetMemory,
   updateImportance,
-queryToolCalls(agent: string, excludeTool: string, count: number): ToolCallRow[] {
+  queryToolCalls(agent: string, excludeTool: string, count: number): ToolCallRow[] {
     return queryAll<ToolCallRow>(
       `SELECT tool_name, args_summary, result_summary, success, error_code, duration_ms, timestamp
        FROM proxy_tool_calls
@@ -171,7 +171,7 @@ queryToolCalls(agent: string, excludeTool: string, count: number): ToolCallRow[]
       agent, excludeTool, count,
     );
   },
-createAlert,
+  createAlert,
 };
 
 export interface DocToolDeps {
@@ -476,7 +476,7 @@ export function registerDocTools(deps: DocToolDeps): void {
   });
   registeredTools.push("rate_memory");
 
-mcpServer.registerTool("debug_log", {
+  mcpServer.registerTool("debug_log", {
     description: "View your last N raw game server tool calls and responses. Use to diagnose unexpected results or repeated failures.",
     inputSchema: {
       count: z.number().int().min(1).max(20).optional().describe("Number of recent calls to show (default 5, max 20)"),
@@ -488,7 +488,7 @@ mcpServer.registerTool("debug_log", {
     return textResult(result);
   });
   registeredTools.push("debug_log");
-mcpServer.registerTool("create_alert", {
+  mcpServer.registerTool("create_alert", {
     description: "Create an alert for the operator. Use only for important issues requiring human attention (errors, stuck state, critical findings). Limited to 5 per session.",
     inputSchema: {
       severity: z.enum(["info", "warning", "error", "critical"]).describe("Alert severity"),

@@ -45,10 +45,9 @@ export async function flee(
 
   // The game returns error.code === "not_in_battle" instead of a result when no battle exists.
   // Treat that as "no active battle" rather than an opaque failure.
-  const errObj = battleStatusResp.error && typeof battleStatusResp.error === "object"
-    ? (battleStatusResp.error as Record<string, unknown>) : null;
-  const errCode = typeof errObj?.code === "string" ? (errObj.code as string) : null;
-  const isNotInBattleErr = errCode === "not_in_battle";
+  const isNotInBattleErr = battleStatusResp.error != null &&
+    typeof battleStatusResp.error === "object" &&
+    (battleStatusResp.error as Record<string, unknown>).code === "not_in_battle";
 
   if (battleStatusResp.error && !isNotInBattleErr) {
     log.warn("flee: get_battle_status failed", { agent: agentName, error: battleStatusResp.error });

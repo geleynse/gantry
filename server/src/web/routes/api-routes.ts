@@ -48,7 +48,7 @@ import facilitiesScanRoutes from "./facilities-scan.js";
 import { createFacilitiesRouter } from "./facilities.js";
 import prayerRoutes from "./prayer.js";
 import { createEnrollmentRouter } from "./enrollment.js";
-import { createCredentialsRouter } from "./credentials.js";
+import credentialsRouter from "./credentials.js";
 import { createHealthMonitorRouter } from "./health-monitor-route.js";
 import { createPoiExplorerRouter } from "./poi-explorer.js";
 import { createOverseerRouter } from "./overseer.js";
@@ -106,7 +106,7 @@ export function createApiRoutes(deps: ApiRouteDeps): Router {
   router.use("/routines", routinesRouter);
 
   // --- Credentials ---
-  router.use("/credentials", createCredentialsRouter());
+  router.use("/credentials", credentialsRouter);
 
   // --- Status ---
   const statusRouter = createStatusRouter(

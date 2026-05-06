@@ -65,9 +65,8 @@ export function formatCompactNumber(n: NumInput): string {
  * thousands separators. For tables and detail views.
  */
 export function formatCredits(n: NumInput): string {
-  const v = safeNumber(n);
-  if (v == null) return "—";
-  return `${formatNumber(v)} cr`;
+  const s = formatNumber(n);
+  return s === "—" ? s : `${s} cr`;
 }
 
 /**
@@ -75,9 +74,8 @@ export function formatCredits(n: NumInput): string {
  * Avoids mixing precision in one column.
  */
 export function formatCreditsCompact(n: NumInput): string {
-  const v = safeNumber(n);
-  if (v == null) return "—";
-  return `${formatCompactNumber(v)} cr`;
+  const s = formatCompactNumber(n);
+  return s === "—" ? s : `${s} cr`;
 }
 
 /**
@@ -94,11 +92,8 @@ export function formatDelta(n: NumInput): string {
 
 /** Signed credits delta, full precision. */
 export function formatCreditsDelta(n: NumInput): string {
-  const v = safeNumber(n);
-  if (v == null) return "—";
-  if (v === 0) return "0 cr";
-  const sign = v > 0 ? "+" : "-";
-  return `${sign}${formatNumber(Math.abs(v))} cr`;
+  const s = formatDelta(n);
+  return s === "—" ? s : `${s} cr`;
 }
 
 /** Signed credits delta, compact form. */

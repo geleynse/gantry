@@ -227,17 +227,10 @@ export function createFleetHealthMonitor(deps: FleetHealthMonitorDeps): FleetHea
 
     for (const name of activeAgents) {
       const health = deps.getAgentHealth(name);
-      if (health) {
-        reconnects_per_minute[name] = health.reconnectsPerMinute;
-        avg_connection_duration_ms[name] = health.connectionDurationMs;
-        rapid_disconnects[name] = health.rapidDisconnects;
-        total_reconnects[name] = health.totalReconnects;
-      } else {
-        reconnects_per_minute[name] = 0;
-        avg_connection_duration_ms[name] = null;
-        rapid_disconnects[name] = 0;
-        total_reconnects[name] = 0;
-      }
+      reconnects_per_minute[name] = health?.reconnectsPerMinute ?? 0;
+      avg_connection_duration_ms[name] = health?.connectionDurationMs ?? null;
+      rapid_disconnects[name] = health?.rapidDisconnects ?? 0;
+      total_reconnects[name] = health?.totalReconnects ?? 0;
     }
 
     // Session leak: more than 3x configured fleet size worth of transports (min 10).

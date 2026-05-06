@@ -130,10 +130,6 @@ export async function withRetry(
     await new Promise((r) => setTimeout(r, delay));
   }
 
-  // Should never reach here, but satisfy TypeScript
-  return {
-    response: { error: { code: "retry_exhausted", message: "All retries failed" } },
-    attempts: policy.maxRetries + 1,
-    lastError,
-  };
+  /* istanbul ignore next */
+  throw new Error("retry loop exited without returning");
 }

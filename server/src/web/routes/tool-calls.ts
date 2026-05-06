@@ -59,9 +59,9 @@ router.get('/', (req, res) => {
   const tool = queryString(req, 'tool');
   const type = queryString(req, 'type');
   const since = queryString(req, 'since');
-  const parentIdParam = queryString(req, 'parent_id');
   const limit = Math.min(queryInt(req, 'limit') ?? 50, 500);
   const offset = Math.max(queryInt(req, 'offset') ?? 0, 0);
+  const parentId = queryInt(req, 'parent_id');
 
   const conditions: string[] = [];
   const params: Array<string | number> = [];
@@ -82,15 +82,13 @@ router.get('/', (req, res) => {
     conditions.push("created_at > datetime(?)");
     params.push(since);
   }
-  if (parentIdParam !== undefined) {
-    const parentId = parseInt(parentIdParam, 10);
-    if (!isNaN(parentId) && parentId > 0) {
-      conditions.push('parent_id = ?');
-      params.push(parentId);
-    } else {
+  if (queryString(req, 'parent_id') !== undefined) {
+    if (parentId === undefined || parentId <= 0) {
       res.status(400).json({ error: 'invalid parent_id' });
       return;
     }
+    conditions.push('parent_id = ?');
+    params.push(parentId);
   }
 
   const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';

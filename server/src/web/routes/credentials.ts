@@ -28,24 +28,13 @@ function isValidAgentNameFormat(name: string): boolean {
   return /^[a-z][a-z0-9-]{0,63}$/.test(name);
 }
 
-function getCredentialsPath(): string {
-  return getCredentialsFilePath(env.FLEET_DIR);
-}
-
-/**
- * Read credentials from disk and decrypt passwords.
- * Returns in-memory plaintext form — never write this back to disk directly.
- */
 function readCredentials(): RawCredentialsFile {
-  const path = getCredentialsPath();
+  const path = getCredentialsFilePath(env.FLEET_DIR);
   if (!existsSync(path)) return {};
   const raw = JSON.parse(readFileSync(path, "utf-8")) as RawCredentialsFile;
   return decryptCredentials(raw);
 }
 
-/**
- * Serialize credentials for disk — encrypt all passwords before writing.
- */
 function writeCredentials(creds: RawCredentialsFile): void {
   const encrypted: RawCredentialsFile = {};
   for (const [agent, entry] of Object.entries(creds)) {
@@ -54,7 +43,7 @@ function writeCredentials(creds: RawCredentialsFile): void {
       password: encryptPassword(entry.password),
     };
   }
-  atomicWriteFileSync(getCredentialsPath(), JSON.stringify(encrypted, null, 2));
+  atomicWriteFileSync(getCredentialsFilePath(env.FLEET_DIR), JSON.stringify(encrypted, null, 2));
 }
 
 const router = Router();
@@ -127,11 +116,6 @@ router.delete("/:agent", (req, res) => {
     return;
   }
 
-  if (!existsSync(getCredentialsPath())) {
-    res.status(404).json({ error: "Credentials file not found" });
-    return;
-  }
-
   const credentials = readCredentials();
   if (!credentials[agent]) {
     res.status(404).json({ error: `No credentials found for agent "${agent}"` });
@@ -163,7 +147,3 @@ router.get("/audit", (req, res) => {
 });
 
 export default router;
-
-export function createCredentialsRouter() {
-  return router;
-}

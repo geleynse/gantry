@@ -11,6 +11,7 @@ import type { CompoundToolDeps, CompoundResult } from "./types.js";
 import { getRecipesByOutput } from "../../services/recipe-registry.js";
 import type { Recipe } from "../../services/recipe-registry.js";
 import { classifyItemSource, isSelfSourceable } from "./item-source.js";
+import { buildPriceMap } from "./utils.js";
 
 const log = createLogger("compound-tools");
 
@@ -43,51 +44,9 @@ interface CraftPathResult {
   estimated_profit: number;
 }
 
-interface MarketEntry {
-  item_id?: string;
-  id?: string;
-  buy_price?: number;
-  sell_price?: number;
-  best_buy?: number;
-  best_sell?: number;
-  price?: number;
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function buildPriceMap(
-  marketResult: unknown,
-): Map<string, { buy: number; sell: number }> {
-  const out = new Map<string, { buy: number; sell: number }>();
-
-  if (!marketResult || typeof marketResult !== "object") return out;
-
-  const raw = marketResult as Record<string, unknown>;
-
-  const list = Array.isArray(raw.items)
-    ? raw.items
-    : Array.isArray(raw.listings)
-      ? raw.listings
-      : Array.isArray(raw.market)
-        ? raw.market
-        : Array.isArray(marketResult)
-          ? (marketResult as unknown[])
-          : [];
-
-  for (const entry of list as MarketEntry[]) {
-    const itemId = String(entry.item_id ?? entry.id ?? "");
-    if (!itemId) continue;
-
-    const buy = entry.buy_price ?? entry.best_buy ?? entry.price ?? 0;
-    const sell = entry.sell_price ?? entry.best_sell ?? entry.price ?? 0;
-
-    out.set(itemId, { buy: Number(buy), sell: Number(sell) });
-  }
-
-  return out;
-}
 
 /**
  * Recursively resolve the crafting path for an item.

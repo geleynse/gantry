@@ -53,6 +53,10 @@ export interface AgentComparisonEntry {
 
 // --- Helpers ---
 
+function andWhere(where: string, clause: string): string {
+  return where ? `${where} AND ${clause}` : `WHERE ${clause}`;
+}
+
 function buildTimeClause(filter: TimeFilter, tableAlias: string = 't'): { where: string; params: SQLQueryBindings[] } {
   const clauses: string[] = [];
   const params: SQLQueryBindings[] = [];
@@ -87,8 +91,7 @@ function withoutOverseer(
   filter?: TimeFilter,
 ): string {
   if (filter?.agent) return where;
-  const clause = `${tableAlias}.agent != 'overseer'`;
-  return where ? `${where} AND ${clause}` : `WHERE ${clause}`;
+  return andWhere(where, `${tableAlias}.agent != 'overseer'`);
 }
 
 // --- Query Functions ---
@@ -177,9 +180,7 @@ export function getHullShieldOverTime(filter: TimeFilter): HullShieldDataPoint[]
   const db = getDb();
   const { where, params } = buildTimeClause(filter);
   const whereWithoutOverseer = withoutOverseer(where, 't', filter);
-  const hullFilter = whereWithoutOverseer
-    ? `${whereWithoutOverseer} AND gs.hull IS NOT NULL`
-    : 'WHERE gs.hull IS NOT NULL';
+  const hullFilter = andWhere(whereWithoutOverseer, 'gs.hull IS NOT NULL');
 
   const rows = db.prepare(`
     SELECT gs.agent, t.started_at, gs.hull, gs.hull_max, gs.shield, gs.shield_max
@@ -211,7 +212,7 @@ export function getAgentComparison(filter: TimeFilter): AgentComparisonEntry[] {
   const { where, params } = buildTimeClause(filter);
   const whereWithoutOverseer = withoutOverseer(where, 't', filter);
 
-  // Get per-agent turn stats
+  // Get per-agent turn stats + latest/earliest credits in one join
   const turnStats = db.prepare(`
     SELECT
       t.agent,
@@ -219,7 +220,15 @@ export function getAgentComparison(filter: TimeFilter): AgentComparisonEntry[] {
       SUM(t.cost_usd) as total_cost,
       AVG(t.cost_usd) as avg_cost_per_turn,
       SUM(t.iterations) as total_iterations,
-      AVG(t.duration_ms) as avg_duration_ms
+      AVG(t.duration_ms) as avg_duration_ms,
+      (SELECT gs.credits FROM game_snapshots gs
+       JOIN turns t2 ON gs.turn_id = t2.id
+       WHERE gs.agent = t.agent AND gs.credits IS NOT NULL
+       ORDER BY t2.started_at DESC LIMIT 1) as latest_credits,
+      (SELECT gs.credits FROM game_snapshots gs
+       JOIN turns t3 ON gs.turn_id = t3.id
+       WHERE gs.agent = t.agent AND gs.credits IS NOT NULL
+       ORDER BY t3.started_at ASC LIMIT 1) as earliest_credits
     FROM turns t
     ${whereWithoutOverseer}
     GROUP BY t.agent
@@ -230,34 +239,17 @@ export function getAgentComparison(filter: TimeFilter): AgentComparisonEntry[] {
     avg_cost_per_turn: number;
     total_iterations: number;
     avg_duration_ms: number;
+    latest_credits: number | null;
+    earliest_credits: number | null;
   }>;
 
-  const latestSnapshotStmt = db.prepare(`
-    SELECT gs.credits
-    FROM game_snapshots gs
-    JOIN turns t ON gs.turn_id = t.id
-    WHERE gs.agent = ? AND gs.credits IS NOT NULL
-    ORDER BY t.started_at DESC
-    LIMIT 1
-  `);
-  const earliestSnapshotStmt = db.prepare(`
-    SELECT gs.credits
-    FROM game_snapshots gs
-    JOIN turns t ON gs.turn_id = t.id
-    WHERE gs.agent = ? AND gs.credits IS NOT NULL
-    ORDER BY t.started_at ASC
-    LIMIT 1
-  `);
   const proxyStateStmt = db.prepare(`
     SELECT state_json FROM proxy_game_state WHERE agent = ?
   `);
 
   return turnStats.map(ts => {
-    const latestSnapshot = latestSnapshotStmt.get(ts.agent) as { credits: number } | undefined;
-    const earliestSnapshot = earliestSnapshotStmt.get(ts.agent) as { credits: number } | undefined;
-
     // Fallback: use proxy_game_state (live cache) if game_snapshots has no credits
-    let latestCredits = latestSnapshot?.credits ?? null;
+    let latestCredits = ts.latest_credits;
     if (latestCredits === null) {
       const proxyState = proxyStateStmt.get(ts.agent) as { state_json: string } | undefined;
       if (proxyState?.state_json) {
@@ -273,8 +265,8 @@ export function getAgentComparison(filter: TimeFilter): AgentComparisonEntry[] {
       }
     }
 
-    const creditsChange = (latestSnapshot && earliestSnapshot)
-      ? latestSnapshot.credits - earliestSnapshot.credits
+    const creditsChange = (ts.latest_credits !== null && ts.earliest_credits !== null)
+      ? ts.latest_credits - ts.earliest_credits
       : 0;
 
     return {
@@ -311,11 +303,7 @@ export function getEconomicTransactions(filter: TimeFilter): EconomicTransaction
   const { where, params } = buildTimeClause(filter);
 
   const inList = ECONOMIC_TOOL_NAMES.map(() => '?').join(', ');
-  const toolFilter = `tc.tool_name IN (${inList})`;
-
-  const combinedWhere = where
-    ? `${where} AND ${toolFilter}`
-    : `WHERE ${toolFilter}`;
+  const combinedWhere = andWhere(where, `tc.tool_name IN (${inList})`);
 
   const rows = db.prepare(`
     SELECT tc.id, t.agent, tc.tool_name, tc.args_json, tc.result_summary,
@@ -446,7 +434,7 @@ export function getExpensiveTurns(filter: TimeFilter & { limit?: number }): Expe
       COUNT(tc.id) as tool_call_count
     FROM turns t
     LEFT JOIN tool_calls tc ON tc.turn_id = t.id
-    ${where ? where + ' AND t.cost_usd IS NOT NULL' : 'WHERE t.cost_usd IS NOT NULL'}
+    ${andWhere(where, 't.cost_usd IS NOT NULL')}
     GROUP BY t.id
     ORDER BY t.cost_usd DESC
     LIMIT ?
@@ -590,6 +578,7 @@ export interface PnlResponse {
 export function getPnlSummary(filter: TimeFilter): PnlResponse {
   const db = getDb();
 
+  // Build WHERE clause without the 'created_at' table prefix (this table uses created_at, not started_at)
   const clauses: string[] = [];
   const params: SQLQueryBindings[] = [];
   if (filter.hours != null && filter.hours > 0) {
@@ -602,7 +591,8 @@ export function getPnlSummary(filter: TimeFilter): PnlResponse {
   }
   const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
 
-  const agents = db.prepare(`
+  // Get per-agent + fleet totals in one query
+  const agentsWithTotals = db.prepare(`
     SELECT
       agent,
       SUM(CASE WHEN credits_delta > 0 THEN credits_delta ELSE 0 END) AS total_earned,
@@ -611,34 +601,46 @@ export function getPnlSummary(filter: TimeFilter): PnlResponse {
       COUNT(*) AS action_count
     FROM agent_action_log ${where}
     GROUP BY agent
-    ORDER BY net_pnl DESC
+    UNION ALL
+    SELECT
+      'FLEET_TOTAL' as agent,
+      SUM(CASE WHEN credits_delta > 0 THEN credits_delta ELSE 0 END) AS total_earned,
+      SUM(CASE WHEN credits_delta < 0 THEN ABS(credits_delta) ELSE 0 END) AS total_spent,
+      SUM(COALESCE(credits_delta, 0)) AS net_pnl,
+      COUNT(*) AS action_count
+    FROM agent_action_log ${where}
   `).all(...params) as Array<{
     agent: string; total_earned: number; total_spent: number; net_pnl: number; action_count: number;
   }>;
 
+  // Split fleet total from agents
+  const fleetTotal = agentsWithTotals.find(a => a.agent === 'FLEET_TOTAL');
+  const agents = agentsWithTotals.filter(a => a.agent !== 'FLEET_TOTAL');
+
   const topRevenue = db.prepare(`
     SELECT item, SUM(credits_delta) AS total_credits, SUM(quantity) AS quantity
     FROM agent_action_log
-    ${where ? where + ' AND credits_delta > 0 AND item IS NOT NULL' : 'WHERE credits_delta > 0 AND item IS NOT NULL'}
+    ${andWhere(where, 'credits_delta > 0 AND item IS NOT NULL')}
     GROUP BY item ORDER BY total_credits DESC LIMIT 10
   `).all(...params) as Array<{ item: string; total_credits: number; quantity: number }>;
 
   const topCosts = db.prepare(`
     SELECT item, SUM(ABS(credits_delta)) AS total_credits, SUM(quantity) AS quantity
     FROM agent_action_log
-    ${where ? where + ' AND credits_delta < 0 AND item IS NOT NULL' : 'WHERE credits_delta < 0 AND item IS NOT NULL'}
+    ${andWhere(where, 'credits_delta < 0 AND item IS NOT NULL')}
     GROUP BY item ORDER BY total_credits DESC LIMIT 10
   `).all(...params) as Array<{ item: string; total_credits: number; quantity: number }>;
-
-  let earned = 0, spent = 0, net = 0;
-  for (const a of agents) { earned += a.total_earned; spent += a.total_spent; net += a.net_pnl; }
 
   return {
     agents: agents.map(a => ({
       agent: a.agent, totalEarned: a.total_earned, totalSpent: a.total_spent,
       netPnl: a.net_pnl, actionCount: a.action_count,
     })),
-    fleetTotals: { earned, spent, net },
+    fleetTotals: {
+      earned: fleetTotal?.total_earned ?? 0,
+      spent: fleetTotal?.total_spent ?? 0,
+      net: fleetTotal?.net_pnl ?? 0,
+    },
     topRevenue: topRevenue.map(r => ({ item: r.item, totalCredits: r.total_credits, quantity: r.quantity })),
     topCosts: topCosts.map(r => ({ item: r.item, totalCredits: r.total_credits, quantity: r.quantity })),
   };
@@ -664,9 +666,7 @@ export function getModelCostComparison(filter: TimeFilter): ModelCostEntry[] {
   const db = getDb();
   const { where, params } = buildTimeClause(filter);
 
-  const modelFilter = where
-    ? `${where} AND t.model IS NOT NULL AND t.model != ''`
-    : "WHERE t.model IS NOT NULL AND t.model != ''";
+  const modelFilter = andWhere(where, "t.model IS NOT NULL AND t.model != ''");
 
   const rows = db.prepare(`
     SELECT
@@ -735,7 +735,7 @@ export interface SessionPnl {
 export function getSessionPnl(agentName?: string, limit = 20): SessionPnl[] {
   const db = getDb();
 
-  // Pull handoff records ordered per agent, newest first
+  // Pull handoff records ordered per agent
   const agentClause = agentName ? 'WHERE agent = ?' : '';
   const agentParams: SQLQueryBindings[] = agentName ? [agentName] : [];
 
@@ -752,48 +752,44 @@ export function getSessionPnl(agentName?: string, limit = 20): SessionPnl[] {
     created_at: string;
   }>;
 
-  // Group consecutive pairs per agent into sessions
   const sessions: SessionPnl[] = [];
+  const breakdownStmt = db.prepare(`
+    SELECT action_type, SUM(COALESCE(credits_delta, 0)) AS total_delta, COUNT(*) AS count
+    FROM agent_action_log
+    WHERE agent = ?
+      AND datetime(created_at) > datetime(?)
+      AND datetime(created_at) <= datetime(?)
+    GROUP BY action_type
+    ORDER BY total_delta DESC
+  `);
 
-  // Group by agent
-  const byAgent: Record<string, typeof handoffs> = {};
-  for (const h of handoffs) {
-    if (!byAgent[h.agent]) byAgent[h.agent] = [];
-    byAgent[h.agent].push(h);
-  }
+  // Walk through handoffs, pairing consecutive ones per agent
+  let currentAgent = '';
+  let prevHandoff: typeof handoffs[0] | null = null;
 
-  for (const [agent, agentHandoffs] of Object.entries(byAgent)) {
-    // Need at least 2 handoffs to form a session
-    if (agentHandoffs.length < 2) continue;
+  for (const handoff of handoffs) {
+    // Reset accumulator when agent changes
+    if (handoff.agent !== currentAgent) {
+      currentAgent = handoff.agent;
+      prevHandoff = handoff;
+      continue;
+    }
 
-    // Walk pairs: [i, i+1] — i is the "start" handoff, i+1 is the "end"
-    for (let i = agentHandoffs.length - 1; i >= 1; i--) {
-      const start = agentHandoffs[i - 1];
-      const end = agentHandoffs[i];
-
-      const creditsStart = start.credits ?? 0;
-      const creditsEnd = end.credits ?? 0;
+    if (prevHandoff) {
+      const creditsStart = prevHandoff.credits ?? 0;
+      const creditsEnd = handoff.credits ?? 0;
       const creditsDelta = creditsEnd - creditsStart;
 
-      // Sum agent_action_log within the session window, grouped by action_type
-      const breakdown = db.prepare(`
-        SELECT action_type, SUM(COALESCE(credits_delta, 0)) AS total_delta, COUNT(*) AS count
-        FROM agent_action_log
-        WHERE agent = ?
-          AND datetime(created_at) > datetime(?)
-          AND datetime(created_at) <= datetime(?)
-        GROUP BY action_type
-        ORDER BY total_delta DESC
-      `).all(agent, start.created_at, end.created_at) as Array<{
+      const breakdown = breakdownStmt.all(currentAgent, prevHandoff.created_at, handoff.created_at) as Array<{
         action_type: string;
         total_delta: number;
         count: number;
       }>;
 
       sessions.push({
-        agent,
-        sessionStart: start.created_at,
-        sessionEnd: end.created_at,
+        agent: currentAgent,
+        sessionStart: prevHandoff.created_at,
+        sessionEnd: handoff.created_at,
         creditsStart,
         creditsEnd,
         creditsDelta,
@@ -802,13 +798,13 @@ export function getSessionPnl(agentName?: string, limit = 20): SessionPnl[] {
           totalDelta: b.total_delta,
           count: b.count,
         })),
-        location: end.location_system ?? '',
+        location: handoff.location_system ?? '',
       });
 
-      if (sessions.length >= limit) break;
+      if (sessions.length >= limit) return sessions;
     }
 
-    if (sessions.length >= limit) break;
+    prevHandoff = handoff;
   }
 
   // Sort by sessionEnd descending (most recent first) and apply limit

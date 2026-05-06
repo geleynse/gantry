@@ -19,10 +19,9 @@ export function autoScore(text: string): number {
 // ── Diary ──────────────────────────────────────────────────────
 
 export function addDiaryEntry(agent: string, entry: string, importance?: number): number {
-  const score = importance !== undefined ? importance : autoScore(entry);
   return queryInsert(
     `INSERT INTO agent_diary (agent, entry, importance) VALUES (?, ?, ?)`,
-    agent, entry, score
+    agent, entry, importance ?? autoScore(entry)
   );
 }
 
@@ -82,12 +81,11 @@ export function getNoteUpdatedAt(agent: string, type: string): string | null {
 
 export function upsertNote(agent: string, type: string, content: string, importance?: number): void {
   validateNoteType(type);
-  const score = importance !== undefined ? importance : autoScore(content);
   queryRun(
     `INSERT INTO agent_docs (agent, note_type, content, importance, updated_at)
      VALUES (?, ?, ?, ?, datetime('now'))
      ON CONFLICT(agent, note_type) DO UPDATE SET content = excluded.content, importance = excluded.importance, updated_at = excluded.updated_at`,
-    agent, type, content, score
+    agent, type, content, importance ?? autoScore(content)
   );
 }
 
@@ -146,18 +144,19 @@ export interface SearchResult {
   id?: number;
 }
 
-export function searchAgentMemory(agent: string, query: string, limit = 20): SearchResult[] {
-  const escaped = query.replace(/[%_\\]/g, ch => `\\${ch}`);
-  const pattern = `%${escaped}%`;
-  const results: SearchResult[] = [];
+export function searchFleetMemory(query: string, limit = 20, targetAgent?: string): (SearchResult & { agent: string })[] {
+  const pattern = `%${query.replace(/[%_\\]/g, ch => `\\${ch}`)}%`;
+  const agentFilter = targetAgent ? "agent = ? AND " : "";
+  const params = targetAgent ? [targetAgent, pattern, limit] : [pattern, limit];
+  const results: (SearchResult & { agent: string })[] = [];
 
-  // Search diary — order by importance DESC first, then recency as tiebreaker
-  const diaryRows = queryAll<{ id: number; entry: string; importance: number; created_at: string }>(
-    "SELECT id, entry, importance, created_at FROM agent_diary WHERE agent = ? AND entry LIKE ? ESCAPE '\\' ORDER BY importance DESC, id DESC LIMIT ?",
-    agent, pattern, limit
+  const diaryRows = queryAll<{ agent: string; id: number; entry: string; importance: number; created_at: string }>(
+    `SELECT agent, id, entry, importance, created_at FROM agent_diary WHERE ${agentFilter}entry LIKE ? ESCAPE '\\' ORDER BY importance DESC, id DESC LIMIT ?`,
+    ...params
   );
   for (const row of diaryRows) {
     results.push({
+      agent: row.agent,
       source: "diary",
       text: truncateText(row.entry),
       created_at: row.created_at,
@@ -166,13 +165,13 @@ export function searchAgentMemory(agent: string, query: string, limit = 20): Sea
     });
   }
 
-  // Search docs — order by importance DESC
-  const docRows = queryAll<{ id: number; note_type: string; content: string; importance: number; updated_at: string }>(
-    "SELECT id, note_type, content, importance, updated_at FROM agent_docs WHERE agent = ? AND content LIKE ? ESCAPE '\\' ORDER BY importance DESC LIMIT ?",
-    agent, pattern, limit
+  const docRows = queryAll<{ agent: string; id: number; note_type: string; content: string; importance: number; updated_at: string }>(
+    `SELECT agent, id, note_type, content, importance, updated_at FROM agent_docs WHERE ${agentFilter}content LIKE ? ESCAPE '\\' ORDER BY importance DESC LIMIT ?`,
+    ...params
   );
   for (const row of docRows) {
     results.push({
+      agent: row.agent,
       source: row.note_type,
       text: truncateText(extractDocText(row.content, query)),
       created_at: row.updated_at,
@@ -185,51 +184,8 @@ export function searchAgentMemory(agent: string, query: string, limit = 20): Sea
   return results.slice(0, limit);
 }
 
-export function searchFleetMemory(query: string, limit = 20, targetAgent?: string): (SearchResult & { agent: string })[] {
-  const escaped = query.replace(/[%_\\]/g, ch => `\\${ch}`);
-  const pattern = `%${escaped}%`;
-  const results: (SearchResult & { agent: string })[] = [];
-
-  // Search diary
-  const diarySQL = targetAgent
-    ? "SELECT agent, id, entry, importance, created_at FROM agent_diary WHERE agent = ? AND entry LIKE ? ESCAPE '\\' ORDER BY importance DESC, id DESC LIMIT ?"
-    : "SELECT agent, id, entry, importance, created_at FROM agent_diary WHERE entry LIKE ? ESCAPE '\\' ORDER BY importance DESC, id DESC LIMIT ?";
-  const diaryParams = targetAgent ? [targetAgent, pattern, limit] : [pattern, limit];
-  const diaryRows = queryAll<{ agent: string; id: number; entry: string; importance: number; created_at: string }>(
-    diarySQL, ...diaryParams
-  );
-  for (const row of diaryRows) {
-    results.push({
-      agent: row.agent,
-      source: "diary",
-      text: truncateText(row.entry),
-      created_at: row.created_at,
-      importance: row.importance,
-      id: row.id,
-    });
-  }
-
-  // Search docs
-  const docSQL = targetAgent
-    ? "SELECT agent, id, note_type, content, importance, updated_at FROM agent_docs WHERE agent = ? AND content LIKE ? ESCAPE '\\' ORDER BY importance DESC LIMIT ?"
-    : "SELECT agent, id, note_type, content, importance, updated_at FROM agent_docs WHERE content LIKE ? ESCAPE '\\' ORDER BY importance DESC LIMIT ?";
-  const docParams = targetAgent ? [targetAgent, pattern, limit] : [pattern, limit];
-  const docRows = queryAll<{ agent: string; id: number; note_type: string; content: string; importance: number; updated_at: string }>(
-    docSQL, ...docParams
-  );
-  for (const row of docRows) {
-    results.push({
-      agent: row.agent,
-      source: row.note_type,
-      text: truncateText(extractDocText(row.content, query)),
-      created_at: row.updated_at,
-      importance: row.importance,
-      id: row.id,
-    });
-  }
-
-  results.sort(sortByImportanceThenDate);
-  return results.slice(0, limit);
+export function searchAgentMemory(agent: string, query: string, limit = 20): SearchResult[] {
+  return searchFleetMemory(query, limit, agent).map(({ agent: _a, ...rest }) => rest);
 }
 
 export function decontaminateNotes(agent: string, words: string[]): number {

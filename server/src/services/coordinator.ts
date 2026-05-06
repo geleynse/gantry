@@ -46,6 +46,15 @@ interface StatusCacheEntry {
   fetchedAt: number;
 }
 
+interface CoordinatorStateRow {
+  tick_number: number;
+  tick_at: string;
+  fleet_snapshot: string;
+  assignments: string;
+  market_snapshot: string | null;
+  metrics: string | null;
+}
+
 export class FleetCoordinator {
   /** Optional OverseerEventLog for enriching fleet snapshots. Set by the overseer after construction. */
   overseerEventLog: OverseerEventLog | null = null;
@@ -195,9 +204,7 @@ export class FleetCoordinator {
   }
 
   /** Deserialize a coordinator_state DB row into a CoordinatorTickResult. */
-  private deserializeTickRow(
-    row: { tick_number: number; tick_at: string; fleet_snapshot: string; assignments: string; market_snapshot: string | null; metrics: string | null },
-  ): CoordinatorTickResult {
+  private deserializeTickRow(row: CoordinatorStateRow): CoordinatorTickResult {
     return {
       tick_number: row.tick_number,
       tick_at: row.tick_at,
@@ -215,14 +222,9 @@ export class FleetCoordinator {
 
     // Try loading from DB
     try {
-      const row = queryOne<{
-        tick_number: number;
-        tick_at: string;
-        fleet_snapshot: string;
-        assignments: string;
-        market_snapshot: string | null;
-        metrics: string | null;
-      }>("SELECT * FROM coordinator_state ORDER BY tick_number DESC LIMIT 1");
+      const row = queryOne<CoordinatorStateRow>(
+        "SELECT * FROM coordinator_state ORDER BY tick_number DESC LIMIT 1",
+      );
 
       if (!row) return null;
       return this.deserializeTickRow(row);
@@ -234,14 +236,10 @@ export class FleetCoordinator {
   /** Get tick history (last N ticks). */
   getHistory(limit = 10): CoordinatorTickResult[] {
     try {
-      const rows = queryAll<{
-        tick_number: number;
-        tick_at: string;
-        fleet_snapshot: string;
-        assignments: string;
-        market_snapshot: string | null;
-        metrics: string | null;
-      }>("SELECT * FROM coordinator_state ORDER BY tick_number DESC LIMIT ?", limit);
+      const rows = queryAll<CoordinatorStateRow>(
+        "SELECT * FROM coordinator_state ORDER BY tick_number DESC LIMIT ?",
+        limit,
+      );
 
       return rows.map((row) => this.deserializeTickRow(row));
     } catch {

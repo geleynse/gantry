@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { validateAgentName } from '../config.js';
 import { createLogger } from '../../lib/logger.js';
-import { queryString } from '../middleware/query-helpers.js';
+import { queryString, queryInt } from '../middleware/query-helpers.js';
 
 import {
   addDiaryEntry,
@@ -18,11 +18,6 @@ import { parseReport } from '../../services/report-parser.js';
 import { createOrder } from '../../services/comms-db.js';
 
 const log = createLogger('notes');
-
-function parseLimit(raw: unknown, fallback = 20, max = 100): number {
-  const n = parseInt(raw as string || '', 10);
-  return Number.isFinite(n) && n > 0 ? Math.min(n, max) : fallback;
-}
 
 const router: Router = Router();
 
@@ -50,7 +45,7 @@ router.get('/:name/diary', (req, res) => {
     res.status(404).json({ error: 'Unknown agent' });
     return;
   }
-  const count = Number(req.query.count ?? 10);
+  const count = queryInt(req, 'count') ?? 10;
   const entries = getRecentDiary(name, count);
   res.json({ entries });
 });
@@ -78,7 +73,7 @@ router.get('/fleet/search', (req, res) => {
     res.status(400).json({ error: 'q parameter required' });
     return;
   }
-  const limit = parseLimit(req.query.limit);
+  const limit = Math.min(queryInt(req, 'limit') ?? 20, 100);
   const agent = queryString(req, 'agent');
   if (agent && !validateAgentName(agent)) {
     res.status(404).json({ error: `Unknown agent: ${agent}` });
@@ -106,7 +101,7 @@ router.get('/:name/search', (req, res) => {
     res.status(400).json({ error: 'q parameter required' });
     return;
   }
-  const limit = parseLimit(req.query.limit);
+  const limit = Math.min(queryInt(req, 'limit') ?? 20, 100);
   const results = searchAgentMemory(agent, q, limit);
   res.json({ results, query: q });
 });

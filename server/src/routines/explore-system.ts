@@ -6,7 +6,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, done, handoff, phase, completePhase, checkCombat } from "./routine-utils.js";
+import { done, handoff, phase, completePhase, checkCombat } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -95,37 +95,27 @@ async function run(ctx: RoutineContext, params: ExploreSystemParams): Promise<Ro
   const scanPhase = phase("scan_pois");
   const scannedPois: string[] = [];
   const poisToScan = pois.slice(0, maxPois);
-  
-  try {
-    for (const poi of poisToScan) {
-      const poiId = poi.id;
-      await withRetry(async () => {
-        const scanResp = await ctx.client.execute("scan", { id: poiId });
-        if (scanResp.error) {
-          ctx.log("warn", `explore_system: scan of ${poiId} failed`, { error: scanResp.error });
-          return;
-        }
-        scannedPois.push(poiId);
-        if (checkCombat(scanResp)) {
-          throw new Error("combat_detected");
-        }
-      }, 1);
-      
-      // Check for combat after each scan via status cache events
-      const lastEvents = ctx.statusCache.get(ctx.agentName)?.data?.events as any[];
-      if (lastEvents?.some(e => e.type === "battle_started")) {
-          phases.push(completePhase(scanPhase, { scanned: scannedPois, aborted: "combat" }));
-          return handoff("Combat detected during scanning", { scanned: scannedPois }, phases);
-      }
 
-      await ctx.client.waitForTick();
+  for (const poi of poisToScan) {
+    const poiId = poi.id;
+    const scanResp = await ctx.client.execute("scan", { id: poiId });
+    if (scanResp.error) {
+      ctx.log("warn", `explore_system: scan of ${poiId} failed`, { error: scanResp.error });
+    } else {
+      scannedPois.push(poiId);
     }
-  } catch (err: any) {
-    if (err.message === "combat_detected") {
+    if (checkCombat(scanResp)) {
       phases.push(completePhase(scanPhase, { scanned: scannedPois, aborted: "combat" }));
       return handoff("Combat detected during scanning", { scanned: scannedPois }, phases);
     }
-    throw err;
+    // Check for combat via status cache events (battle may start without appearing in scan response)
+    const lastEvents = ctx.statusCache.get(ctx.agentName)?.data?.events as any[];
+    if (lastEvents?.some(e => e.type === "battle_started")) {
+      phases.push(completePhase(scanPhase, { scanned: scannedPois, aborted: "combat" }));
+      return handoff("Combat detected during scanning", { scanned: scannedPois }, phases);
+    }
+
+    await ctx.client.waitForTick();
   }
   phases.push(completePhase(scanPhase, { scanned: scannedPois }));
 

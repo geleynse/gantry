@@ -56,18 +56,7 @@ export function getItemName(itemId: string | undefined, displayName?: string | n
   const mapped = ITEM_MAPPING[itemId] ?? ITEM_MAPPING[itemId.toLowerCase()];
   if (mapped) return mapped;
 
-  // Ore format: copper_ore, iron_ore → Copper Ore, Iron Ore
-  const oreMatch = itemId.match(/^(.+?)_ore$/);
-  if (oreMatch) {
-    const name = oreMatch[1]
-      .replace(/_/g, ' ')
-      .split(' ')
-      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-      .join(' ');
-    return `${name} Ore`;
-  }
-
-  // Generic format: steel_plate, copper_wiring, trade_crystal → Steel Plate, Copper Wiring, Trade Crystal
+  // Generic format: copper_ore, steel_plate, copper_wiring, trade_crystal → Copper Ore, Steel Plate, etc.
   const formatted = itemId
     .replace(/_/g, ' ')
     .split(' ')

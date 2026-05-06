@@ -15,7 +15,7 @@ export interface AgentAlert {
 export function createAlert(agent: string, severity: string, category: string | null, message: string): number {
   return queryInsert(
     `INSERT INTO agent_alerts (agent, severity, category, message) VALUES (?, ?, ?, ?)`,
-    agent, severity, category ?? null, message
+    agent, severity, category, message
   );
 }
 

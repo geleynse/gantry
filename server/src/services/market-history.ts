@@ -1,4 +1,4 @@
-import { getDb, queryOne, queryRun } from './database.js';
+import { queryOne, queryRun } from './database.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('market-history');
@@ -28,23 +28,6 @@ export function recordPrice(snapshot: MarketSnapshot): void {
   } catch (e) {
     log.error(`Failed to record price for ${snapshot.item_id}`, { error: e });
   }
-}
-
-export function recordMarketData(poi_id: string, data: any): void {
-  if (!data || typeof data !== 'object') return;
-
-  const buyPrices = data.buy_prices || {};
-  const sellPrices = data.sell_prices || {};
-
-  const db = getDb();
-  db.transaction(() => {
-    for (const type of ['buy', 'sell'] as const) {
-      const prices = type === 'buy' ? buyPrices : sellPrices;
-      for (const [item_id, price] of Object.entries(prices)) {
-        recordPrice({ item_id, poi_id, price: Number(price), type });
-      }
-    }
-  })();
 }
 
 export interface PriceTrend {

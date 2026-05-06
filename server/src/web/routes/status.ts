@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { AgentStatus, FleetStatus, BattleState } from '../../shared/types.js';
 import { createLogger } from '../../lib/logger.js';
 import { FleetStatusSchema } from '../../shared/schemas.js';
+import { isRecent } from '../../lib/time.js';
 
 import { AGENTS, TURN_SLEEP_MS, getAgentLabel, getConfig } from '../config.js';
 import * as proc from '../../services/process-manager.js';
@@ -15,9 +16,9 @@ import { getSessionShutdownManager } from '../../proxy/session-shutdown.js';
 import { hasActiveProxySession, getLastActivityAt } from '../../services/agent-queries.js';
 import { initSSE, writeSSE } from '../sse.js';
 import type { BreakerRegistry } from '../../proxy/circuit-breaker.js';
+import type { MetricsWindow } from '../../proxy/instability-metrics.js';
 
 const log = createLogger('status');
-import type { MetricsWindow } from '../../proxy/instability-metrics.js';
 
 let _battleCache: Map<string, BattleState | null> | null = null;
 let _breakerRegistry: BreakerRegistry | null = null;
@@ -30,21 +31,14 @@ export function createStatusRouter(battleCache: Map<string, BattleState | null>,
 
 const router: Router = Router();
 
-function hasRecentActivity(lastActivityAt: string | null, thresholdMs: number = 2 * 60 * 1000): boolean {
-  if (!lastActivityAt) return false;
-  const ts = new Date(lastActivityAt).getTime();
-  if (!Number.isFinite(ts)) return false;
-  return Date.now() - ts < thresholdMs;
-}
-
 async function buildAgentStatus(agent: typeof AGENTS[number]): Promise<AgentStatus> {
   const running = await proc.hasSession(agent.name);
   const sessionInfo = getSessionInfo(agent.name);
   const proxySessionActiveRaw = hasActiveProxySession(agent.name);
   const lastActivityAt = getLastActivityAt(agent.name);
   const proxyRecentlyActive =
-    hasRecentActivity(lastActivityAt) ||
-    hasRecentActivity(sessionInfo.lastToolCallAt);
+    isRecent(lastActivityAt) ||
+    isRecent(sessionInfo.lastToolCallAt);
   const proxySessionActive = proxySessionActiveRaw || proxyRecentlyActive;
 
   const shutdownPending = hasSignal(agent.name, 'shutdown');
@@ -53,17 +47,11 @@ async function buildAgentStatus(agent: typeof AGENTS[number]): Promise<AgentStat
   const latencyMetrics = getLatencyMetrics(agent.name);
   const errorRate = getErrorRateBreakdown(agent.name);
 
-  // Fetch shutdown state
   const shutdownManager = getSessionShutdownManager();
   const inBattle = _battleCache?.has(agent.name) && _battleCache.get(agent.name) !== null;
-  const llmRunning = running; // Only true if PID exists
 
   if (!running && !proxySessionActive) {
     const health = await getHealthScore(agent.name, _breakerRegistry!);
-    // Distinguish graceful stop from crash: if no stopped_gracefully marker
-    // and the agent was previously seen running (has session/log data), it likely crashed.
-    // Graceful if: explicit stopped_gracefully flag OR shutdown signal was pending
-    // (agent stopped on its own after receiving a shutdown instruction)
     const stoppedGracefully = hasSignal(agent.name, 'stopped_gracefully') || hasSignal(agent.name, 'shutdown');
     const stoppedState: 'stopped' | 'dead' = stoppedGracefully ? 'stopped' : 'dead';
     return {
@@ -88,7 +76,7 @@ async function buildAgentStatus(agent: typeof AGENTS[number]): Promise<AgentStat
       connectionStatus: 'disconnected',
       inBattle: inBattle ?? false,
       shutdownState: shutdownManager.getShutdownState(agent.name),
-      llmRunning,
+      llmRunning: running,
       proxySessionActive,
       lastActivityAt,
       prayEnabled: agent.prayEnabled === true,
@@ -194,10 +182,7 @@ router.get('/startup', async (_req, res) => {
   // dashboard and is not part of the operational fleet. Keeps "Fleet Agents: X/Y"
   // consistent with the top-bar and fleet-capacity counts.
   const agents = AGENTS.filter((a) => a.name !== 'overseer');
-  let connectedCount = 0;
-  for (const agent of agents) {
-    if (hasActiveProxySession(agent.name)) connectedCount++;
-  }
+  const connectedCount = agents.filter((a) => hasActiveProxySession(a.name)).length;
   res.json({
     serverUptime: uptime,
     agentsConnected: connectedCount,

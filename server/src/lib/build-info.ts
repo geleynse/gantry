@@ -32,19 +32,13 @@ function findAncestorDir(startDir: string, marker: string, maxDepth = 10): strin
   return null;
 }
 
-function readPackageField(field: string): string {
-  // Check env var first — esbuild bakes this in as a string literal at build
-  // time, so the compiled bundle always has a real value here.
-  if (field === "version" && process.env.BUILD_VERSION) {
-    return process.env.BUILD_VERSION;
-  }
+function readVersion(): string {
+  if (process.env.BUILD_VERSION) return process.env.BUILD_VERSION;
   try {
     const root = findAncestorDir(__dirname, "package.json");
     if (!root) return "unknown";
-    const pkgPath = join(root, "package.json");
-    const raw = readFileSync(pkgPath, "utf-8");
-    const pkg = JSON.parse(raw) as Record<string, unknown>;
-    const val = pkg[field];
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8")) as Record<string, unknown>;
+    const val = pkg["version"];
     return typeof val === "string" ? val : "unknown";
   } catch {
     return "unknown";
@@ -96,7 +90,7 @@ function readGitCommit(): string {
   }
 }
 
-export const BUILD_VERSION: string = readPackageField("version");
+export const BUILD_VERSION: string = readVersion();
 export const BUILD_COMMIT: string = readGitCommit();
 export const SERVER_START_TIME: Date = new Date();
 

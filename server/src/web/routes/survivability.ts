@@ -34,8 +34,7 @@ const KNOWN_ROLES = ["combat", "explorer", "hauler", "default"] as const;
  * Handles both player-wrapped and flat cache formats.
  */
 function getHullPercent(data: Record<string, unknown>): number | undefined {
-  const ship = (data.ship ?? (data as Record<string, unknown>)) as Record<string, unknown> | undefined;
-  if (!ship) return undefined;
+  const ship = (data.ship ?? data) as Record<string, unknown>;
   const hull = Number(ship.hull ?? ship.hull_current);
   const maxHull = Number(ship.max_hull);
   if (!isNaN(hull) && !isNaN(maxHull) && maxHull > 0) {
@@ -55,11 +54,7 @@ export function createSurvivabilityRouter(
    * Threat assessment for a system. Pass ?agent=name to include hull factor.
    */
   router.get("/threat/:system", (req, res) => {
-    const system = req.params.system;
-    if (!system) {
-      res.status(400).json({ error: "system required" });
-      return;
-    }
+    const system = req.params.system as string;
 
     let hullPercent: number | undefined;
     const agentParam = extractQueryAgent(req);

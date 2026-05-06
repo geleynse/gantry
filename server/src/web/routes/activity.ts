@@ -44,15 +44,13 @@ router.get('/feed', (req, res) => {
   const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
   params.push(limit);
 
-  interface FeedRow {
+  const rows = queryAll<{
     id: number; agent: string; tool_name: string; params_summary: string | null;
-    result_summary: string | null; success: number; error_code: string | null;
-    duration_ms: number | null; is_compound: number; status: string;
-    trace_id: string | null; timestamp: string; created_at: string;
-  }
-  const rows = queryAll<FeedRow>(
-    `SELECT id, agent, tool_name, args_summary AS params_summary, result_summary, success, error_code,
-            duration_ms, is_compound, status, trace_id, timestamp, created_at
+    result_summary: string | null; duration_ms: number | null; is_compound: number;
+    status: string; trace_id: string | null; timestamp: string;
+  }>(
+    `SELECT id, agent, tool_name, args_summary AS params_summary, result_summary,
+            duration_ms, is_compound, status, trace_id, timestamp
      FROM proxy_tool_calls ${where}
      ORDER BY created_at DESC
      LIMIT ?`,

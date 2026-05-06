@@ -47,7 +47,7 @@ export function handleGetRecipe(marketCache: MarketCache, itemId: string): Recor
   if (recipes.length === 0) return { error: `no recipes found for item: ${itemId}` };
 
   const item = getItem(itemId);
-  const result: any = {
+  const result: Record<string, unknown> & { recipes: unknown[] } = {
     item: item || { id: itemId, name: "Unknown" },
     recipes: []
   };

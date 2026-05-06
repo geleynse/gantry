@@ -23,23 +23,21 @@ export interface ShipClassEmoji {
 }
 
 // Emoji fallbacks keyed by prefix — used when no image is available
-const SHIP_CLASS_EMOJIS: ShipClassEmoji[] = [
-  { class: "starter", emoji: "🚀", abbreviation: "STR" },
-  { class: "mining", emoji: "⛏️", abbreviation: "MIN" },
-  { class: "freighter", emoji: "📦", abbreviation: "FRE" },
-  { class: "fighter", emoji: "🛸", abbreviation: "FIG" },
-  { class: "courier", emoji: "💨", abbreviation: "CUR" },
-  { class: "blockade", emoji: "🛡️", abbreviation: "BLK" },
-  { class: "cargo", emoji: "📦", abbreviation: "CRG" },
-  { class: "refinery", emoji: "🏭", abbreviation: "REF" },
-  { class: "outerrim", emoji: "🌌", abbreviation: "OTR" },
-  { class: "nebula", emoji: "☁️", abbreviation: "NEB" },
-  { class: "crimson", emoji: "🔴", abbreviation: "CRM" },
-  { class: "solarian", emoji: "☀️", abbreviation: "SOL" },
-  { class: "voidborn", emoji: "🌑", abbreviation: "VDB" },
-];
-
-const EMOJI_MAP = new Map(SHIP_CLASS_EMOJIS.map((e) => [e.class, e]));
+const EMOJI_MAP = new Map<string, ShipClassEmoji>([
+  ["starter",  { class: "starter",  emoji: "🚀", abbreviation: "STR" }],
+  ["mining",   { class: "mining",   emoji: "⛏️", abbreviation: "MIN" }],
+  ["freighter",{ class: "freighter",emoji: "📦", abbreviation: "FRE" }],
+  ["fighter",  { class: "fighter",  emoji: "🛸", abbreviation: "FIG" }],
+  ["courier",  { class: "courier",  emoji: "💨", abbreviation: "CUR" }],
+  ["blockade", { class: "blockade", emoji: "🛡️", abbreviation: "BLK" }],
+  ["cargo",    { class: "cargo",    emoji: "📦", abbreviation: "CRG" }],
+  ["refinery", { class: "refinery", emoji: "🏭", abbreviation: "REF" }],
+  ["outerrim", { class: "outerrim", emoji: "🌌", abbreviation: "OTR" }],
+  ["nebula",   { class: "nebula",   emoji: "☁️", abbreviation: "NEB" }],
+  ["crimson",  { class: "crimson",  emoji: "🔴", abbreviation: "CRM" }],
+  ["solarian", { class: "solarian", emoji: "☀️", abbreviation: "SOL" }],
+  ["voidborn", { class: "voidborn", emoji: "🌑", abbreviation: "VDB" }],
+]);
 
 const DEFAULT_EMOJI: ShipClassEmoji = { class: "unknown", emoji: "🚀", abbreviation: "UNK" };
 

@@ -296,14 +296,11 @@ export async function restartAgent(name: string, reason?: string): Promise<{ ok:
  * race each other into the weekly token quota wall. Observed: rust-vane
  * and sable-thorn starting together burned 8 min on failed turns.
  */
-const HEAVY_TOKEN_MODELS = new Set(['sonnet', 'opus']);
+const HEAVY_TOKEN_MODELS = ['sonnet', 'opus'];
 
 function isHeavyTokenAgent(agent: { model?: string }): boolean {
   const model = (agent.model ?? '').toLowerCase();
-  for (const heavy of HEAVY_TOKEN_MODELS) {
-    if (model.includes(heavy)) return true;
-  }
-  return false;
+  return HEAVY_TOKEN_MODELS.some(h => model.includes(h));
 }
 
 /**

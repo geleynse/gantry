@@ -1,21 +1,5 @@
 "use client";
 
-/**
- * useRealtimeUpdates — transport-agnostic real-time subscription hook.
- *
- * Tries WebSocket first; falls back to SSE if WS is unavailable or fails.
- * Provides the same interface regardless of transport so callers don't care.
- *
- * Auto-reconnect with exponential backoff is handled internally.
- *
- * Usage:
- *   const { data, connected, error, transport } = useRealtimeUpdates<FleetStatus>({
- *     channel: "fleet-status",      // WS channel to subscribe to
- *     sseUrl: "/api/status/stream", // SSE URL fallback
- *     sseEvent: "status",           // SSE event name fallback
- *   });
- */
-
 import { useEffect, useRef, useState, useCallback } from "react";
 
 export type RealtimeTransport = "websocket" | "sse" | "none";
@@ -47,10 +31,6 @@ export interface UseRealtimeUpdatesResult<T> {
 const DEFAULT_MIN_RETRY = 1000;
 const DEFAULT_MAX_RETRY = 30000;
 
-/**
- * Build the WebSocket URL from the current page origin.
- * Converts http → ws, https → wss.
- */
 function buildWsUrl(path: string): string {
   if (typeof window === "undefined") return "";
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -75,13 +55,11 @@ export function useRealtimeUpdates<T>(
   const [error, setError] = useState<string | null>(null);
   const [transport, setTransport] = useState<RealtimeTransport>("none");
 
-  // Stable refs
   const closedRef = useRef(false);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const esRef = useRef<EventSource | null>(null);
-  const wsFailed = useRef(false);
 
   const scheduleRetry = useCallback(
     (reconnectFn: () => void) => {
@@ -138,10 +116,8 @@ export function useRealtimeUpdates<T>(
 
       const openTimeout = setTimeout(() => {
         if (!wsConnected) {
-          // WS took too long — fall back to SSE
           ws.close();
           wsRef.current = null;
-          wsFailed.current = true;
           connectSSE();
         }
       }, 3000);
@@ -149,7 +125,6 @@ export function useRealtimeUpdates<T>(
       ws.onopen = () => {
         clearTimeout(openTimeout);
         wsConnected = true;
-        wsFailed.current = false;
         retryCountRef.current = 0;
         setConnected(true);
         setError(null);
@@ -183,21 +158,13 @@ export function useRealtimeUpdates<T>(
         if (closedRef.current) return;
 
         if (!wsConnected) {
-          // Failed to connect — fall back to SSE permanently
-          wsFailed.current = true;
           connectSSE();
         } else {
-          // Was connected, now dropped — retry WS first, then SSE on repeated failures
-          scheduleRetry(wsFailed.current ? connectSSE : connectWS);
+          scheduleRetry(connectWS);
         }
       };
 
-      ws.onerror = () => {
-        // onclose will follow — handled there
-      };
     } catch {
-      // WebSocket constructor threw (e.g. in test env) — fall back to SSE
-      wsFailed.current = true;
       connectSSE();
     }
   }, [wsPath, channel, connectSSE, scheduleRetry]);
@@ -205,7 +172,6 @@ export function useRealtimeUpdates<T>(
   useEffect(() => {
     closedRef.current = false;
     retryCountRef.current = 0;
-    wsFailed.current = false;
 
     if (forceSSE || typeof WebSocket === "undefined") {
       connectSSE();

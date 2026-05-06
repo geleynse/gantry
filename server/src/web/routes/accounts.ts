@@ -11,7 +11,6 @@
 
 import { Router } from "express";
 import type { SessionManager } from "../../proxy/session-manager.js";
-import type { AccountPoolStatus } from "../../shared/types.js";
 
 export function createAccountsRouter(sessions: SessionManager, poolFile: string | null): Router {
   const router = Router();
@@ -23,22 +22,16 @@ export function createAccountsRouter(sessions: SessionManager, poolFile: string 
     }
     const pool = sessions.getPoolInstance();
     if (!pool || !poolFile) {
-      res.json({
-        enabled: false,
-        poolFile: null,
-        accounts: [],
-        config: null,
-      } as unknown as AccountPoolStatus);
+      res.json({ enabled: false, poolFile: null, accounts: [], config: null });
       return;
     }
 
-    const status: AccountPoolStatus = {
+    res.json({
       enabled: true,
       poolFile,
       accounts: pool.listAccounts(),
       config: pool.getPoolConfig(),
-    };
-    res.json(status);
+    });
   });
 
   router.post("/:username/assign", (req, res) => {

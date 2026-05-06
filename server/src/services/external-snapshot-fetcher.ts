@@ -11,7 +11,7 @@
  * Schedule: runs once daily at 06:05 UTC (after mkryo59 snapshot collection ~04:30 UTC).
  */
 
-import { getDb, queryOne, queryAll } from './database.js';
+import { getDb } from './database.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('external-snapshot-fetcher');

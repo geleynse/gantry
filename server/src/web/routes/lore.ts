@@ -18,18 +18,14 @@ import {
 const log = createLogger("lore-routes");
 const router: Router = Router();
 
-// GET /api/lore?search=keyword — search all lore, or return everything
+// GET /api/lore?search=keyword — search all lore, or return empty list
 router.get("/", (req, res) => {
   try {
     const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
-    if (search) {
-      const results = searchLore(search);
-      res.json({ lore: results, count: results.length, query: search });
-    } else {
-      // Return a sample (all systems would be large — use search for targeted queries)
-      const results = searchLore(""); // empty returns []
-      res.json({ lore: results, count: results.length });
-    }
+    const results = search ? searchLore(search) : [];
+    const payload: Record<string, unknown> = { lore: results, count: results.length };
+    if (search) payload.query = search;
+    res.json(payload);
   } catch (err) {
     log.warn("GET /api/lore failed", { error: String(err) });
     res.status(500).json({ error: String(err) });
@@ -40,10 +36,6 @@ router.get("/", (req, res) => {
 router.get("/:system", (req, res) => {
   try {
     const system = req.params.system;
-    if (!system) {
-      res.status(400).json({ error: "system parameter required" });
-      return;
-    }
     const lore = getLore(system);
     res.json({ system, lore, count: lore.length });
   } catch (err) {

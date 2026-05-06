@@ -17,21 +17,6 @@ export interface SystemCoords {
   y: number;
 }
 
-export interface WormholeConnection {
-  systemA: string;
-  systemB: string;
-  distance: number;
-  type: ConnectionType;
-}
-
-/**
- * Classify all connections in the galaxy graph.
- *
- * @param systems - Array of systems with coordinates
- * @param connections - Array of [systemA, systemB] pairs (deduplicated)
- * @param stdDevThreshold - Number of std devs above mean to classify as wormhole (default 2.5)
- * @returns Map keyed by "systemA:systemB" (alphabetically sorted) -> connection type
- */
 export function classifyConnections(
   systems: SystemCoords[],
   connections: Array<[string, string]>,

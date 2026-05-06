@@ -7,8 +7,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { existsSync, unlinkSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, unlinkSync } from "node:fs";
 import type { SessionManager } from "../proxy/session-manager.js";
 import {
   getEncryptionSecret,
@@ -17,6 +16,7 @@ import {
   getSecretPath,
   getPrevSecretPath,
 } from "./crypto.js";
+import { atomicWriteFileSync } from "../lib/atomic-write.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("rotation");
@@ -44,22 +44,15 @@ export function rotateSecret(sessionManager: SessionManager): RotationResult {
 
   // Step 1: Save old secret for crash recovery
   try {
-    const prevSecretPath = getPrevSecretPath();
-    mkdirSync(dirname(prevSecretPath), { recursive: true });
-    writeFileSync(prevSecretPath, oldSecret, { mode: 0o600 });
+    atomicWriteFileSync(getPrevSecretPath(), oldSecret);
   } catch (err) {
     throw new Error(`Failed to write previous secret: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Step 2: Write new secret (atomic via tmp + rename)
-  const secretPath = getSecretPath();
-  const tmpPath = secretPath + ".tmp";
+  // Step 2: Write new secret atomically
   try {
-    writeFileSync(tmpPath, newSecret, { mode: 0o600 });
-    renameSync(tmpPath, secretPath);
+    atomicWriteFileSync(getSecretPath(), newSecret);
   } catch (err) {
-    // Clean up tmp if it exists
-    try { unlinkSync(tmpPath); } catch { /* ignore */ }
     throw new Error(`Failed to write new secret: ${err instanceof Error ? err.message : String(err)}`);
   }
 

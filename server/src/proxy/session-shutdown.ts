@@ -171,11 +171,8 @@ export class SessionShutdownManager {
    * Clears the shutdown state so the agent no longer shows as shutting down in the UI.
    */
   completeShutdown(agentName: string): void {
-    shutdownDb.clearShutdownState(agentName);
-
-    log.info(`Shutdown complete`, {
-      agent: agentName,
-    });
+    this.clearShutdownState(agentName);
+    log.info(`Shutdown complete`, { agent: agentName });
   }
 
   /**

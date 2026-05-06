@@ -1,12 +1,13 @@
 import { Router } from "express";
 import type { OverseerAgent } from "../../services/overseer-agent.js";
 import { getAgent, getConfig } from "../../config/fleet.js";
+import { queryInt } from "../middleware/query-helpers.js";
 
 export function createOverseerRouter(overseerAgent: OverseerAgent): Router {
   const router = Router();
 
   router.get("/decisions", (req, res) => {
-    const limit = Math.min(Number(req.query.limit) || 20, 100);
+    const limit = Math.min(queryInt(req, "limit") ?? 20, 100);
     res.json(overseerAgent.getDecisionHistory(limit));
   });
 

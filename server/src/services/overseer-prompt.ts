@@ -58,29 +58,21 @@ export function buildUserPrompt(
   lines.push("|-------|--------|----------|---------|-------|------|------|");
 
   for (const agent of snapshot.agents) {
-    const status = agent.isInCombat
-      ? "COMBAT"
-      : agent.isOnline
-        ? "online"
-        : "offline";
-
+    const status = agent.isInCombat ? "COMBAT" : agent.isOnline ? "online" : "offline";
     const rawLoc = agent.poi ?? agent.system ?? "unknown";
     const location = typeof rawLoc === "object" ? JSON.stringify(rawLoc) : String(rawLoc);
-    const credits =
-      agent.credits !== undefined ? agent.credits.toLocaleString() : "—";
+    const credits = agent.credits !== undefined ? agent.credits.toLocaleString() : "—";
     const cargo =
       agent.cargoUsed !== undefined && agent.cargoMax !== undefined
         ? `${agent.cargoUsed}/${agent.cargoMax}`
         : "—";
     const fuel =
-      agent.fuel !== undefined && agent.fuelMax !== undefined && agent.fuelMax > 0
-        ? `${Math.round((agent.fuel / agent.fuelMax) * 100)}%`
-        : agent.fuel !== undefined
-          ? `${agent.fuel}`
-          : "—";
-    const role = agent.role ?? "—";
-
-    lines.push(`| ${agent.name} | ${status} | ${location} | ${credits} | ${cargo} | ${fuel} | ${role} |`);
+      agent.fuel === undefined
+        ? "—"
+        : agent.fuelMax !== undefined && agent.fuelMax > 0
+          ? `${Math.round((agent.fuel / agent.fuelMax) * 100)}%`
+          : `${agent.fuel}`;
+    lines.push(`| ${agent.name} | ${status} | ${location} | ${credits} | ${cargo} | ${fuel} | ${agent.role ?? "—"} |`);
   }
 
   // --- Fleet totals ---
@@ -97,18 +89,16 @@ export function buildUserPrompt(
   const triageItems: string[] = [];
   for (const agent of snapshot.agents) {
     const name = agent.name;
+    const locName = agent.poi || agent.system || "unknown location";
 
     // Offline agents
     if (!agent.isOnline) {
       // Perma-stranded check: agent logged out with 0 fuel and is sitting at a non-refueling
       // POI (or no POI). Restarting just burns cost cycling logout/login until external rescue
       // arrives. Flag for operator attention instead of auto-restart.
-      const lastFuel = agent.fuel;
-      const isStranded = lastFuel !== undefined && lastFuel <= 1;
-      if (isStranded) {
-        const loc = agent.poi || agent.system || "unknown location";
+      if (agent.fuel !== undefined && agent.fuel <= 1) {
         triageItems.push(
-          `🚫 ${name}: PERMA-STRANDED (offline, last seen with ${lastFuel} fuel at ${loc}) — DO NOT call start_agent. The agent has been logging out compliantly because it has no fuel. Restarting only cycles logout/login and burns cost. Required action: write a fleet_report describing the rescue need (system, POI, fuel needed). Operator must grant fuel or teleport. Skip this triage item until the agent moves or fuel changes.`,
+          `🚫 ${name}: PERMA-STRANDED (offline, last seen with ${agent.fuel} fuel at ${locName}) — DO NOT call start_agent. The agent has been logging out compliantly because it has no fuel. Restarting only cycles logout/login and burns cost. Required action: write a fleet_report describing the rescue need (system, POI, fuel needed). Operator must grant fuel or teleport. Skip this triage item until the agent moves or fuel changes.`,
         );
         continue;
       }
@@ -128,14 +118,12 @@ export function buildUserPrompt(
     //   - TRANSIT STUCK (cargo === 0 or undefined): no payload, may be genuinely stuck — order a reset.
     // Either way the agent can't execute routines until location resolves.
     const hasStatusData = agent.credits !== undefined || agent.system !== undefined || agent.poi !== undefined;
-    const loc = agent.poi ?? agent.system ?? "";
-    const inTransit = agent.isOnline && hasStatusData && (!loc || loc === "unknown" || loc === "");
-    if (agent.isOnline && !hasStatusData) {
+    if (!hasStatusData) {
       triageItems.push(`ℹ ${name}: AWAITING STATUS — agent recently started, no data yet. No action needed.`);
       continue; // No data yet — skip cargo/fuel/credits checks
-    } else if (inTransit) {
-      const carryingCargo = (agent.cargoUsed ?? 0) > 0;
-      if (carryingCargo) {
+    }
+    if (!(agent.poi ?? agent.system)) {
+      if ((agent.cargoUsed ?? 0) > 0) {
         triageItems.push(`ℹ ${name}: TRANSIT IDLE (in hyperspace, cargo ${agent.cargoUsed}/${agent.cargoMax ?? "?"}) — agent is mid-jump with payload. Do NOT stop_agent. Do NOT issue_order — they cannot consume orders mid-transit. Wait one turn.`);
       } else {
         triageItems.push(`⚠ ${name}: TRANSIT STUCK (empty location, no cargo) → call issue_order(agent="${name}", message="Logout, wait 2 minutes, then re-login to reset position"). Do NOT trigger routines — they will fail during transit.`);
@@ -144,15 +132,17 @@ export function buildUserPrompt(
     }
 
     // Cargo full (>90%) — suggest sell_cycle with deposit fallback
-    if (agent.cargoUsed !== undefined && agent.cargoMax !== undefined && agent.cargoMax > 0) {
-      const pct = agent.cargoUsed / agent.cargoMax;
-      if (pct > 0.9) {
-        triageItems.push(`⚠ ${name}: CARGO FULL (${agent.cargoUsed}/${agent.cargoMax}) → call issue_order(agent="${name}", message="Sell cargo: analyze_market then multi_sell. If no demand, deposit to station storage. If still full, jettison iron_ore.")`);
-      }
+    if (
+      agent.cargoUsed !== undefined &&
+      agent.cargoMax !== undefined &&
+      agent.cargoMax > 0 &&
+      agent.cargoUsed / agent.cargoMax > 0.9
+    ) {
+      triageItems.push(`⚠ ${name}: CARGO FULL (${agent.cargoUsed}/${agent.cargoMax}) → call issue_order(agent="${name}", message="Sell cargo: analyze_market then multi_sell. If no demand, deposit to station storage. If still full, jettison iron_ore.")`);
     }
 
     // Zero credits
-    if (agent.credits !== undefined && agent.credits === 0) {
+    if (agent.credits === 0) {
       triageItems.push(`⚠ ${name}: ZERO CREDITS → call trigger_routine(agent="${name}", routine="mining_loop")`);
     }
 
@@ -160,14 +150,12 @@ export function buildUserPrompt(
     // recoverable LOW FUEL. refuel_repair routine needs to travel to a station,
     // and travel requires fuel — so 0-fuel-undocked agents can't self-rescue.
     if (agent.fuel !== undefined && agent.fuelMax !== undefined && agent.fuelMax > 0) {
-      const fuelPct = agent.fuel / agent.fuelMax;
       if (agent.fuel <= 1 && agent.docked !== true) {
-        const loc = agent.poi || agent.system || "unknown location";
         triageItems.push(
-          `🚫 ${name}: PERMA-STRANDED (online, ${agent.fuel} fuel, undocked at ${loc}) — DO NOT call trigger_routine refuel_repair. Travel needs fuel; the routine will fail. Required action: write a fleet_report describing the rescue need (system, POI, fuel needed) and identify a fleetmate within 5 jumps with a Refueling Pump fitted who can deliver. One report per stranded agent per hour — do not repeat.`,
+          `🚫 ${name}: PERMA-STRANDED (online, ${agent.fuel} fuel, undocked at ${locName}) — DO NOT call trigger_routine refuel_repair. Travel needs fuel; the routine will fail. Required action: write a fleet_report describing the rescue need (system, POI, fuel needed) and identify a fleetmate within 5 jumps with a Refueling Pump fitted who can deliver. One report per stranded agent per hour — do not repeat.`,
         );
-      } else if (fuelPct < 0.2) {
-        triageItems.push(`⚠ ${name}: LOW FUEL (${Math.round(fuelPct * 100)}%) → call trigger_routine(agent="${name}", routine="refuel_repair")`);
+      } else if (agent.fuel / agent.fuelMax < 0.2) {
+        triageItems.push(`⚠ ${name}: LOW FUEL (${Math.round((agent.fuel / agent.fuelMax) * 100)}%) → call trigger_routine(agent="${name}", routine="refuel_repair")`);
       }
     }
   }
@@ -203,18 +191,17 @@ export function buildUserPrompt(
     }
   }
 
+  const previewMsg = (msg: string) =>
+    msg.length > 60 ? msg.slice(0, 57) + "..." : msg;
+
   // --- Active orders ---
   if (snapshot.activeOrders.length > 0) {
     lines.push("");
     lines.push("## Active Orders");
-    const orders = snapshot.activeOrders.slice(0, 10);
-    for (const order of orders) {
+    for (const order of snapshot.activeOrders.slice(0, 10)) {
       const target = order.target_agent ?? "all";
-      const preview =
-        order.message.length > 60 ? order.message.slice(0, 57) + "..." : order.message;
-      const ageMs = Date.now() - new Date(order.created_at).getTime();
-      const ageMin = Math.round(ageMs / 60000);
-      lines.push(`- ${target}: "${preview}" (${ageMin}m ago, ${order.priority})`);
+      const ageMin = Math.round((Date.now() - new Date(order.created_at).getTime()) / 60000);
+      lines.push(`- ${target}: "${previewMsg(order.message)}" (${ageMin}m ago, ${order.priority})`);
     }
   }
 
@@ -223,10 +210,8 @@ export function buildUserPrompt(
     lines.push("");
     lines.push("## Recently Delivered Orders");
     for (const delivery of snapshot.recentDeliveries) {
-      const preview =
-        delivery.message.length > 60 ? delivery.message.slice(0, 57) + "..." : delivery.message;
       const time = new Date(delivery.delivered_at).toISOString().slice(11, 16); // HH:MM
-      lines.push(`- ${delivery.target_agent}: "${preview}" (delivered at ${time})`);
+      lines.push(`- ${delivery.target_agent}: "${previewMsg(delivery.message)}" (delivered at ${time})`);
     }
   }
 

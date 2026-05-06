@@ -420,14 +420,9 @@ export class HttpGameClientV2 implements GameTransport {
       return resp;
     }
 
-    // Parse session_id out of the greeting text. Audit established a 1:1 match
-    // with mcpSessionId in a single run; if they disagree (e.g. after a server
-    // restart) we trust the parsed value and log a warn.
-    const greetingText = typeof resp.result === "string" ? resp.result : JSON.stringify(resp.result);
-    log.debug("login response", { agent: this.label, raw: greetingText });
-    const parsedMatch = greetingText.match(/Session ID:\s*([0-9a-f]+)/);
-    if (parsedMatch) {
-      const parsed = parsedMatch[1];
+    log.debug("login response", { agent: this.label, raw: typeof resp.result === "string" ? resp.result : JSON.stringify(resp.result) });
+    const parsed = this.parseSessionIdFromGreeting(resp.result);
+    if (parsed) {
       if (parsed !== this.mcpSessionId) {
         log.warn("login session_id != mcpSessionId — using parsed", {
           agent: this.label,
@@ -795,6 +790,12 @@ export class HttpGameClientV2 implements GameTransport {
   // Session renewal
   // ---------------------------------------------------------------------------
 
+  private parseSessionIdFromGreeting(result: unknown): string | null {
+    const text = typeof result === "string" ? result : JSON.stringify(result);
+    const m = text.match(/Session ID:\s*([0-9a-f]+)/);
+    return m ? m[1] : null;
+  }
+
   private async renewSession(): Promise<boolean> {
     if (!this.credentials) return false;
     try {
@@ -807,14 +808,7 @@ export class HttpGameClientV2 implements GameTransport {
       });
       if (resp.error) return false;
 
-      // Re-parse the gameSessionId from the greeting (same logic as login()).
-      const greetingText = typeof resp.result === "string" ? resp.result : JSON.stringify(resp.result);
-      const parsedMatch = greetingText.match(/Session ID:\s*([0-9a-f]+)/);
-      if (parsedMatch) {
-        this.gameSessionId = parsedMatch[1];
-      } else {
-        this.gameSessionId = this.mcpSessionId;
-      }
+      this.gameSessionId = this.parseSessionIdFromGreeting(resp.result) ?? this.mcpSessionId;
 
       this.authenticated = true;
       this.reconnectCount++;

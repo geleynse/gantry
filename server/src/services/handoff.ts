@@ -1,4 +1,4 @@
-import { getDb, queryOne, queryRun } from "./database.js";
+import { queryInsert, queryOne, queryRun } from "./database.js";
 
 interface HandoffInput {
   agent: string;
@@ -18,11 +18,9 @@ interface Handoff extends HandoffInput {
 }
 
 export function createHandoff(input: HandoffInput): number {
-  const db = getDb();
-  const result = db.prepare(`
-    INSERT INTO session_handoffs (agent, location_system, location_poi, credits, fuel, cargo_summary, last_actions, active_goals)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  return queryInsert(
+    `INSERT INTO session_handoffs (agent, location_system, location_poi, credits, fuel, cargo_summary, last_actions, active_goals)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     input.agent,
     input.location_system ?? null,
     input.location_poi ?? null,
@@ -32,7 +30,6 @@ export function createHandoff(input: HandoffInput): number {
     input.last_actions ?? null,
     input.active_goals ?? null,
   );
-  return Number(result.lastInsertRowid);
 }
 
 export function getUnconsumedHandoff(agent: string): Handoff | null {

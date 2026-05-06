@@ -99,7 +99,7 @@ export async function jumpRoute(
   for (let i = 0; i < finalSystemIds.length; i++) {
     // Check for shutdown signal before each hop
     if (shutdownManager.isShuttingDown(agentName)) {
-      const completed = jumps.filter((j) => j.result === "ok").length;
+      const completed = jumps.length;
       log.info("jump_route aborted due to shutdown signal", {
         agent: agentName,
         jump_num: i,
@@ -122,7 +122,7 @@ export async function jumpRoute(
       const buf = deps.eventBuffers.get(agentName);
       const hasPirateCombat = buf?.events?.some((e) => e.type === "pirate_combat") ?? false;
       if (hasPirateCombat) {
-        const completed = jumps.filter((j) => j.result === "ok").length;
+        const completed = jumps.length;
         log.warn("jump_route interrupted: pirate_combat detected", {
           agent: agentName,
           jump_num: i,

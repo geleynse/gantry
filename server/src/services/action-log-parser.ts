@@ -165,6 +165,11 @@ function extractTimestamp(entry: RawActionEntry): string | undefined {
   return undefined;
 }
 
+/** Parse a credits string that may contain commas (e.g. "1,234"). */
+function parseCredits(s: string): number {
+  return parseInt(s.replace(/,/g, ""), 10);
+}
+
 // ---------------------------------------------------------------------------
 // Regex fallback patterns for plain-text action log lines
 // ---------------------------------------------------------------------------
@@ -190,7 +195,7 @@ function parseFromText(text: string, agent: string): ActionLogEntry[] {
       actionType: "sell",
       item: sellMatch[2].trim(),
       quantity: parseInt(sellMatch[1], 10),
-      creditsDelta: parseInt(sellMatch[4].replace(/,/g, ""), 10),
+      creditsDelta: parseCredits(sellMatch[4]),
       station: sellMatch[3].trim(),
       rawData: text,
     });
@@ -203,7 +208,7 @@ function parseFromText(text: string, agent: string): ActionLogEntry[] {
       actionType: "buy",
       item: buyMatch[2].trim(),
       quantity: parseInt(buyMatch[1], 10),
-      creditsDelta: -parseInt(buyMatch[4].replace(/,/g, ""), 10),
+      creditsDelta: -parseCredits(buyMatch[4]),
       station: buyMatch[3].trim(),
       rawData: text,
     });
@@ -214,14 +219,14 @@ function parseFromText(text: string, agent: string): ActionLogEntry[] {
     entries.push({
       agent,
       actionType: "rescue",
-      creditsDelta: parseInt(rescueMatch[1].replace(/,/g, ""), 10),
+      creditsDelta: parseCredits(rescueMatch[1]),
       rawData: text,
     });
   }
 
   const insuranceMatch = INSURANCE_REGEX.exec(text);
   if (insuranceMatch) {
-    const amount = parseInt(insuranceMatch[1].replace(/,/g, ""), 10);
+    const amount = parseCredits(insuranceMatch[1]);
     entries.push({
       agent,
       actionType: text.toLowerCase().includes("self") ? "self_destruct" : "insurance_payout",
@@ -235,7 +240,7 @@ function parseFromText(text: string, agent: string): ActionLogEntry[] {
     entries.push({
       agent,
       actionType: "faction_deposit",
-      creditsDelta: parseInt(factionMatch[1].replace(/,/g, ""), 10),
+      creditsDelta: parseCredits(factionMatch[1]),
       rawData: text,
     });
   }

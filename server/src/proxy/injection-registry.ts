@@ -66,6 +66,18 @@ export class InjectionRegistry {
 }
 
 // ---------------------------------------------------------------------------
+// Local helpers
+// ---------------------------------------------------------------------------
+
+function getPlayerData(
+  ctx: PipelineContext,
+  agent: string,
+): Record<string, unknown> | undefined {
+  const raw = ctx.statusCache?.get(agent)?.data as Record<string, unknown> | undefined;
+  return (raw?.player as Record<string, unknown> | undefined) ?? raw;
+}
+
+// ---------------------------------------------------------------------------
 // extractBattleStatus helper
 // ---------------------------------------------------------------------------
 
@@ -124,8 +136,7 @@ export function createDefaultInjections(): Injection[] {
       priority: 11,
       enabled: () => true,
       gather: (ctx, agent) => {
-        const rawStatus = ctx.statusCache?.get(agent)?.data as Record<string, unknown> | undefined;
-        const playerData = (rawStatus?.player as Record<string, unknown> | undefined) ?? rawStatus;
+        const playerData = getPlayerData(ctx, agent);
         const system = playerData?.current_system;
         return typeof system === "string" && system.trim() !== "" ? system : null;
       },
@@ -183,10 +194,8 @@ export function createDefaultInjections(): Injection[] {
       priority: 50,
       enabled: () => true,
       gather: (ctx, agent) => {
-        const cachedStatus = ctx.statusCache?.get(agent);
-        if (!cachedStatus) return null;
-        const data = cachedStatus.data as Record<string, unknown>;
-        const p = (data.player as Record<string, unknown> | undefined) ?? data;
+        const p = getPlayerData(ctx, agent);
+        if (!p) return null;
         if (p.faction_storage_used === undefined || p.faction_storage_max === undefined) return null;
         const alert = checkStorageLimits(
           p.faction_storage_used as number,
@@ -202,15 +211,13 @@ export function createDefaultInjections(): Injection[] {
       priority: 60,
       enabled: (ctx) => Boolean(ctx.config.survivability?.autoCloakEnabled),
       gather: (ctx, agent) => {
-        const cachedAgentStatus = ctx.statusCache?.get(agent);
-        const rawStatus = cachedAgentStatus?.data as Record<string, unknown> | undefined;
-        const playerData =
-          (rawStatus?.player as Record<string, unknown> | undefined) ?? rawStatus;
+        const playerData = getPlayerData(ctx, agent);
         const currentSystem = playerData?.current_system as string | undefined;
         if (!currentSystem) return null;
 
         const isDocked = Boolean(playerData?.docked_at_base);
         let hullPct: number | undefined;
+        const rawStatus = ctx.statusCache?.get(agent)?.data as Record<string, unknown> | undefined;
         const shipData = rawStatus?.ship as Record<string, unknown> | undefined;
         if (shipData) {
           const hull = Number(shipData.hull);
@@ -230,9 +237,7 @@ export function createDefaultInjections(): Injection[] {
       priority: 62,
       enabled: () => true,
       gather: (ctx, agent) => {
-        const cachedStatus = ctx.statusCache?.get(agent);
-        const rawStatus = cachedStatus?.data as Record<string, unknown> | undefined;
-        const playerData = (rawStatus?.player as Record<string, unknown> | undefined) ?? rawStatus;
+        const playerData = getPlayerData(ctx, agent);
         const currentSystem = playerData?.current_system as string | undefined;
         const currentPoi = playerData?.current_poi as string | undefined;
         if (!currentSystem || !currentPoi) return null;

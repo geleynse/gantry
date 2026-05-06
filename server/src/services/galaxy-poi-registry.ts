@@ -160,9 +160,7 @@ export function _resetDockFailures(): void {
 export function isDockable(id: string): boolean | null {
   try {
     const row = queryOne<{ dockable: number | null }>('SELECT dockable FROM galaxy_pois WHERE id = ?', id);
-    if (!row) return null;
-    if (row.dockable === null) return null;
-    return row.dockable === 1;
+    return row?.dockable == null ? null : row.dockable === 1;
   } catch (e) {
     log.error(`Failed to check dockable for POI ${id}`, { error: e });
     return null;

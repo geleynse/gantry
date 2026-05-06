@@ -32,9 +32,11 @@ export function createPromptsRouter(fleetDir: string, config: GantryConfig): Rou
    * Read a file from the fleet directory, returning null if not found.
    */
   function readFleetFile(filename: string): string | null {
-    const filePath = join(fleetDir, filename);
-    if (!existsSync(filePath)) return null;
-    return readFileSync(filePath, "utf-8");
+    try {
+      return readFileSync(join(fleetDir, filename), "utf-8");
+    } catch {
+      return null;
+    }
   }
 
   // GET /api/prompts/agents — list all agents with their prompt file paths

@@ -16,8 +16,6 @@ import {
   type PredicateName,
 } from "./types.js";
 
-const PREDICATES = new Set(["FUEL", "CREDITS", "CARGO_PCT", "CARGO", "MINED", "STASHED", "STASH", "MISSION_ACTIVE"]);
-
 const PREDICATE_ARG_TYPES: Record<string, ArgType[]> = {
   FUEL: [],
   CREDITS: [],
@@ -71,8 +69,8 @@ export function analyzePrayerProgram(program: AstProgram, snapshot: AnalyzerSnap
 
   function analyzePredicate(pred: AstPredicate): AnalyzedPredicate {
     const metric = pred.metric.toUpperCase();
-    if (!PREDICATES.has(metric)) {
-      throw new PrayerAnalyzeError(`unknown predicate '${pred.metric}'`, pred.loc, nearestNames(metric, [...PREDICATES]));
+    if (!(metric in PREDICATE_ARG_TYPES)) {
+      throw new PrayerAnalyzeError(`unknown predicate '${pred.metric}'`, pred.loc, nearestNames(metric, Object.keys(PREDICATE_ARG_TYPES)));
     }
     const argTypes = PREDICATE_ARG_TYPES[metric] ?? [];
     return {

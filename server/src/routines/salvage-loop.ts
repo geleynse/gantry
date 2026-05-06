@@ -84,31 +84,30 @@ async function run(ctx: RoutineContext, params: SalvageLoopParams): Promise<Rout
     const w = wreck as Record<string, unknown>;
     const wreckId = String(w.id || w.wreck_id || "");
     const lootResp = await ctx.client.execute("loot_wreck", { wreck_id: wreckId });
-    
+
     if (lootResp.error) {
-        const errStr = JSON.stringify(lootResp.error);
-        if (errStr.includes("cargo_full")) {
-            cargoFull = true;
-            ctx.log("info", "salvage_loop: cargo full during loot");
-            break;
-        }
-        ctx.log("warn", `salvage_loop: failed to loot wreck ${wreckId}`, { error: lootResp.error });
-        continue;
-    }
-    
-    lootedWrecks.push(wreckId);
-    if (checkCombat(lootResp)) {
-        phases.push(completePhase(lootPhase, { looted: lootedWrecks, aborted: "combat" }));
-        return handoff("Combat detected during looting", { looted: lootedWrecks }, phases);
+      const errStr = JSON.stringify(lootResp.error);
+      if (errStr.includes("cargo_full")) {
+        cargoFull = true;
+        ctx.log("info", "salvage_loop: cargo full during loot");
+        break;
+      }
+      ctx.log("warn", `salvage_loop: failed to loot wreck ${wreckId}`, { error: lootResp.error });
+      continue;
     }
 
-    // Check cargo capacity after looting
+    lootedWrecks.push(wreckId);
+    if (checkCombat(lootResp)) {
+      phases.push(completePhase(lootPhase, { looted: lootedWrecks, aborted: "combat" }));
+      return handoff("Combat detected during looting", { looted: lootedWrecks }, phases);
+    }
+
     const cargoResp = await ctx.client.execute("get_cargo");
     const util = getCargoUtilization(cargoResp);
     if (util && util.pctFull > 90) {
-        cargoFull = true;
-        ctx.log("info", `salvage_loop: cargo > 90% full (${util.used}/${util.capacity})`);
-        break;
+      cargoFull = true;
+      ctx.log("info", `salvage_loop: cargo > 90% full (${util.used}/${util.capacity})`);
+      break;
     }
 
     await ctx.client.waitForTick();

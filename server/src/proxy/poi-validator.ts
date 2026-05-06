@@ -40,10 +40,6 @@ function levenshtein(a: string, b: string): number {
  * are reflected automatically — no separate invalidation needed.
  */
 export function createPoiValidator(graph: GalaxyGraph): PoiValidator {
-  // Access private fields via cast — avoids modifying GalaxyGraph while still
-  // reading the live map reference (which is replaced atomically on refresh).
-  const g = graph as unknown as { names: Map<string, string> };
-
   return {
     isValidSystem(name: string): boolean {
       // Skip validation until graph has loaded
@@ -74,7 +70,7 @@ export function createPoiValidator(graph: GalaxyGraph): PoiValidator {
       const norm = normalizeSystemName(invalidName);
       const candidates: Array<{ name: string; dist: number }> = [];
 
-      for (const name of g.names.values()) {
+      for (const name of graph.systemNames()) {
         const namNorm = normalizeSystemName(name);
         // Substring match (distance 0) before computing Levenshtein
         if (namNorm.includes(norm) || norm.includes(namNorm)) {

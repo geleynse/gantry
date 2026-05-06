@@ -48,7 +48,7 @@ export function disableFleet(reason: string): FleetDisabledState {
 
 export function enableFleetState(reason: string): FleetDisabledState {
   enableFleet(reason);
-  return getFleetDisabledState();
+  return { disabled: false };
 }
 
 export function enableFleet(reason: string): void {

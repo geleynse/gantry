@@ -67,20 +67,17 @@ export class CircuitBreaker {
       if (this.consecutiveSuccesses >= this.config.successThreshold) {
         log.info(`Circuit breaker: half-open → closed (${this.consecutiveSuccesses}/${this.config.successThreshold} probes succeeded)`);
         this.transitionTo("closed");
-        this.failures = 0;
-        this.consecutiveSuccesses = 0;
+        this.resetCounters();
       } else {
         log.debug(`Circuit breaker: probe succeeded (${this.consecutiveSuccesses}/${this.config.successThreshold})`);
       }
     } else if (this.state === "closed") {
-      this.failures = 0;
-      this.consecutiveSuccesses = 0;
+      this.resetCounters();
     } else {
       // Open state — shouldn't normally get success, but reset if we do
       log.info(`Circuit breaker: open → closed (early recovery)`);
       this.transitionTo("closed");
-      this.failures = 0;
-      this.consecutiveSuccesses = 0;
+      this.resetCounters();
     }
   }
 
@@ -92,13 +89,11 @@ export class CircuitBreaker {
     if (this.state === "half-open") {
       // Probe failed — go back to open with a fresh cooldown
       log.warn(`Circuit breaker: half-open → open (probe failed)`);
-      this.transitionTo("open");
-      this.openedAt = Date.now();
+      this.tripOpen();
     } else if (this.state === "closed") {
       if (this.failures >= this.config.failureThreshold) {
         log.warn(`Circuit breaker: closed → open (${this.failures}/${this.config.failureThreshold} consecutive failures)`);
-        this.transitionTo("open");
-        this.openedAt = Date.now();
+        this.tripOpen();
       } else {
         log.debug(`Circuit breaker: failure recorded (${this.failures}/${this.config.failureThreshold})`);
       }
@@ -109,8 +104,7 @@ export class CircuitBreaker {
   forceReset(): void {
     log.info(`Circuit breaker: force reset to closed`);
     this.transitionTo("closed");
-    this.failures = 0;
-    this.consecutiveSuccesses = 0;
+    this.resetCounters();
     this.openedAt = 0;
   }
 
@@ -158,6 +152,16 @@ export class CircuitBreaker {
   /** Get consecutive failure count */
   getFailures(): number {
     return this.failures;
+  }
+
+  private resetCounters(): void {
+    this.failures = 0;
+    this.consecutiveSuccesses = 0;
+  }
+
+  private tripOpen(): void {
+    this.transitionTo("open");
+    this.openedAt = Date.now();
   }
 
   private transitionTo(newState: CircuitState): void {

@@ -225,6 +225,15 @@ function loadDecryptedCredentials(fleetDir: string): RawCredentialsFile {
   return decryptCredentials(raw);
 }
 
+function tryLoadCredentials(fleetDir: string): RawCredentialsFile | null {
+  try {
+    return loadDecryptedCredentials(fleetDir);
+  } catch (err) {
+    log.warn(`Credential validation skipped — could not load credentials: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 async function validateCredentialEntry(
   agentName: string,
   username: string,
@@ -234,21 +243,17 @@ async function validateCredentialEntry(
 ): Promise<CredentialValidationResult> {
   const makeClient = clientFactory ?? ((mcpUrl: string) => {
     const metrics = new MetricsWindow();
-    const c = new HttpGameClientV2(mcpUrl, undefined, `validate:${agentName}`, "standard", metrics);
-    return c as ValidationGameClient;
+    return new HttpGameClientV2(mcpUrl, undefined, `validate:${agentName}`, "standard", metrics) as ValidationGameClient;
   });
 
   const client = makeClient(gameMcpUrl);
-  client.label = `validate:${agentName}`;
 
   try {
     const resp = await client.login(username, password);
 
     if (!resp.error) {
       log.info(`Credentials validated (agent: ${agentName}, user: ${username})`);
-      // Discard the session — we don't need it
       try { await client.logout(); } catch { /* best effort */ }
-      try { await client.close(); } catch { /* best effort */ }
       return { ok: true, agentName, username };
     }
 
@@ -262,20 +267,19 @@ async function validateCredentialEntry(
         `Check fleet-credentials and update passwords before starting agents.\n` +
         `${"=".repeat(70)}`
       );
-      try { await client.close(); } catch { /* best effort */ }
       return { ok: false, agentName, username, reason: "auth_failed" };
     }
 
     // Other error (e.g. action_pending, rate_limited, server_error) — treat as network issue
     log.warn(`Credential validation inconclusive for agent "${agentName}" — server returned: ${code ?? "unknown error"}. Game server may be down or busy.`);
-    try { await client.close(); } catch { /* best effort */ }
     return { ok: false, agentName, username, reason: "network_error" };
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`Credential validation failed for agent "${agentName}" — could not reach game server: ${msg}. This is expected if the game is offline.`);
-    try { await client.close(); } catch { /* best effort */ }
     return { ok: false, agentName, username, reason: "network_error" };
+  } finally {
+    try { await client.close(); } catch { /* best effort */ }
   }
 }
 
@@ -300,14 +304,8 @@ export async function validateCredentials(
   gameMcpUrl: string,
   clientFactory?: (mcpUrl: string) => ValidationGameClient,
 ): Promise<CredentialValidationResult> {
-  // Load and decrypt credentials
-  let creds: RawCredentialsFile;
-  try {
-    creds = loadDecryptedCredentials(fleetDir);
-  } catch (err) {
-    log.warn(`Credential validation skipped — could not load credentials: ${err instanceof Error ? err.message : String(err)}`);
-    return { ok: false, agentName: "(unknown)", username: "(unknown)", reason: "no_credentials" };
-  }
+  const creds = tryLoadCredentials(fleetDir);
+  if (!creds) return { ok: false, agentName: "(unknown)", username: "(unknown)", reason: "no_credentials" };
 
   const entries = Object.entries(creds);
   if (entries.length === 0) {
@@ -325,13 +323,8 @@ export async function validateCredentialForAgent(
   agentName: string,
   clientFactory?: (mcpUrl: string) => ValidationGameClient,
 ): Promise<CredentialValidationResult> {
-  let creds: RawCredentialsFile;
-  try {
-    creds = loadDecryptedCredentials(fleetDir);
-  } catch (err) {
-    log.warn(`Credential validation skipped — could not load credentials: ${err instanceof Error ? err.message : String(err)}`);
-    return { ok: false, agentName, username: "(unknown)", reason: "no_credentials" };
-  }
+  const creds = tryLoadCredentials(fleetDir);
+  if (!creds) return { ok: false, agentName, username: "(unknown)", reason: "no_credentials" };
 
   const entry = creds[agentName];
   if (!entry) {
@@ -347,13 +340,8 @@ export async function validateAllCredentials(
   gameMcpUrl: string,
   clientFactory?: (mcpUrl: string) => ValidationGameClient,
 ): Promise<CredentialValidationResult[]> {
-  let creds: RawCredentialsFile;
-  try {
-    creds = loadDecryptedCredentials(fleetDir);
-  } catch (err) {
-    log.warn(`Credential validation skipped — could not load credentials: ${err instanceof Error ? err.message : String(err)}`);
-    return [{ ok: false, agentName: "(unknown)", username: "(unknown)", reason: "no_credentials" }];
-  }
+  const creds = tryLoadCredentials(fleetDir);
+  if (!creds) return [{ ok: false, agentName: "(unknown)", username: "(unknown)", reason: "no_credentials" }];
 
   const entries = Object.entries(creds);
   if (entries.length === 0) {

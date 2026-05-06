@@ -30,31 +30,8 @@ function init(): void {
       if (row.type) typeCache.set(row.id, row.type);
     }
     initialized = true;
-
-    // Seed with known common values if empty
-    if (cache.size === 0) {
-      seedRegistry();
-    }
   } catch (e) {
     // DB might not be ready yet
-  }
-}
-
-/** Seed the registry with known hex IDs from logs */
-function seedRegistry(): void {
-  const seeds: MetadataEntry[] = [
-    { id: 'ab4007e5f47f61bc4a1fe05646f10528', name: 'Mining Laser I', type: 'weapon' },
-    { id: '849db6ad0d36c1e0b246f8d93ef1335f', name: 'Autocannon I', type: 'weapon' },
-    { id: 'e620f6fbc2a5d5702082a90ffe86e4ea', name: 'Autocannon I', type: 'weapon' },
-    { id: 'e26f282363a5ebdf7d0b404884e9dcf7', name: 'Armor Plate I', type: 'defense' },
-    { id: '5e563a1b17f6c0f724a3c95d8029f0ca', name: 'Mining Laser I', type: 'weapon' },
-    { id: '52b9b8749ff6c10f1db46358312d1756', name: 'Mining Laser I', type: 'weapon' },
-    { id: '35dbb366ddde00053a90cbb7f0e46e80', name: 'FTL Drive I', type: 'utility' },
-    { id: '6a8b2a8ef82d0f17e68ba88207e2f0a2', name: 'Shield Generator I', type: 'defense' },
-  ];
-
-  for (const entry of seeds) {
-    learnMetadata(entry.id, entry.name, entry.type);
   }
 }
 

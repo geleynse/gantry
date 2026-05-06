@@ -4,7 +4,7 @@ import { Router } from 'express';
 import type { AgentStatus, AgentStatusWithShutdown } from '../../shared/types.js';
 import type { BattleState } from '../../proxy/server.js';
 import type { AgentConfig, GantryConfig } from '../../config.js';
-import { resolveConfigPath, saveConfig, getAgentLabel } from '../config.js';
+import { resolveConfigPath, saveConfig, getAgentLabel, validateAgentName, getAgent } from '../config.js';
 import { composePrompt } from '../../lib/prompt-composer.js';
 import * as proc from '../../services/process-manager.js';
 import { parseAgentLog, formatAge } from '../../services/log-parser.js';
@@ -29,15 +29,6 @@ export function createAgentRouter(
   const router = Router();
 
   const agents = config.agents;
-  const agentNames = new Set(agents.map((a) => a.name));
-
-  function isValidAgent(name: string): boolean {
-    return agentNames.has(name);
-  }
-
-  function findAgent(name: string): AgentConfig | undefined {
-    return agents.find((a) => a.name === name);
-  }
 
   /**
    * Build shutdown and battle state information for an agent.
@@ -133,16 +124,12 @@ export function createAgentRouter(
   });
 
   router.post('/fleet-state/enable', (req, res) => {
-    const reason = typeof req.body?.reason === 'string' && req.body.reason.trim()
-      ? req.body.reason.trim()
-      : 'manual enable';
+    const reason = (typeof req.body?.reason === 'string' && req.body.reason.trim()) || 'manual enable';
     res.json(enableFleetState(reason));
   });
 
   router.post('/fleet-state/disable', (req, res) => {
-    const reason = typeof req.body?.reason === 'string' && req.body.reason.trim()
-      ? req.body.reason.trim()
-      : 'manual disable';
+    const reason = (typeof req.body?.reason === 'string' && req.body.reason.trim()) || 'manual disable';
     res.json(disableFleet(reason));
   });
 
@@ -168,7 +155,7 @@ export function createAgentRouter(
   // Agent prompt files
   router.get('/:name/prompts', async (req, res) => {
     const name = req.params.name;
-    if (!isValidAgent(name)) {
+    if (!validateAgentName(name)) {
       res.status(404).json({ error: `Unknown agent: ${name}` });
       return;
     }
@@ -186,12 +173,12 @@ export function createAgentRouter(
   // Composed prompt (layered prompt-composer output)
   router.get('/:name/composed-prompt', async (req, res) => {
     const name = req.params.name;
-    if (!isValidAgent(name)) {
+    if (!validateAgentName(name)) {
       res.status(404).json({ error: `Unknown agent: ${name}` });
       return;
     }
 
-    const agent = findAgent(name);
+    const agent = getAgent(name);
     if (!agent) {
       res.status(404).json({ error: `Agent ${name} not found in config` });
       return;
@@ -217,12 +204,12 @@ export function createAgentRouter(
   // Single agent detail
   router.get('/:name', async (req, res) => {
     const name = req.params.name;
-    if (!isValidAgent(name)) {
+    if (!validateAgentName(name)) {
       res.status(404).json({ error: `Unknown agent: ${name}` });
       return;
     }
 
-    const agent = findAgent(name)!;
+    const agent = getAgent(name)!;
     const status = await buildAgentStatus(agent);
     const logLines = await proc.capturePane(name, 50);
 
@@ -239,7 +226,7 @@ export function createAgentRouter(
   // Update agent configuration (backend/model)
   router.patch('/:name/config', async (req, res) => {
     const name = req.params.name;
-    if (!isValidAgent(name)) {
+    if (!validateAgentName(name)) {
       res.status(404).json({ error: `Unknown agent: ${name}` });
       return;
     }
@@ -302,7 +289,7 @@ export function createAgentRouter(
   // Single agent actions
   router.post('/:name/start', async (req, res) => {
     const name = req.params.name;
-    if (!isValidAgent(name)) {
+    if (!validateAgentName(name)) {
       res.status(404).json({ error: `Unknown agent: ${name}` });
       return;
     }
@@ -313,7 +300,7 @@ export function createAgentRouter(
 
   router.post('/:name/stop', async (req, res) => {
     const name = req.params.name;
-    if (!isValidAgent(name)) {
+    if (!validateAgentName(name)) {
       res.status(404).json({ error: `Unknown agent: ${name}` });
       return;
     }
@@ -324,7 +311,7 @@ export function createAgentRouter(
 
   router.post('/:name/restart', async (req, res) => {
     const name = req.params.name;
-    if (!isValidAgent(name)) {
+    if (!validateAgentName(name)) {
       res.status(404).json({ error: `Unknown agent: ${name}` });
       return;
     }
@@ -337,7 +324,7 @@ export function createAgentRouter(
   // Request stop-after-turn for an agent
   router.post('/:name/stop-after-turn', async (req, res) => {
     const name = req.params.name;
-    if (!isValidAgent(name)) {
+    if (!validateAgentName(name)) {
       res.status(404).json({ error: `Unknown agent: ${name}` });
       return;
     }
@@ -362,7 +349,7 @@ export function createAgentRouter(
   // Initiate graceful agent shutdown
   router.post('/:name/shutdown', async (req, res) => {
     const name = req.params.name;
-    if (!isValidAgent(name)) {
+    if (!validateAgentName(name)) {
       res.status(404).json({ error: `Unknown agent: ${name}` });
       return;
     }

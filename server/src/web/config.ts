@@ -5,7 +5,6 @@
 
 export {
   FLEET_DIR,
-  getFleetDir,
   PORT,
   SOFT_STOP_TIMEOUT,
   SOFT_STOP_POLL_INTERVAL,

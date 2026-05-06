@@ -22,25 +22,18 @@ export function createHealthMonitorRouter(deps: HealthMonitorRouterDeps): Router
       const allStates = deps.healthMonitor.getAllStates();
       const now = Date.now();
 
-      const agents: Record<string, {
-        desiredState: string;
-        consecutiveRestarts: number;
-        nextRestartAfterMs: number;
-        backoffRemainingSec: number;
-      }> = {};
-
-      for (const [name, state] of Object.entries(allStates)) {
-        const backoffRemainingSec = Math.max(
-          0,
-          Math.ceil((state.nextRestartAfterMs - now) / 1000),
-        );
-        agents[name] = {
-          desiredState: state.desiredState,
-          consecutiveRestarts: state.consecutiveRestarts,
-          nextRestartAfterMs: state.nextRestartAfterMs,
-          backoffRemainingSec,
-        };
-      }
+      const agents = Object.fromEntries(
+        Object.entries(allStates).map(([name, state]) => [
+          name,
+          {
+            ...state,
+            backoffRemainingSec: Math.max(
+              0,
+              Math.ceil((state.nextRestartAfterMs - now) / 1000),
+            ),
+          },
+        ]),
+      );
 
       res.json({ agents });
     } catch (err) {

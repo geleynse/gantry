@@ -119,33 +119,31 @@ async function run(ctx: RoutineContext, params: MissionCheckParams): Promise<Rou
 
   const missionsAccepted: string[] = [];
 
-  if (availableMissions) {
-    for (const mission of availableMissions) {
-      if (missionsAccepted.length >= maxAccept) break;
+  for (const mission of availableMissions) {
+    if (missionsAccepted.length >= maxAccept) break;
 
-      const missionId = mission.id as string | undefined;
-      if (!missionId) continue;
+    const missionId = mission.id as string | undefined;
+    if (!missionId) continue;
 
-      // Check role filter if provided
-      if (roleFilter.length > 0) {
-        const missionType = String(mission.type ?? "").toLowerCase();
-        const matches = roleFilter.some((role) => missionType.includes(role.toLowerCase()));
-        if (!matches) {
-          ctx.log("debug", `mission_check: skipping ${missionId} (type=${missionType} not in filter)`);
-          continue;
-        }
+    // Check role filter if provided
+    if (roleFilter.length > 0) {
+      const missionType = String(mission.type ?? "").toLowerCase();
+      const matches = roleFilter.some((role) => missionType.includes(role.toLowerCase()));
+      if (!matches) {
+        ctx.log("debug", `mission_check: skipping ${missionId} (type=${missionType} not in filter)`);
+        continue;
       }
+    }
 
-      const acceptMissionPhase = phase("accept_mission");
-      const acceptResp = await ctx.client.execute("accept_mission", { mission_id: missionId });
-      if (acceptResp.error) {
-        ctx.log("warn", `mission_check: failed to accept ${missionId}: ${JSON.stringify(acceptResp.error)}`);
-        phases.push(completePhase(acceptMissionPhase, { error: acceptResp.error }));
-      } else {
-        missionsAccepted.push(missionId);
-        ctx.log("info", `mission_check: accepted mission ${missionId}`);
-        phases.push(completePhase(acceptMissionPhase, acceptResp.result));
-      }
+    const acceptMissionPhase = phase("accept_mission");
+    const acceptResp = await ctx.client.execute("accept_mission", { mission_id: missionId });
+    if (acceptResp.error) {
+      ctx.log("warn", `mission_check: failed to accept ${missionId}: ${JSON.stringify(acceptResp.error)}`);
+      phases.push(completePhase(acceptMissionPhase, { error: acceptResp.error }));
+    } else {
+      missionsAccepted.push(missionId);
+      ctx.log("info", `mission_check: accepted mission ${missionId}`);
+      phases.push(completePhase(acceptMissionPhase, acceptResp.result));
     }
   }
 

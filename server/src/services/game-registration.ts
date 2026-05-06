@@ -13,10 +13,6 @@ export interface RegistrationResult {
   password: string; // 256-bit password returned by the game server
 }
 
-export interface RegistrationError {
-  error: string;
-}
-
 /**
  * Register a new player account with the game server.
  * Returns the generated password on success.

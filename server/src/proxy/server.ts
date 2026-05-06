@@ -5,26 +5,17 @@ import type { GantryConfig } from "../config.js";
 import { SessionManager } from "./session-manager.js";
 import { SessionStore } from "./session-store.js";
 import { EventBuffer } from "./event-buffer.js";
-import { generateInstabilityHint, checkToolBlocked } from "./instability-hints.js";
-import { summarizeToolResult } from "./summarizers.js";
-import { addErrorHint } from "./error-hints.js";
 import { MarketCache } from "./market-cache.js";
 import { ArbitrageAnalyzer } from "./arbitrage-analyzer.js";
 import { MarketReservationCache } from "./market-reservations.js";
 import { AnalyzeMarketCache } from "./analyze-market-cache.js";
 import { SellLog } from "./sell-log.js";
 import { GalaxyGraph } from "./pathfinder.js";
-import {
-  DENIED_ACTIONS_V2, V2_TO_V1_PARAM_MAP,
-  serverSchemaToZod,
-  type ServerTool,
-} from "./schema.js";
 import { persistBattleState } from "./cache-persistence.js";
 import type { BattleState, AgentCallTracker } from "../shared/types.js";
 export type { BattleState, AgentCallTracker } from "../shared/types.js";
 import type { FleetCoordinator } from "../services/coordinator.js";
 import type { OverseerEventLog } from "../services/overseer-event-log.js";
-import { enrichWithGlobalContext } from "./market-enrichment.js";
 import { BreakerRegistry } from "./circuit-breaker.js";
 import { MetricsWindow } from "./instability-metrics.js";
 import {
@@ -34,18 +25,14 @@ import {
   throttledPersistGameState,
   reformatResponse,
 } from "./proxy-constants.js";
-import { resolvePoiId, cacheSystemPois } from "./poi-resolver.js";
 import { logToolCall, logWsEvent } from "./tool-call-logger.js";
-import { getPendingOrders as dbGetPendingOrders, markDelivered as dbMarkDelivered, createOrder, createReport } from "../services/comms-db.js";
+import { getPendingOrders as dbGetPendingOrders, markDelivered as dbMarkDelivered } from "../services/comms-db.js";
 import { getActiveDirectives as dbGetActiveDirectives } from "../services/directives.js";
 import { getUnconsumedHandoff, consumeHandoff as dbConsumeHandoff, createHandoff } from "../services/handoff.js";
-import { addDiaryEntry, getRecentDiary, getNote, upsertNote, appendNote, searchAgentMemory, searchFleetMemory } from "../services/notes-db.js";
-import { parseReport } from "../services/report-parser.js";
 import * as pipelineModule from "./pipeline.js";
 import type { PipelineContext } from "./pipeline.js";
 import { InjectionRegistry, createDefaultInjections } from "./injection-registry.js";
 import {
-  batchMine, travelTo, jumpRoute, multiSell, scanAndAttack, battleReadiness, lootWrecks,
   waitForNavCacheUpdate as waitForNavCacheUpdateImpl,
   waitForDockCacheUpdate as waitForDockCacheUpdateImpl,
 } from "./compound-tools-impl.js";
@@ -211,7 +198,7 @@ export function createGantryServer(config: GantryConfig, shared?: SharedState) {
     shutdownWarningFired: new Set<string>(),
   };
 
-  const transitStuckDetector = new TransitStuckDetector();
+  const transitStuckDetector = shared?.proxy.transitStuckDetector ?? new TransitStuckDetector();
 
   // Thin wrappers so inner code can call with the same signatures as before
   function getAgentForSession(sessionId?: string): string | undefined {

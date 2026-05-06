@@ -71,53 +71,19 @@ function isCacheStale(catalog: CatalogData): boolean {
 // Fetchers — individual game API endpoint calls
 // ---------------------------------------------------------------------------
 
-async function fetchItems(gameApiUrl: string): Promise<GameItem[]> {
-  const url = `${gameApiUrl}/items`;
+async function fetchEndpoint<T>(gameApiUrl: string, endpoint: string, key: string): Promise<T[]> {
+  const url = `${gameApiUrl}/${endpoint}`;
   const resp = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!resp.ok) {
-    log.warn(`items API returned ${resp.status}`, { url });
+    log.warn(`${endpoint} API returned ${resp.status}`, { url });
     return [];
   }
   const data = await resp.json() as unknown;
-  if (Array.isArray(data)) return data as GameItem[];
+  if (Array.isArray(data)) return data as T[];
   if (data && typeof data === "object") {
     const obj = data as Record<string, unknown>;
-    if (Array.isArray(obj.items)) return obj.items as GameItem[];
-    if (Array.isArray(obj.data)) return obj.data as GameItem[];
-  }
-  return [];
-}
-
-async function fetchRecipes(gameApiUrl: string): Promise<Recipe[]> {
-  const url = `${gameApiUrl}/recipes`;
-  const resp = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-  if (!resp.ok) {
-    log.warn(`recipes API returned ${resp.status}`, { url });
-    return [];
-  }
-  const data = await resp.json() as unknown;
-  if (Array.isArray(data)) return data as Recipe[];
-  if (data && typeof data === "object") {
-    const obj = data as Record<string, unknown>;
-    if (Array.isArray(obj.recipes)) return obj.recipes as Recipe[];
-    if (Array.isArray(obj.data)) return obj.data as Recipe[];
-  }
-  return [];
-}
-
-async function fetchShips(gameApiUrl: string): Promise<ShipSpec[]> {
-  const url = `${gameApiUrl}/ships`;
-  const resp = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-  if (!resp.ok) {
-    log.warn(`ships API returned ${resp.status}`, { url });
-    return [];
-  }
-  const data = await resp.json() as unknown;
-  if (Array.isArray(data)) return data as ShipSpec[];
-  if (data && typeof data === "object") {
-    const obj = data as Record<string, unknown>;
-    if (Array.isArray(obj.ships)) return obj.ships as ShipSpec[];
-    if (Array.isArray(obj.data)) return obj.data as ShipSpec[];
+    if (Array.isArray(obj[key])) return obj[key] as T[];
+    if (Array.isArray(obj.data)) return obj.data as T[];
   }
   return [];
 }
@@ -198,9 +164,9 @@ export async function fetchAndCacheCatalog(
   // Fetch from game API — all three endpoints in parallel
   log.info("Fetching catalog from game API", { base: gameApiUrl });
   const [items, recipes, ships] = await Promise.allSettled([
-    fetchItems(gameApiUrl),
-    fetchRecipes(gameApiUrl),
-    fetchShips(gameApiUrl),
+    fetchEndpoint<GameItem>(gameApiUrl, "items", "items"),
+    fetchEndpoint<Recipe>(gameApiUrl, "recipes", "recipes"),
+    fetchEndpoint<ShipSpec>(gameApiUrl, "ships", "ships"),
   ]);
 
   const catalog: CatalogData = {
@@ -284,34 +250,22 @@ export function searchCatalog(
 
   const needle = search?.toLowerCase();
 
-  function matchItem(item: GameItem): boolean {
-    if (id) return item.id === id;
+  const matcher = <T extends { id: string }>(fields: (e: T) => (string | undefined)[]) => (e: T): boolean => {
+    if (id) return e.id === id;
     if (!needle) return true;
-    return item.id.toLowerCase().includes(needle) || item.name.toLowerCase().includes(needle) || (item.type ?? "").toLowerCase().includes(needle);
-  }
+    return fields(e).some(f => f?.toLowerCase().includes(needle));
+  };
 
-  function matchRecipe(recipe: Recipe): boolean {
-    if (id) return recipe.id === id;
-    if (!needle) return true;
-    return recipe.id.toLowerCase().includes(needle) || recipe.output_item_id.toLowerCase().includes(needle);
-  }
-
-  function matchShip(ship: ShipSpec): boolean {
-    if (id) return ship.id === id;
-    if (!needle) return true;
-    return ship.id.toLowerCase().includes(needle) || ship.name.toLowerCase().includes(needle) || (ship.class ?? "").toLowerCase().includes(needle);
-  }
-
-  const result: { items: GameItem[]; recipes: Recipe[]; ships: ShipSpec[] } = { items: [], recipes: [], ships: [] };
+  const result = { items: [] as GameItem[], recipes: [] as Recipe[], ships: [] as ShipSpec[] };
 
   if (type === "item" || type === "all") {
-    result.items = catalog.items.filter(matchItem).slice(0, limit);
+    result.items = catalog.items.filter(matcher<GameItem>(i => [i.id, i.name, i.type])).slice(0, limit);
   }
   if (type === "recipe" || type === "all") {
-    result.recipes = catalog.recipes.filter(matchRecipe).slice(0, limit);
+    result.recipes = catalog.recipes.filter(matcher<Recipe>(r => [r.id, r.output_item_id])).slice(0, limit);
   }
   if (type === "ship" || type === "all") {
-    result.ships = catalog.ships.filter(matchShip).slice(0, limit);
+    result.ships = catalog.ships.filter(matcher<ShipSpec>(s => [s.id, s.name, s.class])).slice(0, limit);
   }
 
   return result;

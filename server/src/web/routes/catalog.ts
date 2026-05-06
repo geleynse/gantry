@@ -14,6 +14,8 @@ import { getCatalog, searchCatalog } from "../../services/game-catalog.js";
 
 type StatusCacheEntry = { data: Record<string, any>; fetchedAt: number };
 
+const SLOT_MAP: Record<string, string> = { weapon: "weapon", shield: "defense", scanner: "utility" };
+
 export function createCatalogRouter(statusCache?: Map<string, StatusCacheEntry>): Router {
   const router = Router();
 
@@ -28,7 +30,7 @@ export function createCatalogRouter(statusCache?: Map<string, StatusCacheEntry>)
     }
 
     const validTypes = ["item", "recipe", "ship", "all", "module_compat"];
-    if (!validTypes.includes(type) && !isModuleCompat) {
+    if (!validTypes.includes(type)) {
       return res.status(400).json({ error: `Invalid type. Must be one of: ${validTypes.join(", ")}` });
     }
 
@@ -48,21 +50,11 @@ export function createCatalogRouter(statusCache?: Map<string, StatusCacheEntry>)
     }
 
     const itemsWithModuleInfo = results.items.map((item) => {
-      const isWeapon = item.type === "weapon";
-      const isShield = item.type === "shield";
-      const isScanner = item.type === "scanner";
-      const isModule = isWeapon || isShield || isScanner || equippedModuleIds.has(item.id);
+      const slot = item.type ? SLOT_MAP[item.type] : undefined;
+      const compatible_slots = slot ? [slot] : [];
+      const is_module = compatible_slots.length > 0 || equippedModuleIds.has(item.id);
 
-      const compatible_slots: string[] = [];
-      if (isWeapon) compatible_slots.push("weapon");
-      if (isShield) compatible_slots.push("defense");
-      if (isScanner) compatible_slots.push("utility");
-
-      return {
-        ...item,
-        is_module: isModule,
-        compatible_slots,
-      };
+      return { ...item, is_module, compatible_slots };
     });
 
     if (isModuleCompat) {

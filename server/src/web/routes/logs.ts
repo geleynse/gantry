@@ -128,10 +128,9 @@ export function createLogsRouter(fleetDir: string, config: GantryConfig): Router
 
     const maxLines = queryInt(req, 'lines') ?? 200;
     const watcher = new FileWatcher(logPath(name));
-    const { lines: allLines } = await watcher.readFrom(0);
+    const { lines } = await watcher.readTail(maxLines);
     watcher.close();
-    const tailLines = allLines.slice(-maxLines);
-    res.json({ lines: tailLines.join('\n') });
+    res.json({ lines: lines.join('\n') });
   });
 
   return router;

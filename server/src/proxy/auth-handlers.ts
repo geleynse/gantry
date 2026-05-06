@@ -8,7 +8,7 @@
 
 import { createLogger } from "../lib/logger.js";
 import { EventBuffer } from "./event-buffer.js";
-import type { GameEvent } from "./game-transport.js";
+import type { GameEvent, GameResponse } from "./game-transport.js";
 import type { GantryConfig } from "../config.js";
 import type { SessionManager } from "./session-manager.js";
 import { SessionStore } from "./session-store.js";
@@ -17,6 +17,11 @@ import { getCredentialsFilePath, decryptCredentials, isAuthFailureCode, type Raw
 import { readFileSync, statSync } from "node:fs";
 import { FLEET_DIR } from "../config.js";
 import { recordCredentialAuthFailure, recordCredentialSuccess } from "../services/credential-health.js";
+import { getSessionShutdownManager } from "./session-shutdown.js";
+import { persistGameState } from "./cache-persistence.js";
+import { runDiscovery } from "./discovery-service.js";
+
+const log = createLogger("auth");
 
 // Cached decrypted credentials — loaded once on first login, avoids per-request file I/O + decryption
 let _credentialsCache: RawCredentialsFile | null = null;
@@ -35,9 +40,7 @@ function getCachedCredentials(agentName: string): { username: string; password: 
       _credentialsCachePath = credsPath;
       _credentialsCacheMtimeMs = mtimeMs;
     }
-  } catch {
-    shouldLoad = !_credentialsCacheLoaded;
-  }
+  } catch { }
 
   if (shouldLoad) {
     _credentialsCacheLoaded = true;
@@ -51,12 +54,6 @@ function getCachedCredentials(agentName: string): { username: string; password: 
   }
   return _credentialsCache?.[agentName] ?? null;
 }
-import type { GameResponse } from "./game-transport.js";
-import { getSessionShutdownManager } from "./session-shutdown.js";
-import { persistGameState } from "./cache-persistence.js";
-import { runDiscovery } from "./discovery-service.js";
-
-const log = createLogger("auth");
 
 // Re-export types used in the interface so callers don't need to import from server.ts
 export type { AgentCallTracker, BattleState };

@@ -12,6 +12,7 @@
  */
 
 import { createLogger } from "../lib/logger.js";
+import type { StatusCacheEntry } from "../shared/schemas.js";
 
 const log = createLogger("transit-throttle");
 
@@ -29,17 +30,11 @@ export const TRANSIT_THROTTLED_TOOLS = new Set([
   "get_poi",
 ]);
 
-/** @deprecated Use TRANSIT_THROTTLED_TOOLS — v1 and v2 action names are identical. */
-export const TRANSIT_THROTTLED_V2_ACTIONS = TRANSIT_THROTTLED_TOOLS;
+export type { StatusCacheEntry };
 
 // ---------------------------------------------------------------------------
 // Transit detection
 // ---------------------------------------------------------------------------
-
-export interface StatusCacheEntry {
-  data: Record<string, unknown>;
-  fetchedAt: number;
-}
 
 /**
  * Detect whether an agent is currently in hyperspace transit.
@@ -146,8 +141,7 @@ export class TransitThrottle {
     // a consistent transit status response lets them move on to productive work.
     const remainingMs = this.intervalMs - (now - lastCall);
     const remainingSec = Math.ceil(remainingMs / 1000);
-    const cachedEntry = statusCache.get(agentName);
-    const player = ((cachedEntry?.data as any)?.player ?? cachedEntry?.data ?? {}) as Record<string, unknown>;
+    const player = (cached?.data?.player ?? cached?.data ?? {}) as Record<string, unknown>;
     const currentSystem = (player.current_system as string) || "";
 
     log.debug("transit throttle — returning cached transit status", {

@@ -360,6 +360,18 @@ export function extractCombatEvents(yamlText: string, system?: string | null): C
   return events;
 }
 
+type ContentBlock = { type?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; is_error?: boolean; [key: string]: unknown };
+type LogEntry = {
+  type?: string;
+  message?: { content?: ContentBlock[] };
+  total_cost_usd?: number;
+  usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cached_input_tokens?: number };
+  num_turns?: number;
+  duration_ms?: number;
+  model?: string;
+  [key: string]: unknown;
+};
+
 export function parseTurnFile(content: string): ParsedTurn {
   const result: ParsedTurn = {
     toolCalls: [],
@@ -383,17 +395,6 @@ export function parseTurnFile(content: string): ParsedTurn {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    type ContentBlock = { type?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; is_error?: boolean; [key: string]: unknown };
-    type LogEntry = {
-      type?: string;
-      message?: { content?: ContentBlock[] };
-      total_cost_usd?: number;
-      usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cached_input_tokens?: number };
-      num_turns?: number;
-      duration_ms?: number;
-      model?: string;
-      [key: string]: unknown;
-    };
     let entry: LogEntry;
     try {
       entry = JSON.parse(trimmed) as LogEntry;

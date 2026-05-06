@@ -12,7 +12,8 @@
  *   Server → Client: { type: "subscribed", channel: "..." }
  */
 
-import type { Server as HttpServer } from "node:http";
+import type { IncomingMessage, Server as HttpServer } from "node:http";
+import type { Socket } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
 import { createLogger } from "../lib/logger.js";
 
@@ -53,7 +54,7 @@ export function attachWebSocketServer(httpServer: HttpServer): {
 } {
   const wss = new WebSocketServer({ noServer: true });
 
-  const upgradeHandler = (request: import("node:http").IncomingMessage, socket: import("node:net").Socket, head: Buffer) => {
+  const upgradeHandler = (request: IncomingMessage, socket: Socket, head: Buffer) => {
     if (request.url !== "/ws") {
       socket.destroy();
       return;
@@ -92,14 +93,9 @@ export function attachWebSocketServer(httpServer: HttpServer): {
           sendMessage(ws, { type: "error", message: `Unknown channel: ${msg.channel ?? "(none)"}` });
           return;
         }
-
-        if (msg.type === "subscribe") {
-          state.subscriptions.add(ch);
-          sendMessage(ws, { type: "subscribed", channel: ch });
-        } else {
-          state.subscriptions.delete(ch);
-          sendMessage(ws, { type: "unsubscribed", channel: ch });
-        }
+        const subscribing = msg.type === "subscribe";
+        subscribing ? state.subscriptions.add(ch) : state.subscriptions.delete(ch);
+        sendMessage(ws, { type: subscribing ? "subscribed" : "unsubscribed", channel: ch });
         return;
       }
 

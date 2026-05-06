@@ -155,7 +155,7 @@ export function suggestRole(
   const roleCounts: Record<CoordinatorRole, number> = {
     miner: 0, crafter: 0, trader: 0, scout: 0, combat: 0,
   };
-  for (const [, role] of currentAssignments) {
+  for (const role of currentAssignments.values()) {
     roleCounts[role]++;
   }
 
@@ -164,7 +164,7 @@ export function suggestRole(
   let bestRole: CoordinatorRole = "trader"; // default fallback
   let biggestGap = -Infinity;
 
-  for (const role of ["miner", "crafter", "trader", "scout", "combat"] as CoordinatorRole[]) {
+  for (const role of Object.keys(ROLE_ROUTINES) as CoordinatorRole[]) {
     const gap = target[role] - roleCounts[role];
     if (gap > biggestGap) {
       biggestGap = gap;
@@ -182,15 +182,14 @@ export function suggestRole(
     const eligibleQuotas = demand.activeQuotas.filter(
       (q) => !q.assigned_to || q.assigned_to === agent.name,
     );
+    const quotaZoneOf = (q: CoordinatorQuota) => (q as unknown as { zone?: string }).zone;
     // Sort by zone proximity (best match first)
-    const quota = eligibleQuotas.sort((a, b) => {
-      const zoneA = (a as unknown as Record<string, unknown>).zone as string | undefined;
-      const zoneB = (b as unknown as Record<string, unknown>).zone as string | undefined;
-      return zoneProximityScore(agent, zoneB) - zoneProximityScore(agent, zoneA);
-    })[0];
+    const quota = eligibleQuotas.sort(
+      (a, b) => zoneProximityScore(agent, quotaZoneOf(b)) - zoneProximityScore(agent, quotaZoneOf(a)),
+    )[0];
     if (quota) {
       params.station = quota.station_id;
-      const quotaZone = (quota as unknown as Record<string, unknown>).zone as string | undefined;
+      const quotaZone = quotaZoneOf(quota);
       if (quotaZone) params.zone = quotaZone;
       return {
         role: "miner",

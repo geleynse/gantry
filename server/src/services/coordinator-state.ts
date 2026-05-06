@@ -127,17 +127,7 @@ export function gatherFleetSnapshot(deps: StateGathererDeps): FleetSnapshot {
     overseerEventLog,
   } = deps;
 
-  // 1. Build raw status snapshot (same format as old gatherFleetSnapshot)
-  const rawSnapshot: Record<string, Record<string, unknown>> = {};
-  for (const [agentName, entry] of statusCache) {
-    rawSnapshot[agentName] = {
-      ...entry.data,
-      fetchedAt: entry.fetchedAt,
-      ageMs: Date.now() - entry.fetchedAt,
-    };
-  }
-
-  // 2. Batch-fetch last tool call timestamps for all agents
+  // 1. Batch-fetch last tool call timestamps for all agents
   let lastToolCallByAgent = new Map<string, string>();
   try {
     const rows = queryAll<{ agent: string; last_created: string }>(
@@ -150,12 +140,13 @@ export function gatherFleetSnapshot(deps: StateGathererDeps): FleetSnapshot {
     // non-fatal
   }
 
-  // 3. Build AgentSnapshot[] — exclude the overseer (it's the observer, not a player)
+  // 2. Build AgentSnapshot[] — exclude the overseer (it's the observer, not a player)
   const now = Date.now();
   const gameAgents = agentConfigs.filter((a) => a.name !== "overseer");
   const agents: AgentSnapshot[] = gameAgents.map((agent) => {
-    const state = rawSnapshot[agent.name];
-    const isOnline = !!state && (now - (state.fetchedAt as number || 0)) < ONLINE_THRESHOLD_MS;
+    const entry = statusCache.get(agent.name);
+    const state = entry?.data;
+    const isOnline = !!entry && (now - entry.fetchedAt) < ONLINE_THRESHOLD_MS;
 
     let lastToolCallAge: number | undefined;
     const lastToolCallTs = lastToolCallByAgent.get(agent.name);
@@ -196,7 +187,7 @@ export function gatherFleetSnapshot(deps: StateGathererDeps): FleetSnapshot {
     };
   });
 
-  // 4. Market summary — top 5 arbitrage opportunities
+  // 3. Market summary — top 5 arbitrage opportunities
   let marketSummary: MarketOpportunitySummary[] = [];
   try {
     const opps = arbitrageAnalyzer.getOpportunities(marketCache);
@@ -212,7 +203,7 @@ export function gatherFleetSnapshot(deps: StateGathererDeps): FleetSnapshot {
     // non-fatal
   }
 
-  // 5. Active (undelivered) fleet orders from DB
+  // 4. Active (undelivered) fleet orders from DB
   let activeOrders: ActiveFleetOrder[] = [];
   try {
     activeOrders = queryAll<ActiveFleetOrder>(
@@ -227,7 +218,7 @@ export function gatherFleetSnapshot(deps: StateGathererDeps): FleetSnapshot {
     // non-fatal — DB may not be available in tests
   }
 
-  // 6. Recently delivered orders (last 15 minutes)
+  // 5. Recently delivered orders (last 15 minutes)
   let recentDeliveries: RecentDelivery[] = [];
   try {
     recentDeliveries = queryAll<RecentDelivery>(
@@ -242,7 +233,7 @@ export function gatherFleetSnapshot(deps: StateGathererDeps): FleetSnapshot {
     // non-fatal
   }
 
-  // 7. Recent events from overseerEventLog (last 10 minutes)
+  // 6. Recent events from overseerEventLog (last 10 minutes)
   let recentEvents: RecentEvent[] = [];
   if (overseerEventLog) {
     try {
@@ -257,7 +248,7 @@ export function gatherFleetSnapshot(deps: StateGathererDeps): FleetSnapshot {
     }
   }
 
-  // 8. Fleet totals
+  // 7. Fleet totals
   const fleetTotals: FleetTotals = {
     totalCredits: 0,
     totalCargoUsed: 0,

@@ -5,6 +5,7 @@ import { getAvailableRoutines, hasRoutine } from '../../routines/routine-runner.
 import { getSessionShutdownManager } from '../../proxy/session-shutdown.js';
 import { requireAgentOnline } from '../middleware/agent-online.js';
 import { getRoutineJob, listRoutineJobs, toRoutineJobSnapshot, type RoutineJobStatus } from '../../services/routine-jobs.js';
+import { queryString, queryInt } from '../middleware/query-helpers.js';
 
 // ---------------------------------------------------------------------------
 // Agent fleet control routes (mounted at /api/agents)
@@ -101,9 +102,9 @@ routinesRouter.get('/', (_req, res) => {
  * Returns recent routine job history, including async Codex routine state.
  */
 routinesRouter.get('/jobs', (req, res) => {
-  const agentName = typeof req.query.agent === 'string' ? req.query.agent : undefined;
-  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-  const limit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : undefined;
+  const agentName = queryString(req, 'agent');
+  const status = queryString(req, 'status');
+  const limit = queryInt(req, 'limit');
 
   if (status && !['running', 'completed', 'error'].includes(status)) {
     res.status(400).json({ error: 'status must be running, completed, or error' });
@@ -114,7 +115,7 @@ routinesRouter.get('/jobs', (req, res) => {
     jobs: listRoutineJobs({
       agentName,
       status: status as RoutineJobStatus | undefined,
-      limit: Number.isFinite(limit) ? limit : undefined,
+      limit,
     }),
   });
 });

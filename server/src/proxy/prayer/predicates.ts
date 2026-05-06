@@ -1,4 +1,4 @@
-import { cargoPct, cargoQuantity, numberAt } from "./state.js";
+import { cargoPct, cargoQuantity, getPlayer, homeDestination, numberAt } from "./state.js";
 import { PrayerRuntimeError, type AnalyzedArg, type AnalyzedPredicate, type ExecState, type ExecutorDeps, type ResolvedArg } from "./types.js";
 
 export async function evalPredicate(pred: AnalyzedPredicate, state: ExecState, deps: ExecutorDeps): Promise<boolean> {
@@ -18,9 +18,8 @@ export function resolveArg(arg: AnalyzedArg, deps: ExecutorDeps): ResolvedArg {
   const data = deps.statusCache.get(deps.agentName)?.data;
   if (!data) throw new PrayerRuntimeError("status_unavailable", "No status data available for dynamic macro");
   if (arg.macro === "home") {
-    const player = data.player && typeof data.player === "object" ? data.player as Record<string, unknown> : {};
-    const home = player.home_poi ?? player.home_system;
-    if (typeof home !== "string" || !home) throw new PrayerRuntimeError("home_not_set", "Agent has no home_poi or home_system set");
+    const home = homeDestination(data);
+    if (!home) throw new PrayerRuntimeError("home_not_set", "Agent has no home_poi or home_system set");
     return home;
   }
   const pois = Array.isArray(data.pois) ? data.pois : Array.isArray(data.system_pois) ? data.system_pois : [];
@@ -136,7 +135,7 @@ function recordFactionId(rec: Record<string, unknown>): string {
 }
 
 function agentFactionId(data: Record<string, unknown>): string {
-  const player = data.player && typeof data.player === "object" ? data.player as Record<string, unknown> : {};
+  const player = getPlayer(data);
   return String(player.faction_id ?? player.factionId ?? "");
 }
 

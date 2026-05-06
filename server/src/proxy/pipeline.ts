@@ -574,6 +574,22 @@ export function validateCaptainsLogFormat(entry: string): { valid: true } | { va
 // Guardrails
 // ---------------------------------------------------------------------------
 
+function checkShutdownGuard(agentName: string, toolName: string): string | null {
+  if (hasSignal(agentName, "shutdown")) {
+    log.info("shutdown signal detected", { agent: agentName });
+    return "SHUTDOWN_SIGNAL: You have been requested to stop. Write your captain's log and logout immediately.";
+  }
+  const shutdownManager = getSessionShutdownManager();
+  if (shutdownManager.isShuttingDown(agentName)) {
+    const state = shutdownManager.getShutdownState(agentName);
+    if (state === "draining" && !shutdownManager.isAllowedToolDuringShutdown(toolName)) {
+      log.info("blocked tool during shutdown draining", { agent: agentName, tool: toolName, state });
+      return shutdownManager.getShutdownMessage();
+    }
+  }
+  return null;
+}
+
 /**
  * Check guardrails for a v1 tool call.
  * Returns an error message string if blocked, or null if the call is allowed.
@@ -590,32 +606,10 @@ export function checkGuardrailsV1(
   toolName: string,
   args?: Record<string, unknown>,
 ): string | null {
-  // Check for shutdown signal — return immediately if pending.
-  // IMPORTANT: Do NOT consume the signal here. The runner process also polls
-  // for this signal to abort the turn. If we consume it, the runner never sees
-  // it and the agent process won't stop until the 180s hard kill timeout.
-  if (hasSignal(agentName, "shutdown")) {
-    log.info("shutdown signal detected", { agent: agentName });
-    return "SHUTDOWN_SIGNAL: You have been requested to stop. Write your captain's log and logout immediately.";
-  }
-
-  // Check shutdown state from session manager
-  const shutdownManager = getSessionShutdownManager();
-  if (shutdownManager.isShuttingDown(agentName)) {
-    const state = shutdownManager.getShutdownState(agentName);
-    if (state === "draining") {
-      // In draining phase: only allow cleanup tools
-      if (!shutdownManager.isAllowedToolDuringShutdown(toolName)) {
-        log.info("blocked tool during shutdown draining", {
-          agent: agentName,
-          tool: toolName,
-          state,
-        });
-        return shutdownManager.getShutdownMessage();
-      }
-    }
-    // If state is 'shutdown_waiting': allow all tools (combat still in progress)
-  }
+  // Check for shutdown signal / session manager drain state.
+  // Do NOT consume the signal — the runner process also polls it to abort the turn.
+  const shutdownBlock = checkShutdownGuard(agentName, toolName);
+  if (shutdownBlock) return shutdownBlock;
 
   // Instability gate
   const instabilityBlock = checkToolBlocked(
@@ -753,41 +747,21 @@ export function checkGuardrailsV2(
     return timeoutBlock;
   }
 
-  // Check for shutdown signal — return immediately if pending.
-  // Do NOT consume — the runner process also needs to see it to abort the turn.
-  if (hasSignal(agentName, "shutdown")) {
-    log.info("shutdown signal detected (v2)", { agent: agentName });
-    return "SHUTDOWN_SIGNAL: You have been requested to stop. Write your captain's log and logout immediately.";
-  }
-
-  // Check shutdown state from session manager
-  const shutdownManager = getSessionShutdownManager();
-  if (shutdownManager.isShuttingDown(agentName)) {
-    const state = shutdownManager.getShutdownState(agentName);
-    if (state === "draining") {
-      // In draining phase: only allow cleanup tools
-      if (!shutdownManager.isAllowedToolDuringShutdown(toolName)) {
-        log.info("v2 blocked tool during shutdown draining", {
-          agent: agentName,
-          tool: toolName,
-          state,
-        });
-        return shutdownManager.getShutdownMessage();
-      }
-    }
-    // If state is 'shutdown_waiting': allow all tools (combat still in progress)
-  }
+  // Check for shutdown signal / session manager drain state.
+  // Do NOT consume the signal — the runner process also polls it to abort the turn.
+  const shutdownBlock = checkShutdownGuard(agentName, toolName);
+  if (shutdownBlock) return shutdownBlock;
 
   // Instability gate — use action name (actual game command) not wrapper tool name
-  const effectiveTool = action ?? toolName;
+  const effectiveAction = action ?? toolName;
   const instabilityBlock = checkToolBlocked(
-    effectiveTool,
+    effectiveAction,
     ctx.serverMetrics.getMetrics().status,
   );
   if (instabilityBlock) {
     log.info("v2 blocked by instability", {
       agent: agentName,
-      effectiveTool,
+      effectiveAction,
       status: ctx.serverMetrics.getMetrics().status,
     });
     return instabilityBlock;
@@ -796,15 +770,13 @@ export function checkGuardrailsV2(
   // Transit throttle — rate-limit location checks during hyperspace
   // For v2, check the action name (e.g. "get_location") not the wrapper tool name
   if (ctx.transitThrottle && ctx.statusCache) {
-    const transitCheckTool = action ?? toolName;
-    const transitBlock = ctx.transitThrottle.check(agentName, transitCheckTool, ctx.statusCache);
+    const transitBlock = ctx.transitThrottle.check(agentName, effectiveAction, ctx.statusCache);
     if (transitBlock) {
       return transitBlock;
     }
   }
 
   // Block self_destruct while in transit — exponential fees have bankrupted agents
-  const effectiveAction = action ?? toolName;
   if (effectiveAction === "self_destruct" && ctx.statusCache) {
     const cached = ctx.statusCache.get(agentName);
     const player = cached

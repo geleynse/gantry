@@ -136,6 +136,31 @@ export class SessionManager {
     return username;
   }
 
+  private createClient(agentName: string, agentConfig: AgentConfig): GameTransport | MockGameClient {
+    const mockMode = this.config.mockMode;
+    let client: GameTransport | MockGameClient;
+    if (mockMode?.enabled) {
+      client = new MockGameClient(mockMode);
+    } else {
+      const httpClient = new HttpGameClientV2(
+        this.config.gameMcpUrl,
+        undefined,
+        agentName,
+        (agentConfig.mcpPreset === "full" ? "full" : "standard"),
+        this.serverMetrics,
+        agentConfig.socksPort,
+      );
+      if (this.config.credentialsPath) {
+        httpClient.credentialsPath = this.config.credentialsPath;
+      }
+      client = httpClient;
+    }
+    client.label = agentName;
+    this.breakerRegistry.register(agentName, client.breaker);
+    this.clients.set(agentName, client);
+    return client;
+  }
+
   getOrCreateClient(agentName: string): GameTransport | MockGameClient {
     const resolved = this.resolveAgentName(agentName);
     this.lastActivity.set(resolved, Date.now());
@@ -147,30 +172,7 @@ export class SessionManager {
       throw new Error(`Unknown agent: ${agentName}`);
     }
 
-    const mockMode = this.config.mockMode;
-    if (mockMode?.enabled) {
-      const client = new MockGameClient(mockMode);
-      client.label = resolved;
-      this.breakerRegistry.register(resolved, client.breaker);
-      this.clients.set(resolved, client);
-      return client;
-    }
-
-    const client: GameTransport = new HttpGameClientV2(
-      this.config.gameMcpUrl,
-      undefined,
-      resolved,
-      (agentConfig.mcpPreset === "full" ? "full" : "standard"),
-      this.serverMetrics,
-      agentConfig.socksPort,
-    );
-    client.label = resolved;
-    if (this.config.credentialsPath) {
-      client.credentialsPath = this.config.credentialsPath;
-    }
-    this.breakerRegistry.register(resolved, client.breaker);
-    this.clients.set(resolved, client);
-    return client;
+    return this.createClient(resolved, agentConfig);
   }
 
   getClient(agentName: string): GameTransport | MockGameClient | undefined {
@@ -220,11 +222,11 @@ export class SessionManager {
         entries.push({ agentName, credentials: creds });
       }
     }
+    const secret = getEncryptionSecret();
     // Write to file (primary fallback, encrypted)
     if (this.persistPath) {
       try {
         mkdirSync(dirname(this.persistPath), { recursive: true });
-        const secret = getEncryptionSecret();
         const encryptedEntries = entries.map((e) => ({
           agentName: e.agentName,
           credentials: {
@@ -242,7 +244,6 @@ export class SessionManager {
     try {
       const db = getDbIfInitialized();
       if (db) {
-        const secret = getEncryptionSecret();
         const upsert = db.prepare(
           "INSERT OR REPLACE INTO proxy_sessions (agent, username, password, updated_at) VALUES (?, ?, ?, datetime('now'))"
         );
@@ -323,32 +324,13 @@ export class SessionManager {
     }
 
     let restored = 0;
-    const mockMode = this.config.mockMode;
     for (const entry of entries) {
       const agentConfig = this.agentMap.get(entry.agentName);
       if (!agentConfig) continue;
       if (this.clients.has(entry.agentName)) continue;
 
-      let client: GameTransport | MockGameClient;
-      if (mockMode?.enabled) {
-        client = new MockGameClient(mockMode);
-      } else {
-        client = new HttpGameClientV2(
-          this.config.gameMcpUrl,
-          undefined,
-          entry.agentName,
-          (agentConfig.mcpPreset === "full" ? "full" : "standard"),
-          this.serverMetrics,
-          agentConfig.socksPort,
-        );
-        if (this.config.credentialsPath) {
-          client.credentialsPath = this.config.credentialsPath;
-        }
-      }
-      client.label = entry.agentName;
-      this.breakerRegistry.register(entry.agentName, client.breaker);
+      const client = this.createClient(entry.agentName, agentConfig);
       client.restoreCredentials(entry.credentials);
-      this.clients.set(entry.agentName, client);
       log.info(`Restored credentials for ${entry.agentName}`);
       restored++;
     }
@@ -381,6 +363,7 @@ export class SessionManager {
           // Skip logout attempt — just close the transport
           await client.close().catch(() => {});
           this.clients.delete(name);
+          this.lastActivity.delete(name);
           return;
         }
 

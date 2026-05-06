@@ -784,10 +784,21 @@ export function registerCompoundTools(deps: ToolRegistryDeps): void {
     client: GameClient,
     agentName: string,
   ): Promise<McpTextResult> {
-    const pendingId = logToolCallStart(agentName, autoTrigger, { _original_action: originalAction }, { isCompound: true });
+    return runCompound(autoTrigger, client as unknown as GameClient, agentName, {}, { _original_action: originalAction });
+  }
+
+  /** Log, execute, and inject a compound action. */
+  async function runCompound(
+    toolName: string,
+    client: GameClient,
+    agentName: string,
+    args: Record<string, unknown>,
+    logArgs?: Record<string, unknown>,
+  ): Promise<McpTextResult> {
+    const pendingId = logToolCallStart(agentName, toolName, logArgs ?? args, { isCompound: true });
     const t0 = Date.now();
-    const result = await compoundActions[autoTrigger](client as unknown as GameClient, agentName, {});
-    logToolCallComplete(pendingId, agentName, autoTrigger, result, Date.now() - t0, { isCompound: true });
+    const result = await compoundActions[toolName](client as unknown as GameClient, agentName, args);
+    logToolCallComplete(pendingId, agentName, toolName, result, Date.now() - t0, { isCompound: true });
     return withInjections(agentName, textResult(result));
   }
 
@@ -808,12 +819,7 @@ export function registerCompoundTools(deps: ToolRegistryDeps): void {
 
     const autoTrigger = checkAutoTriggerInterrupt(agentName, "batch_mine");
     if (autoTrigger) return runAutoTrigger(autoTrigger, "batch_mine", client as unknown as GameClient, agentName);
-
-    const pendingId = logToolCallStart(agentName, "batch_mine", { count }, { isCompound: true });
-    const compoundStartMs = Date.now();
-    const compoundResult = await compoundActions.batch_mine(client as unknown as GameClient, agentName, { count });
-    logToolCallComplete(pendingId, agentName, "batch_mine", compoundResult, Date.now() - compoundStartMs, { isCompound: true });
-    return await withInjections(agentName, textResult(compoundResult));
+    return runCompound("batch_mine", client as unknown as GameClient, agentName, { count });
   });
   registeredTools.push("batch_mine");
 
@@ -879,16 +885,11 @@ export function registerCompoundTools(deps: ToolRegistryDeps): void {
     if (autoTrigger) return runAutoTrigger(autoTrigger, "jump_route", client as unknown as GameClient, agentName);
 
     const displayIds = Array.isArray(system_ids) ? system_ids.slice(0, 3) : [];
-    const pendingId = logToolCallStart(agentName, "jump_route", { system_ids: displayIds, destination }, { isCompound: true });
-    const t0 = Date.now();
-    // Map v1 named params to generic args (system_ids takes precedence, then destination)
-    const jumpRouteResult = await compoundActions.jump_route(
-      client as unknown as GameClient,
-      agentName,
+    return runCompound(
+      "jump_route", client as unknown as GameClient, agentName,
       { system_ids, destination, count: refuel_threshold },
+      { system_ids: displayIds, destination },
     );
-    logToolCallComplete(pendingId, agentName, "jump_route", jumpRouteResult, Date.now() - t0, { isCompound: true });
-    return await withInjections(agentName, textResult(jumpRouteResult));
   });
   registeredTools.push("jump_route");
 
@@ -940,16 +941,7 @@ export function registerCompoundTools(deps: ToolRegistryDeps): void {
     const client = sessions.getClient(agentName);
     if (!client) return textResult({ error: "no session" });
 
-    const pendingId = logToolCallStart(agentName, "scan_and_attack", { stance }, { isCompound: true });
-    const combatStartMs = Date.now();
-    // Map v1 named params to generic args
-    const combatResult = await compoundActions.scan_and_attack(
-      client as unknown as GameClient,
-      agentName,
-      { stance, target: targetArg },
-    );
-    logToolCallComplete(pendingId, agentName, "scan_and_attack", combatResult, Date.now() - combatStartMs, { isCompound: true });
-    return await withInjections(agentName, textResult(combatResult));
+    return runCompound("scan_and_attack", client as unknown as GameClient, agentName, { stance, target: targetArg }, { stance });
   });
   registeredTools.push("scan_and_attack");
 
@@ -961,13 +953,7 @@ export function registerCompoundTools(deps: ToolRegistryDeps): void {
   }, async (_args, extra) => {
     const agentName = getAgentForSession(extra.sessionId);
     if (!agentName) return textResult({ error: "not logged in" });
-
-    const readinessResult = await compoundActions.battle_readiness(
-      {} as unknown as GameClient,
-      agentName,
-      {},
-    );
-    return await withInjections(agentName, textResult(readinessResult));
+    return runCompound("battle_readiness", {} as unknown as GameClient, agentName, {});
   });
   registeredTools.push("battle_readiness");
 
@@ -986,11 +972,7 @@ export function registerCompoundTools(deps: ToolRegistryDeps): void {
     const client = sessions.getClient(agentName);
     if (!client) return textResult({ error: "no session" });
 
-    const pendingId = logToolCallStart(agentName, "loot_wrecks", { count: count ?? 5 }, { isCompound: true });
-    const lootStartMs = Date.now();
-    const lootResult = await compoundActions.loot_wrecks(client as unknown as GameClient, agentName, { count: count ?? 5 });
-    logToolCallComplete(pendingId, agentName, "loot_wrecks", lootResult, Date.now() - lootStartMs, { isCompound: true });
-    return await withInjections(agentName, textResult(lootResult));
+    return runCompound("loot_wrecks", client as unknown as GameClient, agentName, { count: count ?? 5 });
   });
   registeredTools.push("loot_wrecks");
 
@@ -1009,11 +991,7 @@ export function registerCompoundTools(deps: ToolRegistryDeps): void {
     const client = sessions.getClient(agentName);
     if (!client) return textResult({ error: "no session" });
 
-    const pendingId = logToolCallStart(agentName, "flee", { target_poi: target_poi ?? "auto" }, { isCompound: true });
-    const fleeStartMs = Date.now();
-    const fleeResult = await compoundActions.flee(client as unknown as GameClient, agentName, { id: target_poi });
-    logToolCallComplete(pendingId, agentName, "flee", fleeResult, Date.now() - fleeStartMs, { isCompound: true });
-    return await withInjections(agentName, textResult(fleeResult));
+    return runCompound("flee", client as unknown as GameClient, agentName, { id: target_poi }, { target_poi: target_poi ?? "auto" });
   });
   registeredTools.push("flee");
 
@@ -1033,15 +1011,7 @@ export function registerCompoundTools(deps: ToolRegistryDeps): void {
     const client = sessions.getClient(agentName);
     if (!client) return textResult({ error: "no session" });
 
-    const pendingId = logToolCallStart(agentName, "get_craft_profitability", { limit: limit ?? 10, skill_filter }, { isCompound: true });
-    const startMs = Date.now();
-    const craftResult = await compoundActions.get_craft_profitability(
-      client as unknown as GameClient,
-      agentName,
-      { limit, skill_filter },
-    );
-    logToolCallComplete(pendingId, agentName, "get_craft_profitability", craftResult, Date.now() - startMs, { isCompound: true });
-    return await withInjections(agentName, textResult(craftResult));
+    return runCompound("get_craft_profitability", client as unknown as GameClient, agentName, { limit, skill_filter }, { limit: limit ?? 10, skill_filter });
   });
   registeredTools.push("get_craft_profitability");
 

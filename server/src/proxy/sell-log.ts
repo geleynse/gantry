@@ -1,4 +1,4 @@
-import { getDbIfInitialized, queryAll } from "../services/database.js";
+import { getDbIfInitialized, queryAll, queryInsert } from "../services/database.js";
 
 interface SellLogRow {
   station_id: string;
@@ -28,7 +28,6 @@ export class SellLog {
 
   constructor(ttlMs = 10 * 60 * 1000) {
     this.ttlMs = ttlMs;
-    this.ensureTable();
     this.loadFromDb();
   }
 
@@ -59,35 +58,13 @@ export class SellLog {
 
   // --- SQLite persistence ---
 
-  private ensureTable(): void {
-    const db = getDbIfInitialized();
-    if (!db) return;
-    try {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS sell_log (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          station_id TEXT NOT NULL,
-          agent TEXT NOT NULL,
-          item_id TEXT NOT NULL,
-          quantity INTEGER NOT NULL,
-          timestamp INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_sell_log_station ON sell_log(station_id);
-        CREATE INDEX IF NOT EXISTS idx_sell_log_timestamp ON sell_log(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_sell_log_station_ts ON sell_log(station_id, timestamp);
-      `);
-    } catch {
-      // DB not ready or table already exists — non-fatal
-    }
-  }
-
   private persistEntry(stationId: string, entry: SellEntry): void {
-    const db = getDbIfInitialized();
-    if (!db) return;
+    if (!getDbIfInitialized()) return;
     try {
-      db.prepare(
-        'INSERT INTO sell_log (station_id, agent, item_id, quantity, timestamp) VALUES (?, ?, ?, ?, ?)'
-      ).run(stationId, entry.agent, entry.item_id, entry.quantity, entry.timestamp);
+      queryInsert(
+        'INSERT INTO sell_log (station_id, agent, item_id, quantity, timestamp) VALUES (?, ?, ?, ?, ?)',
+        stationId, entry.agent, entry.item_id, entry.quantity, entry.timestamp
+      );
     } catch {
       // Non-fatal — in-memory cache still works
     }

@@ -7,7 +7,6 @@
 // Environment
 export {
   FLEET_DIR,
-  getFleetDir,
   PORT,
   GANTRY_ENV,
   LOG_LEVEL,

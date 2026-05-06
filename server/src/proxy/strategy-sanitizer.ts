@@ -54,13 +54,14 @@ export function sanitizeStrategyContent(
     return { cleaned: content, removed: [] };
   }
 
+  const lowerPatterns = patterns.map((p) => p.toLowerCase());
   const lines = content.split("\n");
   const removed: string[] = [];
   const kept: string[] = [];
 
   for (const line of lines) {
     const lower = line.toLowerCase();
-    const matched = patterns.some((p) => lower.includes(p.toLowerCase()));
+    const matched = lowerPatterns.some((p) => lower.includes(p));
     if (matched) {
       removed.push(line);
     } else {

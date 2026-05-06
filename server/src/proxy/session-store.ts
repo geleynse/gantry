@@ -179,9 +179,8 @@ export class SessionStore {
    * Returns the new count.
    */
   incrementIterationCount(id: string): number {
-    queryRun("UPDATE mcp_sessions SET iteration_count = iteration_count + 1 WHERE id = ?", id);
     const result = queryOne<{ iteration_count: number }>(
-      "SELECT iteration_count FROM mcp_sessions WHERE id = ?", id
+      "UPDATE mcp_sessions SET iteration_count = iteration_count + 1 WHERE id = ? RETURNING iteration_count", id
     );
     return result?.iteration_count ?? 0;
   }

@@ -25,10 +25,11 @@ export function enrichWithGlobalContext(
 
   for (const item of cargo) {
     const localBid = localBids.get(item.item_id) ?? 0;
-    const globalItems = marketData.items.filter((m) => m.item_id === item.item_id && m.best_bid > 0);
-    if (globalItems.length === 0) continue;
-
-    const best = globalItems.reduce((a, b) => (a.best_bid > b.best_bid ? a : b));
+    const best = marketData.items.reduce<(typeof marketData.items)[0] | null>(
+      (a, b) => b.item_id === item.item_id && b.best_bid > 0 && (!a || b.best_bid > a.best_bid) ? b : a,
+      null,
+    );
+    if (!best) continue;
 
     if (localBid > 0 && best.best_bid > localBid) {
       const improvement = (best.best_bid - localBid) / localBid;

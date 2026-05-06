@@ -11,8 +11,9 @@
  * POST /api/outbound/reject/:id             — reject with optional reason (admin)
  * POST /api/outbound/approve-all?channel=   — batch approve (admin)
  */
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { createLogger } from '../../lib/logger.js';
+import { queryInt } from '../middleware/query-helpers.js';
 import {
   getPending, getPendingCount, getHistory,
   approveMessage, rejectMessage,
@@ -35,7 +36,7 @@ function parseChannel(raw: unknown): OutboundChannel | undefined {
   return undefined;
 }
 
-function requireAdmin(req: { auth?: { role?: string } }, res: { status: (n: number) => { json: (o: unknown) => void } }): boolean {
+function requireAdmin(req: Request, res: Response): boolean {
   if (req.auth?.role !== 'admin') {
     res.status(403).json({ error: 'Admin access required' });
     return false;
@@ -66,7 +67,7 @@ export function createOutboundReviewRouter(executor?: AgentSessionExecutor): Rou
     if (!requireAdmin(req, res)) return;
     const agent = typeof req.query.agent === 'string' ? req.query.agent : undefined;
     const channel = parseChannel(req.query.channel);
-    const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) || 50 : 50;
+    const limit = queryInt(req, 'limit') ?? 50;
     const messages = getHistory({ agent, channel, limit });
     res.json(messages);
   });

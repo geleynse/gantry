@@ -59,13 +59,13 @@ export function createCloudflareAccessAdapter(config: CfAccessConfig): AuthAdapt
   let cacheExpiry = 0;
   const cryptoKeyCache = new Map<string, CryptoKey>();
 
-  async function fetchPublicKeys(teamDomain: string): Promise<CfJwk[]> {
+  async function fetchPublicKeys(): Promise<CfJwk[]> {
     const now = Date.now();
     if (cachedKeys.length > 0 && now < cacheExpiry) {
       return cachedKeys;
     }
 
-    const url = `https://${teamDomain}/cdn-cgi/access/certs`;
+    const url = `https://${config.teamDomain}/cdn-cgi/access/certs`;
     const resp = await fetch(url);
     if (!resp.ok) {
       throw new Error(`Failed to fetch CF Access certs: ${resp.status}`);
@@ -88,11 +88,7 @@ export function createCloudflareAccessAdapter(config: CfAccessConfig): AuthAdapt
    * - Expiry (exp): token must not be expired
    * Returns decoded payload on success, null on failure.
    */
-  async function verifyJwt(
-    token: string,
-    teamDomain: string,
-    audience: string,
-  ): Promise<Record<string, unknown> | null> {
+  async function verifyJwt(token: string): Promise<Record<string, unknown> | null> {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
 
@@ -105,7 +101,7 @@ export function createCloudflareAccessAdapter(config: CfAccessConfig): AuthAdapt
       return null;
     }
 
-    const keys = await fetchPublicKeys(teamDomain);
+    const keys = await fetchPublicKeys();
     const jwk = keys.find((k) => k.kid === header.kid);
     if (!jwk) {
       log.error(`No matching public key found for kid: ${header.kid}`);
@@ -141,7 +137,7 @@ export function createCloudflareAccessAdapter(config: CfAccessConfig): AuthAdapt
     }
 
     // Validate issuer (should be https://{teamDomain})
-    const expectedIssuer = `https://${teamDomain}`;
+    const expectedIssuer = `https://${config.teamDomain}`;
     const iss = payload.iss;
     if (typeof iss !== "string" || iss !== expectedIssuer) {
       log.error(`JWT issuer mismatch: expected ${expectedIssuer}, got ${iss}`);
@@ -151,8 +147,8 @@ export function createCloudflareAccessAdapter(config: CfAccessConfig): AuthAdapt
     // Validate audience
     const aud = payload.aud;
     const audArray = Array.isArray(aud) ? aud : [aud];
-    if (audience && !audArray.includes(audience)) {
-      log.warn(`JWT audience mismatch: expected ${audience}, got ${JSON.stringify(aud)}`);
+    if (config.audience && !audArray.includes(config.audience)) {
+      log.warn(`JWT audience mismatch: expected ${config.audience}, got ${JSON.stringify(aud)}`);
       return null;
     }
 
@@ -198,7 +194,7 @@ export function createCloudflareAccessAdapter(config: CfAccessConfig): AuthAdapt
 
       try {
         log.debug("Verifying Cloudflare Access JWT...");
-        const payload = await verifyJwt(token, config.teamDomain, config.audience || "");
+        const payload = await verifyJwt(token);
         if (!payload) {
           log.debug("JWT verification failed (invalid payload or signature)");
           return null;

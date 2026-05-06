@@ -124,6 +124,15 @@ export { withRetry } from "./routine-utils.js";
 // Runner
 // ---------------------------------------------------------------------------
 
+const PARAM_EXAMPLES: Record<string, string> = {
+  full_trade_run: 'Example: execute_routine(id="full_trade_run", text=\'{"belt":"main_belt","station":"sol_central","cycles":3}\')',
+  mining_loop: 'Example: execute_routine(id="mining_loop", text=\'{"belt":"main_belt","cycles":3}\')',
+  explore_system: 'Example: execute_routine(id="explore_system", text=\'{"target_system":"sirius"}\')',
+  navigate_and_mine: 'Example: execute_routine(id="navigate_and_mine", text=\'{"target_system":"sirius","belt":"iron_reach_mining_colony","station":"sirius_observatory_station","cycles":3}\')',
+  supply_run: 'Example: execute_routine(id="supply_run", text=\'{"buy_station":"sol_central","sell_station":"sirius_observatory_station","items":[{"item_id":"steel_plate","quantity":10}]}\')',
+  sell_cycle: 'Example: execute_routine(id="sell_cycle", text=\'{"station":"sol_central"}\')',
+};
+
 /** Default max execution time for a routine (15 minutes). */
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 
@@ -157,16 +166,7 @@ export async function runRoutine(
     params = routine.parseParams(rawParams);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    // Include usage example for common routines to help agents self-correct
-    const examples: Record<string, string> = {
-      full_trade_run: 'Example: execute_routine(id="full_trade_run", text=\'{"belt":"main_belt","station":"sol_central","cycles":3}\')',
-      mining_loop: 'Example: execute_routine(id="mining_loop", text=\'{"belt":"main_belt","cycles":3}\')',
-      explore_system: 'Example: execute_routine(id="explore_system", text=\'{"target_system":"sirius"}\')',
-      navigate_and_mine: 'Example: execute_routine(id="navigate_and_mine", text=\'{"target_system":"sirius","belt":"iron_reach_mining_colony","station":"sirius_observatory_station","cycles":3}\')',
-      supply_run: 'Example: execute_routine(id="supply_run", text=\'{"buy_station":"sol_central","sell_station":"sirius_observatory_station","items":[{"item_id":"steel_plate","quantity":10}]}\')',
-      sell_cycle: 'Example: execute_routine(id="sell_cycle", text=\'{"station":"sol_central"}\')',
-    };
-    const hint = examples[routineName] ? ` ${examples[routineName]}` : "";
+    const hint = PARAM_EXAMPLES[routineName] ? ` ${PARAM_EXAMPLES[routineName]}` : "";
     return {
       status: "error",
       summary: `Invalid params for ${routineName}: ${errMsg}.${hint}`,

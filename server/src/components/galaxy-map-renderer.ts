@@ -207,7 +207,7 @@ export function drawNode({
         ctx.fillStyle = agentColor;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillText(firstName, ax, ay + (isHighlightedAgent ? dotR * 1.4 : dotR) + 1 / globalScale);
+        ctx.fillText(firstName, ax, ay + sr + 1 / globalScale);
         ctx.textBaseline = "alphabetic";
       }
     });
@@ -324,7 +324,7 @@ export function renderTrails({ ctx, enabled, agentTrails, nodeById }: TrailsRend
       ctx.beginPath();
       ctx.moveTo(fromNode.x, fromNode.y);
       ctx.lineTo(toNode.x, toNode.y);
-      ctx.strokeStyle = `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
+      ctx.strokeStyle = `rgba(${r},${g},${b},${alpha})`;
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }

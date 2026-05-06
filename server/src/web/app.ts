@@ -1,6 +1,6 @@
 /**
  * Standalone web-API Express app (no proxy/MCP).
- * Used by routes.test.ts and other tests that need the web API routes
+ * Stub app for integration tests that need the web API routes
  * without spinning up the full unified server.
  */
 import express, { type Express } from 'express';

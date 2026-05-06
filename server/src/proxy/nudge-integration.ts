@@ -4,7 +4,7 @@
  */
 
 import type { Logger } from "../lib/logger.js";
-import { NudgeStateManager, AgentNudgeState } from './nudge-state.js';
+import { NudgeStateManager, type AgentNudgeState } from './nudge-state.js';
 import { NudgeHandler } from './nudge-handler.js';
 import type express from 'express';
 
@@ -18,12 +18,10 @@ export interface NudgeIntegrationConfig {
 }
 
 let nudgeHandler: NudgeHandler | null = null;
-let stateManager: NudgeStateManager | null = null;
 
 export function initializeNudgeSystem(config: NudgeIntegrationConfig) {
-  stateManager = new NudgeStateManager(config.logger);
   nudgeHandler = new NudgeHandler({
-    stateManager,
+    stateManager: new NudgeStateManager(config.logger),
     ...config,
   });
   config.logger.info('[NUDGE] System initialized');
@@ -35,14 +33,13 @@ export async function handleToolExecutionError(agent_id: string, error: Error, e
 }
 
 export function canAgentExecute(agent_id: string): boolean {
-  if (!stateManager) return true;
-  const state = stateManager.getState(agent_id);
-  return state.state === 'RUNNING';
+  if (!nudgeHandler) return true;
+  return nudgeHandler.getAgentState(agent_id).state === 'RUNNING';
 }
 
 export function getAgentNudgeState(agent_id: string): AgentNudgeState | null {
-  if (!stateManager) return null;
-  return stateManager.getState(agent_id);
+  if (!nudgeHandler) return null;
+  return nudgeHandler.getAgentState(agent_id);
 }
 
 export async function resumeAgent(agent_id: string, operatorId?: string): Promise<AgentNudgeState> {
@@ -51,8 +48,8 @@ export async function resumeAgent(agent_id: string, operatorId?: string): Promis
 }
 
 export function getAllAgentStates(): AgentNudgeState[] {
-  if (!stateManager) return [];
-  return stateManager.getAllStates();
+  if (!nudgeHandler) return [];
+  return nudgeHandler.getAllAgentStates();
 }
 
 export function registerNudgeRoutes(router: express.Router): void {

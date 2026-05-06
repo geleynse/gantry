@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, watch, existsSync } from 'node:fs';
 import { join, basename, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { FLEET_DIR, AGENTS, getAgent } from '../config.js';
-import { getDb } from './database.js';
+import { getDb, queryOne } from './database.js';
 import { parseTurnFile } from './turn-parser.js';
 import { createLogger } from '../lib/logger.js';
 
@@ -172,9 +172,10 @@ export function ingestTurnFile(agent: string, filePath: string): void {
   // Insert combat events
   if (turn.combatEvents.length > 0) {
     // Fallback system: use gameState system, or look up last known system from DB
-    const fallbackSystem = turn.gameState?.system ?? (db.prepare(
-      `SELECT system FROM game_snapshots WHERE agent = ? AND system IS NOT NULL AND system != '' ORDER BY id DESC LIMIT 1`
-    ).get(agent) as { system: string } | null)?.system ?? null;
+    const fallbackSystem = turn.gameState?.system ?? queryOne<{ system: string }>(
+      `SELECT system FROM game_snapshots WHERE agent = ? AND system IS NOT NULL AND system != '' ORDER BY id DESC LIMIT 1`,
+      agent
+    )?.system ?? null;
 
     const insertCombat = db.prepare(`
       INSERT INTO combat_events (
@@ -242,22 +243,9 @@ export function backfillAgent(agent: string, turnDir: string): void {
     .sort();
 
   let successCount = 0;
-  let skipCount = 0;
   for (const file of files) {
     try {
-      const filePath = join(turnDir, file);
-      const parsed = parseFilename(filePath);
-      if (!parsed) {
-        skipCount++;
-        continue;
-      }
-      const content = readFileSync(filePath, 'utf-8');
-      const turn = parseTurnFile(content);
-      if (!turn.summary) {
-        skipCount++;
-        continue;
-      }
-      ingestTurnFile(agent, filePath);
+      ingestTurnFile(agent, join(turnDir, file));
       successCount++;
     } catch (e) {
       log.warn(`Failed to ingest turn file ${file}`, {
@@ -266,8 +254,8 @@ export function backfillAgent(agent: string, turnDir: string): void {
       });
     }
   }
-  if (successCount > 0 || skipCount > 0) {
-    log.info(`Backfill complete for ${agent}`, { ingested: successCount, skipped: skipCount, total: files.length });
+  if (successCount > 0) {
+    log.info(`Backfill complete for ${agent}`, { ingested: successCount, total: files.length });
   } else {
     log.debug(`Backfill: no turn files for ${agent}`, { total: files.length });
   }
@@ -313,12 +301,11 @@ function watchDirectory(agent: string, turnDir: string): void {
  */
 function logPipelineHealth(): void {
   try {
-    const db = getDb();
-    const total = (db.prepare('SELECT COUNT(*) as cnt FROM turns').get() as { cnt: number })?.cnt ?? 0;
-    const recent = (db.prepare("SELECT COUNT(*) as cnt FROM turns WHERE started_at > datetime('now', '-7 days')").get() as { cnt: number })?.cnt ?? 0;
-    const zeroCost = (db.prepare("SELECT COUNT(*) as cnt FROM turns WHERE cost_usd = 0 AND started_at > datetime('now', '-7 days')").get() as { cnt: number })?.cnt ?? 0;
-    const futureDated = (db.prepare("SELECT COUNT(*) as cnt FROM turns WHERE started_at > datetime('now', '+1 day')").get() as { cnt: number })?.cnt ?? 0;
-    const latest = (db.prepare('SELECT MAX(started_at) as ts FROM turns').get() as { ts: string | null })?.ts ?? 'none';
+    const total = queryOne<{ cnt: number }>('SELECT COUNT(*) as cnt FROM turns')?.cnt ?? 0;
+    const recent = queryOne<{ cnt: number }>("SELECT COUNT(*) as cnt FROM turns WHERE started_at > datetime('now', '-7 days')")?.cnt ?? 0;
+    const zeroCost = queryOne<{ cnt: number }>("SELECT COUNT(*) as cnt FROM turns WHERE cost_usd = 0 AND started_at > datetime('now', '-7 days')")?.cnt ?? 0;
+    const futureDated = queryOne<{ cnt: number }>("SELECT COUNT(*) as cnt FROM turns WHERE started_at > datetime('now', '+1 day')")?.cnt ?? 0;
+    const latest = queryOne<{ ts: string | null }>('SELECT MAX(started_at) as ts FROM turns')?.ts ?? 'none';
 
     log.info('Analytics pipeline health', { total, recent_7d: recent, zero_cost_7d: zeroCost, future_dated: futureDated, latest_turn: latest });
 
@@ -341,7 +328,7 @@ function logPipelineHealth(): void {
 
 export function watchTurnFiles(): void {
   // Run health check after backfill completes
-  setImmediate(() => setTimeout(logPipelineHealth, 5000));
+  setTimeout(logPipelineHealth, 5000);
 
   for (const agent of AGENTS) {
     try {

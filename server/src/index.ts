@@ -3,8 +3,7 @@
  * Combines the MCP action proxy and fleet web dashboard into a single process.
  */
 
-import { FLEET_DIR, PORT, LOG_LEVEL, MARKET_SCAN_INTERVAL_MS } from "./config.js";
-import { loadConfig } from "./config.js";
+import { FLEET_DIR, PORT, LOG_LEVEL, MARKET_SCAN_INTERVAL_MS, loadConfig } from "./config.js";
 import { createApp } from "./app.js";
 import { createDatabase } from "./services/database.js";
 import { loadRecentRoutineJobs } from "./services/routine-jobs.js";

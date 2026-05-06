@@ -193,15 +193,16 @@ export function createOverseerMcpServer(deps: OverseerMcpDeps): McpServer {
       const limit = Math.min(params.limit ?? 20, 100);
       const results: Record<string, unknown>[] = [];
 
+      const agentFilter = params.agent ? `AND agent = ?` : "";
+      const agentArgs = params.agent ? [params.agent] : [];
+
       // Chat messages from proxy_tool_calls (ws:chat_message events)
       if (!params.type || params.type === "all" || params.type === "chat") {
-        const agentFilter = params.agent ? `AND agent = ?` : "";
-        const agentParams = params.agent ? [params.agent] : [];
         const chats = queryAll<{ agent: string; result_summary: string; created_at: string }>(
           `SELECT agent, result_summary, created_at FROM proxy_tool_calls
            WHERE tool_name = 'ws:chat_message' ${agentFilter}
            ORDER BY created_at DESC LIMIT ?`,
-          ...agentParams, limit,
+          ...agentArgs, limit,
         );
         for (const c of chats) {
           let parsed: Record<string, unknown> = {};
@@ -219,13 +220,11 @@ export function createOverseerMcpServer(deps: OverseerMcpDeps): McpServer {
 
       // Diary entries
       if (!params.type || params.type === "all" || params.type === "diary") {
-        const agentFilter = params.agent ? `AND agent = ?` : "";
-        const agentParams = params.agent ? [params.agent] : [];
         const diaries = queryAll<{ agent: string; entry: string; created_at: string }>(
           `SELECT agent, entry, created_at FROM agent_diary
            WHERE 1=1 ${agentFilter}
            ORDER BY created_at DESC LIMIT ?`,
-          ...agentParams, limit,
+          ...agentArgs, limit,
         );
         for (const d of diaries) {
           results.push({
@@ -239,13 +238,11 @@ export function createOverseerMcpServer(deps: OverseerMcpDeps): McpServer {
 
       // Reports (write_report results)
       if (!params.type || params.type === "all" || params.type === "report") {
-        const agentFilter = params.agent ? `AND agent = ?` : "";
-        const agentParams = params.agent ? [params.agent] : [];
         const reports = queryAll<{ agent: string; args_summary: string | null; result_summary: string | null; created_at: string }>(
           `SELECT agent, args_summary, result_summary, created_at FROM proxy_tool_calls
            WHERE tool_name = 'write_report' ${agentFilter}
            ORDER BY created_at DESC LIMIT ?`,
-          ...agentParams, limit,
+          ...agentArgs, limit,
         );
         for (const r of reports) {
           results.push({
@@ -297,6 +294,11 @@ export function createOverseerMcpServer(deps: OverseerMcpDeps): McpServer {
 
   // --- Action tools ---
 
+  const execAction = async (action: Parameters<typeof deps.actionExecutor.execute>[0][number]) => {
+    const results = await deps.actionExecutor.execute([action]);
+    return { content: [{ type: "text" as const, text: JSON.stringify(results[0]) }] };
+  };
+
   server.registerTool(
     "issue_order",
     {
@@ -311,12 +313,7 @@ export function createOverseerMcpServer(deps: OverseerMcpDeps): McpServer {
           .describe("Priority level (default: normal)"),
       }),
     },
-    async (params) => {
-      const results = await deps.actionExecutor.execute([
-        { type: "issue_order", params: { agent: params.agent, message: params.message, priority: params.priority ?? "normal" } },
-      ]);
-      return { content: [{ type: "text" as const, text: JSON.stringify(results[0]) }] };
-    },
+    (params) => execAction({ type: "issue_order", params: { agent: params.agent, message: params.message, priority: params.priority ?? "normal" } }),
   );
 
   server.registerTool(
@@ -330,12 +327,7 @@ export function createOverseerMcpServer(deps: OverseerMcpDeps): McpServer {
         params: z.record(z.unknown()).optional().describe("Optional routine params as a JSON object. navigate_and_mine: {system, belt, returnStation, cycles?}"),
       }),
     },
-    async (params) => {
-      const results = await deps.actionExecutor.execute([
-        { type: "trigger_routine", params: { agent: params.agent, routine: params.routine, params: params.params } },
-      ]);
-      return { content: [{ type: "text" as const, text: JSON.stringify(results[0]) }] };
-    },
+    (params) => execAction({ type: "trigger_routine", params: { agent: params.agent, routine: params.routine, params: params.params } }),
   );
 
   server.registerTool(
@@ -346,12 +338,7 @@ export function createOverseerMcpServer(deps: OverseerMcpDeps): McpServer {
         agent: z.string().describe("Agent name"),
       }),
     },
-    async (params) => {
-      const results = await deps.actionExecutor.execute([
-        { type: "start_agent", params: { agent: params.agent } },
-      ]);
-      return { content: [{ type: "text" as const, text: JSON.stringify(results[0]) }] };
-    },
+    (params) => execAction({ type: "start_agent", params: { agent: params.agent } }),
   );
 
   server.registerTool(
@@ -372,10 +359,7 @@ export function createOverseerMcpServer(deps: OverseerMcpDeps): McpServer {
       if (guard) {
         return { content: [{ type: "text" as const, text: JSON.stringify(guard) }] };
       }
-      const results = await deps.actionExecutor.execute([
-        { type: "stop_agent", params: { agent: params.agent, reason: params.reason } },
-      ]);
-      return { content: [{ type: "text" as const, text: JSON.stringify(results[0]) }] };
+      return execAction({ type: "stop_agent", params: { agent: params.agent, reason: params.reason } });
     },
   );
 
@@ -389,12 +373,7 @@ export function createOverseerMcpServer(deps: OverseerMcpDeps): McpServer {
         zone: z.string().optional().describe("Optional operating zone"),
       }),
     },
-    async (params) => {
-      const results = await deps.actionExecutor.execute([
-        { type: "reassign_role", params: { agent: params.agent, role: params.role, zone: params.zone } },
-      ]);
-      return { content: [{ type: "text" as const, text: JSON.stringify(results[0]) }] };
-    },
+    (params) => execAction({ type: "reassign_role", params: { agent: params.agent, role: params.role, zone: params.zone } }),
   );
 
   // --- Catalog query ---

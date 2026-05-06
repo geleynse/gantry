@@ -1,5 +1,5 @@
 import { evalPredicate, resolveArg } from "./predicates.js";
-import { diffSnapshots, snapshotDiff } from "./result.js";
+import { diffSnapshots, resultFromError, snapshotDiff } from "./result.js";
 import { cargoByItem } from "./state.js";
 import { createLogger } from "../../lib/logger.js";
 import {
@@ -51,7 +51,6 @@ export async function executePrayerProgram(program: AnalyzedProgram, deps: Execu
       duration_ms: Date.now() - startedAt,
     };
   } catch (err) {
-    const { resultFromError } = await import("./result.js");
     const after = snapshotDiff(deps.statusCache.get(deps.agentName)?.data ?? beforeData);
     return resultFromError(err, program, state, startedAt, diffSnapshots(before, after));
   }
@@ -109,27 +108,20 @@ async function executeCommand(cmd: AnalyzedCommand, state: ExecState, deps: Exec
     return;
   }
 
+  const toolName = disp.tool;
+  const argCtx = { agentName: deps.agentName, statusCache: deps.statusCache };
   let attempts = 0;
   for (;;) {
     const started = Date.now();
     try {
-      let result: unknown;
-      let toolName: string;
-      let mapped: Record<string, unknown> | undefined;
-      if (disp.kind === "compound") {
-        toolName = disp.tool;
-        mapped = await disp.argMapper(args, { agentName: deps.agentName, statusCache: deps.statusCache });
-        result = await deps.compoundActions[disp.tool](deps.client, deps.agentName, mapped);
-      } else {
-        toolName = disp.tool;
-        mapped = await disp.argMapper(args, { agentName: deps.agentName, statusCache: deps.statusCache });
-        result = await deps.handlePassthrough(disp.tool, mapped);
-      }
+      const mapped = await disp.argMapper(args, argCtx);
+      const result = disp.kind === "compound"
+        ? await deps.compoundActions[disp.tool](deps.client, deps.agentName, mapped ?? {})
+        : await deps.handlePassthrough(disp.tool, mapped);
       const durationMs = Date.now() - started;
-      const ok = classifyResult(result) !== "fatal";
-      state.log.push({ tool: toolName, args: mapped, result, durationMs, ok });
-      deps.logSubTool?.(`pray:${toolName}`, mapped, result, durationMs);
       const classification = classifyResult(result);
+      state.log.push({ tool: toolName, args: mapped, result, durationMs, ok: classification !== "fatal" });
+      deps.logSubTool?.(`pray:${toolName}`, mapped, result, durationMs);
       if (classification === "skip" || classification === "ok") return;
       if (classification === "transient" && attempts < 3 && state.transientRetriesUsed < 20) {
         attempts++;

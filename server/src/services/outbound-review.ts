@@ -38,6 +38,11 @@ interface OutboundRow {
   reviewed_at: string | null;
 }
 
+function parseMetadata(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch { return {}; }
+}
+
 function rowToMessage(row: OutboundRow): OutboundMessage {
   return {
     id: row.id,
@@ -45,7 +50,7 @@ function rowToMessage(row: OutboundRow): OutboundMessage {
     agentName: row.agent_name,
     channel: row.channel as OutboundChannel,
     content: row.content,
-    metadata: row.metadata ? (() => { try { return JSON.parse(row.metadata); } catch { return {}; } })() : {},
+    metadata: parseMetadata(row.metadata),
     status: row.status as ReviewStatus,
     reviewedBy: row.reviewed_by ?? undefined,
     reviewedAt: row.reviewed_at ?? undefined,

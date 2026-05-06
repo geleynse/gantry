@@ -11,7 +11,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, done, handoff, phase, completePhase, checkCombat, getCargoUtilization, travelAndDock } from "./routine-utils.js";
+import { withRetry, done, handoff, phase, completePhase, checkCombat, getCargoUtilization, travelAndDock, getStatPct } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -46,8 +46,7 @@ function parseParams(raw: unknown): NavigateHomeParams {
 // Implementation
 // ---------------------------------------------------------------------------
 
-async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<RoutineResult> {
-  const params = { ...rawParams, sell: rawParams.sell !== false, refuel: rawParams.refuel !== false, repair: rawParams.repair !== false };
+async function run(ctx: RoutineContext, params: NavigateHomeParams): Promise<RoutineResult> {
   const phases: RoutinePhase[] = [];
 
   // --- Phase 1: Init — check current location ---
@@ -115,13 +114,8 @@ async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<
 
   const ship = freshStatus?.ship as Record<string, unknown> | undefined;
   let didRefuel = false;
-  if (params.refuel) {
-    const fuelCurrent = typeof ship?.fuel === "number" ? ship.fuel : undefined;
-    const fuelMax = typeof ship?.max_fuel === "number" ? ship.max_fuel
-                  : typeof ship?.fuel_max === "number" ? ship.fuel_max
-                  : undefined;
-    const fuelPct = (fuelCurrent !== undefined && fuelMax !== undefined && fuelMax > 0)
-      ? (fuelCurrent / fuelMax) * 100 : null;
+  if (params.refuel !== false) {
+    const fuelPct = getStatPct(ship, "fuel");
     if (fuelPct !== null && fuelPct < 80) {
       const refuelPhase = phase("refuel");
       const refuelResp = await ctx.client.execute("refuel");
@@ -138,14 +132,8 @@ async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<
 
   // --- Phase 6: Repair ---
   let didRepair = false;
-  if (params.repair) {
-    const hullCurrent = typeof ship?.hull === "number" ? ship.hull : undefined;
-    const hullMax = typeof ship?.max_hull === "number" ? ship.max_hull
-                  : typeof ship?.hull_max === "number" ? ship.hull_max
-                  : undefined;
-    const hullPct = (hullCurrent !== undefined && hullMax !== undefined && hullMax > 0)
-      ? (hullCurrent / hullMax) * 100 : null;
-
+  if (params.repair !== false) {
+    const hullPct = getStatPct(ship, "hull");
     if (hullPct !== null && hullPct < 90) {
       const repairPhase = phase("repair");
       const repairResp = await ctx.client.execute("repair");
@@ -162,9 +150,8 @@ async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<
 
   // --- Phase 7: Sell cargo ---
   let soldCount = 0;
-  let creditsBefore = 0;
-  let creditsAfter = 0;
-  if (params.sell) {
+  let creditsEarned = 0;
+  if (params.sell !== false) {
     // Check cargo first
     const cargoResp = await ctx.client.execute("get_cargo");
     const cargo = getCargoUtilization(cargoResp);
@@ -175,10 +162,6 @@ async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<
       const analyzeResp = await ctx.client.execute("analyze_market");
       phases.push(completePhase(analyzePhase, analyzeResp.result));
 
-      // Get credits before sell
-      const preSellStatus = await ctx.client.execute("get_status");
-      creditsBefore = ((preSellStatus.result as any)?.player?.credits as number) ?? 0;
-
       const sellPhase = phase("sell_cargo");
       const sellResp = await ctx.client.execute("multi_sell");
       if (sellResp.error) {
@@ -187,12 +170,10 @@ async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<
       } else {
         const sellResult = sellResp.result as Record<string, unknown> | undefined;
         soldCount = typeof sellResult?.items_sold === "number" ? sellResult.items_sold : 0;
+        creditsEarned = typeof sellResult?.credits_earned === "number" ? sellResult.credits_earned
+                      : typeof sellResult?.total_value === "number" ? sellResult.total_value : 0;
         phases.push(completePhase(sellPhase, sellResult));
-
-        // Get credits after sell
-        const postSellStatus = await ctx.client.execute("get_status");
-        creditsAfter = ((postSellStatus.result as any)?.player?.credits as number) ?? 0;
-        ctx.log("info", `navigate_home: sold ${soldCount} items, +${creditsAfter - creditsBefore} credits`);
+        ctx.log("info", `navigate_home: sold ${soldCount} items, +${creditsEarned} credits`);
       }
     } else {
       ctx.log("info", "navigate_home: no cargo to sell");
@@ -203,7 +184,7 @@ async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<
   const parts: string[] = [`Returned to ${params.station}`];
   if (didRefuel) parts.push("refueled");
   if (didRepair) parts.push("repaired");
-  if (soldCount > 0) parts.push(`sold ${soldCount} items (+${creditsAfter - creditsBefore} cr)`);
+  if (soldCount > 0) parts.push(`sold ${soldCount} items (+${creditsEarned} cr)`);
 
   const summary = parts.join(", ");
   ctx.log("info", `navigate_home: ${summary}`);
@@ -214,7 +195,7 @@ async function run(ctx: RoutineContext, rawParams: NavigateHomeParams): Promise<
     did_refuel: didRefuel,
     did_repair: didRepair,
     items_sold: soldCount,
-    credits_earned: creditsAfter - creditsBefore,
+    credits_earned: creditsEarned,
   }, phases);
 }
 

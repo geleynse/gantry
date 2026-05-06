@@ -63,11 +63,6 @@ function resolveFleetDir(): string {
 
 export let FLEET_DIR = resolveFleetDir();
 
-/** Get the current fleet directory (always returns the latest value). */
-export function getFleetDir(): string {
-  return FLEET_DIR;
-}
-
 /** For testing only: override the resolved fleet directory. */
 export function setFleetDirForTesting(dir: string): void {
   FLEET_DIR = dir;

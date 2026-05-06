@@ -19,7 +19,6 @@ interface ActionLogRow {
   credits_delta: number | null;
   station: string | null;
   system: string | null;
-  raw_data: string | null;
   game_timestamp: string | null;
   created_at: string;
 }

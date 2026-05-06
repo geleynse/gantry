@@ -136,22 +136,14 @@ export async function multiSell(
         quantity,
       });
     } else {
+      stripPendingFields(resp.result);
       results.push({ item_id, quantity, result: resp.result });
-      const isPending =
-        resp.result &&
-        typeof resp.result === "object" &&
-        "pending" in (resp.result as Record<string, unknown>);
       log.debug("multi_sell item completed", {
         agent: agentName,
         item_index: i,
         item_id,
         quantity,
-        pending: isPending,
       });
-
-      if (isPending) {
-        stripPendingFields(resp.result);
-      }
     }
   }
 

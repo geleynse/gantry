@@ -8,7 +8,7 @@ import { createLogger } from "../lib/logger.js";
 import { FLEET_DIR, GANTRY_ENV, GANTRY_MOCK } from "./env.js";
 import { FleetConfigSchema } from "./schemas.js";
 import { DEFAULT_TURN_INTERVAL, DEFAULT_STAGGER_DELAY } from "./constants.js";
-import type { AgentConfig, AuthConfig, MockModeConfig, AccountPoolConfig, CoordinatorConfig, OverseerConfig, OutboundConfig, GantryConfig } from "./types.js";
+import type { AgentConfig, MockModeConfig, AccountPoolConfig, GantryConfig } from "./types.js";
 
 const log = createLogger("config");
 
@@ -94,7 +94,6 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
 
   const gameUrl = fleetConfig.mcpGameUrl;
   const gameApiUrl = gameUrl.replace(/\/mcp$/, "/api/v1");
-  const gameMcpUrl = gameUrl; // mcpGameUrl IS the MCP URL
 
   const agentDeniedTools = fleetConfig.agentDeniedTools ?? {};
   const callLimits = fleetConfig.callLimits ?? {};
@@ -104,7 +103,7 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
   }
   const turnSleepMs = fleetConfig.turnSleepMs ?? fleetConfig.turnInterval ?? DEFAULT_TURN_INTERVAL;
   const staggerDelay = fleetConfig.staggerDelay ?? DEFAULT_STAGGER_DELAY;
-  const auth = fleetConfig.auth as AuthConfig | undefined;
+  const auth = fleetConfig.auth;
   const fleetName = fleetConfig.fleetName;
   const maxIterationsPerSession = fleetConfig.maxIterationsPerSession ?? 200;
   const maxTurnDurationMs = fleetConfig.maxTurnDurationMs ?? 10 * 60 * 1000; // 10 minutes
@@ -143,26 +142,11 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
     accountPool = { poolFile: poolPath };
   }
 
-  // Coordinator config — Zod `.default()` on CoordinatorConfigSchema already applies
-  // field-level defaults after parsing, so no `??` fallbacks needed here.
-  const coordinator: CoordinatorConfig | undefined = fleetConfig.coordinator
-    ? fleetConfig.coordinator as CoordinatorConfig
-    : undefined;
-
-  // Overseer config — same pattern as coordinator, Zod defaults applied during parse.
-  const overseer: OverseerConfig | undefined = fleetConfig.overseer
-    ? fleetConfig.overseer as OverseerConfig
-    : undefined;
-
-  const outbound: OutboundConfig | undefined = fleetConfig.outbound
-    ? fleetConfig.outbound as OutboundConfig
-    : undefined;
-
   return {
     agents,
     gameUrl,
     gameApiUrl,
-    gameMcpUrl,
+    gameMcpUrl: gameUrl,
     agentDeniedTools,
     callLimits,
     prayer: fleetConfig.prayer,
@@ -172,17 +156,17 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
     fleetName,
     mockMode,
     accountPool,
-    credentialsPath: fleetConfig.credentialsPath as string | undefined,
+    credentialsPath: fleetConfig.credentialsPath,
     maxIterationsPerSession,
     maxTurnDurationMs,
     idleTimeoutMs,
     shutdownWarningMs,
-    coordinator,
-    overseer,
-    outbound,
+    coordinator: fleetConfig.coordinator,
+    overseer: fleetConfig.overseer,
+    outbound: fleetConfig.outbound,
     mcpPresets: fleetConfig.mcpPresets,
     forumUrl: fleetConfig.forumUrl,
-    validateCredentialsOnStartup: fleetConfig.validateCredentialsOnStartup as boolean | undefined,
+    validateCredentialsOnStartup: fleetConfig.validateCredentialsOnStartup,
   };
 }
 

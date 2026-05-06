@@ -101,6 +101,12 @@ function removePidFile(name: string): void {
   }
 }
 
+function cleanupTrackedRef(name: string): void {
+  trackedProcesses.delete(name);
+  processStartedAt.delete(name);
+  removePidFile(name);
+}
+
 /**
  * Check if a tracked ChildProcess is still alive.
  * exitCode is null while running, non-null after termination.
@@ -117,9 +123,7 @@ export async function hasSession(name: string): Promise<boolean> {
   if (child) {
     if (isProcessAlive(child)) return true;
     // Dead ref — clean up
-    trackedProcesses.delete(name);
-    processStartedAt.delete(name);
-    removePidFile(name);
+    cleanupTrackedRef(name);
     return false;
   }
 
@@ -206,12 +210,7 @@ export async function newSession(name: string, spec: SessionLaunchSpec): Promise
 
     // Auto-clean on exit
     child.on('exit', () => {
-      const current = trackedProcesses.get(name);
-      if (current === child) {
-        trackedProcesses.delete(name);
-        processStartedAt.delete(name);
-        removePidFile(name);
-      }
+      if (trackedProcesses.get(name) === child) cleanupTrackedRef(name);
     });
 
     // Write PID file as secondary record for external tooling
@@ -249,9 +248,7 @@ export async function killSession(name: string): Promise<void> {
 
   if (child) {
     // Dead ref — clean up
-    trackedProcesses.delete(name);
-    processStartedAt.delete(name);
-    removePidFile(name);
+    cleanupTrackedRef(name);
     return;
   }
 

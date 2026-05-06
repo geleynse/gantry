@@ -17,7 +17,7 @@ const log = createLogger("overseer-agent");
 // ---------------------------------------------------------------------------
 
 export class OverseerAgent {
-  constructor(private agentName: string = "overseer") {}
+  constructor(_agentName: string = "overseer") {}
 
   /**
    * Log a decision to the overseer_decisions table.
@@ -60,33 +60,10 @@ export class OverseerAgent {
 
     log.info("Decision logged", { id, tickNumber, triggered_by });
 
-    const decision = queryOne<OverseerDecision>(
+    return queryOne<OverseerDecision>(
       `SELECT * FROM overseer_decisions WHERE id = ?`,
       id,
-    );
-
-    // Fallback if query somehow fails
-    if (!decision) {
-      return {
-        id,
-        tick_number: tickNumber,
-        triggered_by,
-        snapshot_json,
-        prompt_text: null,
-        response_json: results_json,
-        actions_json,
-        results_json,
-        model,
-        input_tokens: null,
-        output_tokens: null,
-        cost_estimate: null,
-        status: "success",
-        duration_ms: null,
-        created_at: new Date().toISOString(),
-      };
-    }
-
-    return decision;
+    )!;
   }
 
   /**

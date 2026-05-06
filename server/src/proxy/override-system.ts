@@ -218,7 +218,7 @@ export class OverrideRegistry {
       directives.push(text);
 
       // Update cooldown
-      if (!this.cooldowns.has(agent)) this.cooldowns.set(agent, new Map());
+      if (!agentCooldowns) this.cooldowns.set(agent, new Map());
       this.cooldowns.get(agent)!.set(rule.name, now);
 
       // Update history

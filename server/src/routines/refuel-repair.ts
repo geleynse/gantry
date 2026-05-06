@@ -8,7 +8,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { done, handoff, phase, completePhase, travelAndDock } from "./routine-utils.js";
+import { done, handoff, phase, completePhase, travelAndDock, getStatPct } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -67,10 +67,8 @@ async function run(ctx: RoutineContext, params: RefuelRepairParams): Promise<Rou
               : typeof ship?.hull_max === "number" ? ship.hull_max
               : undefined;
 
-  const fuelPct = (fuelCurrent !== undefined && fuelMax !== undefined && fuelMax > 0)
-    ? (fuelCurrent / fuelMax) * 100 : null;
-  const hullPct = (hullCurrent !== undefined && hullMax !== undefined && hullMax > 0)
-    ? (hullCurrent / hullMax) * 100 : null;
+  const fuelPct = getStatPct(ship, "fuel");
+  const hullPct = getStatPct(ship, "hull");
 
   if (fuelPct === null || hullPct === null) {
     return handoff(

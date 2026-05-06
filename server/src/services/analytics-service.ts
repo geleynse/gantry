@@ -38,7 +38,7 @@ export async function getAnalytics(agentName: string): Promise<Analytics> {
 
   if (turnLines.length >= 2) {
     const firstMatch = turnLines[0].match(/^\[([^\]]+)\]/);
-    const lastMatch = turnLines[turnLines.length - 1].match(/^\[([^\]]+)\]/);
+    const lastMatch = turnLines.at(-1)!.match(/^\[([^\]]+)\]/);
     if (firstMatch && lastMatch) {
       const firstTime = new Date(firstMatch[1]).getTime();
       const lastTime = new Date(lastMatch[1]).getTime();

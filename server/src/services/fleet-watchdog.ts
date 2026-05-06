@@ -107,51 +107,38 @@ export function createFleetWatchdog(deps: FleetWatchdogDeps): FleetWatchdog {
     const snapshot = deps.getFleetHealth();
     const errorRate = deps.getErrorRate();
 
-    // Check error rate >20%
-    if (errorRate > ERROR_RATE_WARN_THRESHOLD) {
-      if (canAlert("high_error_rate")) {
-        await sendAlert(
-          "high_error_rate",
-          "Fleet Error Rate Warning",
-          `Error rate at ${(errorRate * 100).toFixed(1)}% (threshold: ${(ERROR_RATE_WARN_THRESHOLD * 100).toFixed(0)}%). Auto-stop triggers at 30%.`,
-        );
-      }
+    if (errorRate > ERROR_RATE_WARN_THRESHOLD && canAlert("high_error_rate")) {
+      await sendAlert(
+        "high_error_rate",
+        "Fleet Error Rate Warning",
+        `Error rate at ${(errorRate * 100).toFixed(1)}% (threshold: ${(ERROR_RATE_WARN_THRESHOLD * 100).toFixed(0)}%). Auto-stop triggers at 30%.`,
+      );
     }
 
-    // Check reconnect storms
     for (const [agent, rpm] of Object.entries(snapshot.reconnects_per_minute)) {
-      if (rpm > RECONNECT_STORM_THRESHOLD) {
-        const key = `reconnect_storm:${agent}`;
-        if (canAlert(key)) {
-          await sendAlert(
-            "reconnect_storm",
-            `Reconnect Storm: ${agent}`,
-            `${agent} at ${rpm.toFixed(1)} reconnects/min (threshold: ${RECONNECT_STORM_THRESHOLD}).`,
-          );
-        }
-      }
-    }
-
-    // Check session leak
-    if (snapshot.session_leak) {
-      if (canAlert("session_leak")) {
+      if (rpm > RECONNECT_STORM_THRESHOLD && canAlert(`reconnect_storm:${agent}`)) {
         await sendAlert(
-          "session_leak",
-          "Session Leak Detected",
-          "Transport count exceeds 3x active agents. Possible MCP session leak.",
+          "reconnect_storm",
+          `Reconnect Storm: ${agent}`,
+          `${agent} at ${rpm.toFixed(1)} reconnects/min (threshold: ${RECONNECT_STORM_THRESHOLD}).`,
         );
       }
     }
 
-    // Check fleet auto-stopped
-    if (snapshot.auto_shutdown_reason) {
-      if (canAlert("fleet_auto_stopped")) {
-        await sendAlert(
-          "fleet_auto_stopped",
-          "Fleet Auto-Stopped",
-          snapshot.auto_shutdown_reason,
-        );
-      }
+    if (snapshot.session_leak && canAlert("session_leak")) {
+      await sendAlert(
+        "session_leak",
+        "Session Leak Detected",
+        "Transport count exceeds 3x active agents. Possible MCP session leak.",
+      );
+    }
+
+    if (snapshot.auto_shutdown_reason && canAlert("fleet_auto_stopped")) {
+      await sendAlert(
+        "fleet_auto_stopped",
+        "Fleet Auto-Stopped",
+        snapshot.auto_shutdown_reason,
+      );
     }
   }
 

@@ -157,17 +157,10 @@ export class AccountPool {
     const available = this.accounts.filter((a) => a.status === "available");
     if (available.length === 0) return null;
 
-    let chosen: Account | undefined;
-
-    // Prefer faction match when matchFaction is on and we have a hint
-    if (this.poolConfig.matchFaction && factionHint) {
-      chosen = available.find((a) => a.faction === factionHint);
-    }
-
-    // Fall back to first available
-    if (!chosen) {
-      chosen = available[0];
-    }
+    const chosen: Account =
+      (this.poolConfig.matchFaction && factionHint
+        ? available.find((a) => a.faction === factionHint)
+        : undefined) ?? available[0];
 
     this.markAssigned(chosen, agentName);
     this.persist();

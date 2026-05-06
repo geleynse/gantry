@@ -11,20 +11,14 @@ export async function readComms(): Promise<CommsData> {
   const orders = await safeReadFile(join(commsDir, 'orders.txt'));
   const bulletin = await safeReadFile(join(commsDir, 'bulletin.txt'));
 
-  const reports: Record<string, string> = {};
+  let reports: Record<string, string> = {};
   const reportsDir = join(commsDir, 'reports');
   try {
-    const files = await readdir(reportsDir);
-    const txtFiles = files.filter(f => f.endsWith('.txt'));
+    const files = (await readdir(reportsDir)).filter(f => f.endsWith('.txt'));
     const entries = await Promise.all(
-      txtFiles.map(async (f) => {
-        const agentName = f.replace('.txt', '');
-        return [agentName, await safeReadFile(join(reportsDir, f))] as const;
-      }),
+      files.map(async f => [f.replace('.txt', ''), await safeReadFile(join(reportsDir, f))] as const),
     );
-    for (const [name, content] of entries) {
-      reports[name] = content;
-    }
+    reports = Object.fromEntries(entries);
   } catch {
     // reports dir may not exist
   }
@@ -72,7 +66,7 @@ export async function clearComms(): Promise<void> {
 
 // ── Helpers ────────────────────────────────────────────────────
 
-export async function safeReadFile(path: string): Promise<string> {
+async function safeReadFile(path: string): Promise<string> {
   try {
     return await readFile(path, 'utf-8');
   } catch {

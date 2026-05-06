@@ -14,13 +14,8 @@ import type {
   OutboundConfigSchema,
 } from "./schemas.js";
 
-// Merged agent config interface (from both proxy and web)
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
-
-// Auth config interface
 export type AuthConfig = z.infer<typeof AuthConfigSchema>;
-
-// Mock mode initial state
 export type MockInitialState = z.infer<typeof MockInitialStateSchema>;
 
 // Mock mode configuration — runtime-only normalized form (boolean shorthand
@@ -36,27 +31,18 @@ export interface MockModeConfig {
   initialState?: MockInitialState;
 }
 
-// Account pool config — resolved absolute path to the pool file
 export interface AccountPoolConfig {
   /** Absolute path to the account-pool.json file */
   poolFile: string;
 }
 
-// Survivability config interface
 export type SurvivabilityConfig = z.infer<typeof SurvivabilityConfigSchema>;
-
-// Outbound content review config
 export type OutboundConfig = z.infer<typeof OutboundConfigSchema>;
-
-// Coordinator config interface
 export type CoordinatorConfig = z.infer<typeof CoordinatorConfigSchema>;
-
-// Overseer config interface
 export type OverseerConfig = z.infer<typeof OverseerConfigSchema>;
 
-// Proxy config interface — runtime shape after loadConfig() normalization.
-// Not directly inferred from FleetConfigSchema because field names differ
-// (e.g. mcpGameUrl → gameUrl/gameApiUrl/gameMcpUrl, accountPool string → AccountPoolConfig).
+// Runtime shape after loadConfig() normalization — not directly inferred from FleetConfigSchema
+// because field names differ (mcpGameUrl → gameUrl/gameApiUrl/gameMcpUrl, accountPool string → AccountPoolConfig).
 export interface GantryConfig {
   agents: AgentConfig[];
   gameUrl: string;

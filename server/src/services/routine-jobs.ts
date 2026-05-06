@@ -47,6 +47,13 @@ let nextRoutineJobSequence = 1;
 // SQLite persistence helpers
 // ---------------------------------------------------------------------------
 
+const ROUTINE_JOBS_SELECT = `
+  SELECT id, agent, routine, trace_id, status, started_at,
+         duration_ms, result_status, result_summary, handoff_reason, error
+  FROM routine_jobs
+  ORDER BY started_at DESC
+  LIMIT ?`;
+
 function persistJobCreate(job: RoutineJob): void {
   if (!getDbIfInitialized()) return;
   try {
@@ -120,14 +127,7 @@ export function loadRecentRoutineJobs(limit = 50): void {
       log.info("marked stale running routines as abandoned", { count: abandoned });
     }
 
-    const rows = queryAll<RoutineJobRow>(
-      `SELECT id, agent, routine, trace_id, status, started_at,
-              duration_ms, result_status, result_summary, handoff_reason, error
-       FROM routine_jobs
-       ORDER BY started_at DESC
-       LIMIT ?`,
-      limit,
-    );
+    const rows = queryAll<RoutineJobRow>(ROUTINE_JOBS_SELECT, limit);
     for (const row of rows) {
       const job: RoutineJob = {
         id: row.id,
@@ -169,14 +169,7 @@ export function loadRecentRoutineJobs(limit = 50): void {
 export function getRecentRoutineJobs(limit = 50): RoutineJobSnapshot[] {
   if (!getDbIfInitialized()) return [];
   try {
-    const rows = queryAll<RoutineJobRow>(
-      `SELECT id, agent, routine, trace_id, status, started_at,
-              duration_ms, result_status, result_summary, handoff_reason, error
-       FROM routine_jobs
-       ORDER BY started_at DESC
-       LIMIT ?`,
-      limit,
-    );
+    const rows = queryAll<RoutineJobRow>(ROUTINE_JOBS_SELECT, limit);
     return rows.map((row) => ({
       id: row.id,
       agent: row.agent,

@@ -144,9 +144,9 @@ export class MarketCache {
             signal.addEventListener("abort", () => {
               clearTimeout(timer);
               reject(new Error("aborted"));
-            });
+            }, { once: true });
           });
-        } catch (err) {
+        } catch {
           return false; // Aborted during wait
         }
       }

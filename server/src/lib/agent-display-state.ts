@@ -39,7 +39,7 @@ export function getAgentDisplayState(agent: AgentStatus): AgentDisplayState {
 
   // Dead = unexpected crash
   if (agent.state === 'dead') {
-    if (proxyActive && isRecentlyActive) return 'active';
+    if (isRecentlyActive) return 'active';
     return 'disconnected';
   }
 
@@ -76,7 +76,6 @@ export function getStateColor(state: AgentDisplayState): string {
     case 'in-battle':
       return 'bg-red-500 text-white';
     case 'offline':
-      return 'bg-yellow-500 text-white';
     case 'degraded':
       return 'bg-yellow-500 text-white';
     case 'stopped':

@@ -14,6 +14,20 @@ function currentData(ctx: { agentName: string; statusCache: Map<string, { data: 
   return ctx.statusCache.get(ctx.agentName)?.data ?? {};
 }
 
+async function runPassthrough(
+  tool: string,
+  args: Record<string, unknown>,
+  state: { log: Array<{ tool: string; args: unknown; result: unknown; durationMs: number; ok: boolean }> },
+  deps: { handlePassthrough: (tool: string, args?: Record<string, unknown>) => Promise<unknown>; logSubTool?: (tool: string, args: unknown, result: unknown, durationMs: number) => void },
+): Promise<unknown> {
+  const started = Date.now();
+  const result = await deps.handlePassthrough(tool, args);
+  const durationMs = Date.now() - started;
+  state.log.push({ tool, args, result, durationMs, ok: true });
+  deps.logSubTool?.(`pray:${tool}`, args, result, durationMs);
+  return result;
+}
+
 export const COMMANDS: Record<string, CommandSpec> = {
   halt: {
     name: "halt",
@@ -131,26 +145,21 @@ export const COMMANDS: Record<string, CommandSpec> = {
     dispatcher: {
       kind: "native",
       handler: async (args, state, deps) => {
-        const data = deps.statusCache.get(deps.agentName)?.data ?? {};
-        const cargo = cargoItemsForTool(data);
-        const items = args.length === 0
-          ? cargo
-          : (() => {
-              const itemId = stringArg(args, 0);
-              const existing = cargo.find((item) => item.item_id === itemId);
-              const quantity = args.length >= 2 ? intArg(args, 1, 0) : existing?.quantity ?? 0;
-              return quantity > 0 ? [{ item_id: itemId, quantity }] : [];
-            })();
+        const cargo = cargoItemsForTool(currentData(deps));
+        let items: Array<{ item_id: string; quantity: number }>;
+        if (args.length === 0) {
+          items = cargo;
+        } else {
+          const itemId = stringArg(args, 0);
+          const existing = cargo.find((item) => item.item_id === itemId);
+          const quantity = args.length >= 2 ? intArg(args, 1, 0) : existing?.quantity ?? 0;
+          items = quantity > 0 ? [{ item_id: itemId, quantity }] : [];
+        }
         if (items.length === 0) {
           throw new PrayerRuntimeError("skip_no_items", "No cargo to stash");
         }
-
         for (const item of items) {
-          const started = Date.now();
-          const result = await deps.handlePassthrough("deposit_items", item);
-          const durationMs = Date.now() - started;
-          state.log.push({ tool: "deposit_items", args: item, result, durationMs, ok: true });
-          deps.logSubTool?.("pray:deposit_items", item, result, durationMs);
+          await runPassthrough("deposit_items", item, state, deps);
         }
       },
     },
@@ -175,12 +184,7 @@ export const COMMANDS: Record<string, CommandSpec> = {
         if (quantity <= 0) {
           throw new PrayerRuntimeError("skip_no_items", "Quantity must be positive for retrieve");
         }
-        const item = { item_id: itemId, quantity };
-        const started = Date.now();
-        const result = await deps.handlePassthrough("withdraw_items", item);
-        const durationMs = Date.now() - started;
-        state.log.push({ tool: "withdraw_items", args: item, result, durationMs, ok: true });
-        deps.logSubTool?.("pray:withdraw_items", item, result, durationMs);
+        await runPassthrough("withdraw_items", { item_id: itemId, quantity }, state, deps);
       },
     },
   },

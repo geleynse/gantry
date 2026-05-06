@@ -22,17 +22,13 @@ export function restoreSystemPoiCache(): void {
     const rows = queryAll<{ system: string; id: string; name: string; type: string | null }>(
       "SELECT system, id, name, type FROM galaxy_pois ORDER BY system"
     );
-    const bySystem = new Map<string, PoiEntry[]>();
     for (const row of rows) {
-      const entries = bySystem.get(row.system) ?? [];
+      const entries = systemPoiCache.get(row.system) ?? [];
       entries.push({ id: row.id, name: row.name, type: row.type ?? "" });
-      bySystem.set(row.system, entries);
+      systemPoiCache.set(row.system, entries);
     }
-    for (const [sys, entries] of bySystem) {
-      systemPoiCache.set(sys, entries);
-    }
-    if (bySystem.size > 0) {
-      log.info(`Restored POI cache: ${bySystem.size} systems, ${rows.length} POIs`);
+    if (systemPoiCache.size > 0) {
+      log.info(`Restored POI cache: ${systemPoiCache.size} systems, ${rows.length} POIs`);
     }
   } catch (err) {
     log.debug("POI cache restore failed (non-fatal)", { error: String(err) });

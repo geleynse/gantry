@@ -18,6 +18,7 @@ interface BroadcastRecord {
 
 const broadcastHistory: BroadcastRecord[] = [];
 const MAX_HISTORY = 20;
+const VALID_PRIORITIES = new Set(['low', 'normal', 'high', 'critical']);
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -38,8 +39,6 @@ router.post('/', (req, res) => {
     return;
   }
 
-  // Same 4-level vocabulary as the Comms "Send Order" panel.
-  const VALID_PRIORITIES = new Set(['low', 'normal', 'high', 'critical']);
   if (priority !== undefined && !VALID_PRIORITIES.has(priority)) {
     res.status(400).json({ error: 'priority must be "low", "normal", "high", or "critical"' });
     return;

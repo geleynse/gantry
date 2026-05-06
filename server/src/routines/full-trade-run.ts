@@ -8,7 +8,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, getCargoUtilization, done, handoff, phase, completePhase, checkCombat, extractDemandItems, parseCargoItems } from "./routine-utils.js";
+import { withRetry, getCargoUtilization, done, handoff, phase, completePhase, checkCombat, extractDemandItems, parseCargoItems, travelAndDock } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -146,26 +146,10 @@ async function run(ctx: RoutineContext, params: FullTradeRunParams): Promise<Rou
   }
   phases.push(completePhase(minePhase, { ores_mined: oresMined, stopped_reason: miningStopped, utilization: cargoUtil }));
   
-  // --- Travel to station ---
-  const travelStationPhase = phase("travel_station");
-  try {
-    const travelResult = await withRetry(() => ctx.client.execute("travel_to", { destination: params.station }));
-    if (checkCombat(travelResult)) return handoff("Combat detected while traveling to station", {}, phases);
-    phases.push(completePhase(travelStationPhase, travelResult.result));
-  } catch (err) {
-    phases.push(completePhase(travelStationPhase, { error: String(err) }));
-    return handoff(`Travel to ${params.station} failed: ${String(err)}`, {}, phases);
-  }
-
-  // --- Dock ---
-  const dockPhase = phase("dock");
-  const dockResp = await ctx.client.execute("dock");
-  if (dockResp.error && !JSON.stringify(dockResp.error).includes("already docked")) {
-    phases.push(completePhase(dockPhase, { error: dockResp.error }));
-    return handoff(`Docking at ${params.station} failed: ${JSON.stringify(dockResp.error)}`, {}, phases);
-  }
-  phases.push(completePhase(dockPhase, dockResp.result));
-  await ctx.client.waitForTick();
+  // --- Travel to station + Dock ---
+  const td = await travelAndDock(ctx, params.station, { label: "full_trade_run" });
+  phases.push(...td.phases);
+  if (td.failed) return handoff(td.failed, {}, phases);
   
   // --- Analyze Market ---
   const marketPhase = phase("analyze_market");

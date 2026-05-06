@@ -65,8 +65,6 @@ export async function scanAndAttack(
   }
 
   const cached = statusCache.get(agentName);
-  const shipWeapons = (cached?.data?.ship as Record<string, unknown>)?.weapons;
-  const weaponsList = Array.isArray(shipWeapons) ? shipWeapons : [];
 
   // Step 1: Get nearby entities
   const nearbyResp = isV2
@@ -165,7 +163,6 @@ export async function scanAndAttack(
     agent: agentName,
     location: currentPoi,
     docked: !!dockedAt,
-    weapons: weaponsList.length,
   });
 
   // Step 1c: Ammo check

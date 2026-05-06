@@ -55,17 +55,17 @@ export function listOrders(limit = 50): (Order & { deliveries: { agent: string; 
   // Batch-fetch all deliveries for the returned orders (avoids N+1)
   const orderIds = orders.map((o) => o.id);
   const placeholders = orderIds.map(() => '?').join(',');
-  // Dynamic SQL IN clause - will result in multiple cache entries based on order count
   const allDeliveries = queryAll<{ order_id: number; agent: string; delivered_at: string }>(
     `SELECT order_id, agent, delivered_at FROM fleet_order_deliveries WHERE order_id IN (${placeholders})`,
     ...orderIds
   );
 
+  // Group deliveries by order_id
   const deliveriesByOrder = new Map<number, { agent: string; delivered_at: string }[]>();
   for (const d of allDeliveries) {
-    let arr = deliveriesByOrder.get(d.order_id);
-    if (!arr) { arr = []; deliveriesByOrder.set(d.order_id, arr); }
+    const arr = deliveriesByOrder.get(d.order_id) ?? [];
     arr.push({ agent: d.agent, delivered_at: d.delivered_at });
+    deliveriesByOrder.set(d.order_id, arr);
   }
 
   return orders.map((order) => ({
@@ -96,7 +96,7 @@ export function getPendingOrders(agentName: string): Order[] {
 export function getAllPendingOrders(): Order[] {
   return queryAll<Order>(`
     SELECT * FROM fleet_orders
-    WHERE (expires_at IS NULL OR expires_at > datetime('now'))
+    WHERE expires_at IS NULL OR expires_at > datetime('now')
     ORDER BY
       CASE priority
         WHEN 'urgent'   THEN 0

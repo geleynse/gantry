@@ -38,18 +38,20 @@ export function buildAnalyzerSnapshot(deps: RunPrayerDeps): AnalyzerSnapshot {
   };
 }
 
-function extractItems(data: Record<string, unknown>): Array<{ id: string; name?: string }> {
-  const fromCargo = getCargo(data).map((item) => ({
-    id: String(item.item_id ?? item.id ?? ""),
+function toIdName(item: Record<string, unknown>, idKeys: [string, string]): { id: string; name?: string } {
+  return {
+    id: String(item[idKeys[0]] ?? item[idKeys[1]] ?? ""),
     name: typeof item.name === "string" ? item.name : undefined,
-  })).filter((item) => item.id);
+  };
+}
+
+function extractItems(data: Record<string, unknown>): Array<{ id: string; name?: string }> {
+  const fromCargo = getCargo(data).map((item) => toIdName(item, ["item_id", "id"])).filter((item) => item.id);
   const catalog = Array.isArray(data.items) ? data.items : Array.isArray(data.catalog_items) ? data.catalog_items : [];
   const fromCatalog = catalog
     .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
-    .map((item) => ({
-      id: String(item.id ?? item.item_id ?? ""),
-      name: typeof item.name === "string" ? item.name : undefined,
-    })).filter((item) => item.id);
+    .map((item) => toIdName(item, ["id", "item_id"]))
+    .filter((item) => item.id);
   return dedupeById([...fromCargo, ...fromCatalog]);
 }
 
@@ -68,13 +70,7 @@ function extractPois(data: Record<string, unknown>): Array<{ id: string; name?: 
 
 function dedupeById<T extends { id: string }>(items: T[]): T[] {
   const seen = new Set<string>();
-  const result: T[] = [];
-  for (const item of items) {
-    if (seen.has(item.id)) continue;
-    seen.add(item.id);
-    result.push(item);
-  }
-  return result;
+  return items.filter((item) => !seen.has(item.id) && seen.add(item.id));
 }
 
 export { parsePrayerScript, formatPrayerProgram, analyzePrayerProgram };

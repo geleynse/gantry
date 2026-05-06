@@ -65,8 +65,8 @@ export class ResourceKnowledge {
         system,
         station ?? "",
         resource,
-        quantity ?? null as any,
-        price ?? null as any,
+        quantity,
+        price,
         agent,
       );
     } catch (err) {
@@ -105,16 +105,12 @@ export class ResourceKnowledge {
     );
   }
 
-  /**
-   * Get the best (lowest) known price for a resource across all locations.
-   * Returns null if no price data is available.
-   */
-  getBestPrice(resource: string): BestPrice | null {
+  private queryBestPrice(resource: string, order: "ASC" | "DESC"): BestPrice | null {
     const row = queryOne<{ system: string; station: string | null; price_seen: number; last_seen: string; source_agent: string }>(
       `SELECT system, station, price_seen, last_seen, source_agent
        FROM resource_knowledge
        WHERE resource = ? AND price_seen IS NOT NULL
-       ORDER BY price_seen ASC
+       ORDER BY price_seen ${order}
        LIMIT 1`,
       resource,
     );
@@ -129,25 +125,18 @@ export class ResourceKnowledge {
   }
 
   /**
+   * Get the best (lowest) known price for a resource across all locations.
+   * Returns null if no price data is available.
+   */
+  getBestPrice(resource: string): BestPrice | null {
+    return this.queryBestPrice(resource, "ASC");
+  }
+
+  /**
    * Get the best (highest) sell price for a resource across all locations.
    */
   getBestSellPrice(resource: string): BestPrice | null {
-    const row = queryOne<{ system: string; station: string | null; price_seen: number; last_seen: string; source_agent: string }>(
-      `SELECT system, station, price_seen, last_seen, source_agent
-       FROM resource_knowledge
-       WHERE resource = ? AND price_seen IS NOT NULL
-       ORDER BY price_seen DESC
-       LIMIT 1`,
-      resource,
-    );
-    if (!row) return null;
-    return {
-      system: row.system,
-      station: row.station,
-      price: row.price_seen,
-      last_seen: row.last_seen,
-      source_agent: row.source_agent,
-    };
+    return this.queryBestPrice(resource, "DESC");
   }
 
   /**

@@ -10,8 +10,9 @@
 
 import { Router } from 'express';
 import { queryAll, queryOne } from '../../services/database.js';
-import { AGENTS, validateAgentName } from '../../config.js';
-import { queryString, queryInt } from '../middleware/query-helpers.js';
+import { AGENTS } from '../../config.js';
+import { queryInt } from '../middleware/query-helpers.js';
+import { requireQueryAgent } from '../middleware/query-agent.js';
 
 const router: Router = Router();
 
@@ -213,11 +214,8 @@ function loadSubcalls(parentIds: number[]): Map<number, SubcallRow[]> {
  * Returns recent pray rows for an agent, with subcalls attached.
  */
 router.get('/recent', (req, res) => {
-  const agent = queryString(req, 'agent');
-  if (!agent || !validateAgentName(agent)) {
-    res.status(400).json({ error: 'invalid or missing agent' });
-    return;
-  }
+  const agent = requireQueryAgent(req, res);
+  if (!agent) return;
 
   const limit = Math.min(Math.max(queryInt(req, 'limit') ?? 25, 1), 100);
 
@@ -324,8 +322,7 @@ router.get('/adoption', (req, res) => {
     const prayerCount = p?.count ?? 0;
     const completed = p?.completed_count ?? 0;
     const errors = p?.error_count ?? 0;
-    const attempted = prayerCount;
-    const successRate = attempted > 0 ? completed / attempted : null;
+    const successRate = prayerCount > 0 ? completed / prayerCount : null;
     const adoptionRatio = turnCount > 0 ? Math.min(prayerCount / turnCount, 1) : 0;
     return {
       agent: a.name,

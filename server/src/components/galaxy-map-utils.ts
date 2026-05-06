@@ -140,8 +140,7 @@ export function buildDangerScores(
   stats: CombatSystemStat[]
 ): Record<string, number> {
   if (stats.length === 0) return {};
-  let max = 1;
-  for (const r of stats) if (r.encounter_count > max) max = r.encounter_count;
+  const max = Math.max(1, ...stats.map((r) => r.encounter_count));
   const scores: Record<string, number> = {};
   for (const r of stats) {
     scores[r.system] = Math.log(1 + r.encounter_count) / Math.log(1 + max);

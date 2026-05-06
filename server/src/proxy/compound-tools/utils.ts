@@ -8,6 +8,41 @@ import type { GameClientLike } from "./types.js";
 // Re-export from proxy-constants (single source of truth)
 export { stripPendingFields } from "../proxy-constants.js";
 
+interface MarketEntry {
+  item_id?: string;
+  id?: string;
+  buy_price?: number;
+  sell_price?: number;
+  best_buy?: number;
+  best_sell?: number;
+  price?: number;
+}
+
+export function buildPriceMap(
+  marketResult: unknown,
+): Map<string, { buy: number; sell: number }> {
+  const out = new Map<string, { buy: number; sell: number }>();
+  if (!marketResult || typeof marketResult !== "object") return out;
+  const raw = marketResult as Record<string, unknown>;
+  const list = Array.isArray(raw.items)
+    ? raw.items
+    : Array.isArray(raw.listings)
+      ? raw.listings
+      : Array.isArray(raw.market)
+        ? raw.market
+        : Array.isArray(marketResult)
+          ? (marketResult as unknown[])
+          : [];
+  for (const entry of list as MarketEntry[]) {
+    const itemId = String(entry.item_id ?? entry.id ?? "");
+    if (!itemId) continue;
+    const buy = entry.buy_price ?? entry.best_buy ?? entry.price ?? 0;
+    const sell = entry.sell_price ?? entry.best_sell ?? entry.price ?? 0;
+    out.set(itemId, { buy: Number(buy), sell: Number(sell) });
+  }
+  return out;
+}
+
 /**
  * Normalize a system name for comparison.
  * The game returns display names ("Epsilon Eridani") while cache stores IDs ("epsilon_eridani").
@@ -25,7 +60,7 @@ export const BATTLE_INIT_MAX_TICKS = 5;
  */
 export function isAmmoItem(item: Record<string, unknown>): boolean {
   const id = String(item.item_id ?? item.id ?? "");
-  return id.includes("ammo") || id.includes("rounds") || id.startsWith("ammo_");
+  return id.includes("ammo") || id.includes("rounds");
 }
 
 /**
@@ -48,7 +83,7 @@ export function extractWrecks(result: unknown): Array<Record<string, unknown>> {
  * Returns true if the cache updated within maxTicks, false otherwise.
  */
 export async function waitForNavCacheUpdate(
-  client: { waitForTick: (ms?: number) => Promise<void>; lastArrivalTick: number | null; waitForNextArrival?: (beforeTick: number | null, timeoutMs?: number) => Promise<boolean>; waitForTickToReach?: (targetTick: number, timeoutMs?: number) => Promise<boolean> },
+  client: Pick<GameClientLike, "waitForTick" | "lastArrivalTick" | "waitForNextArrival" | "waitForTickToReach">,
   agentName: string,
   beforeSystem: unknown,
   statusCache: Map<string, { data: Record<string, unknown>; fetchedAt: number }>,
@@ -122,7 +157,7 @@ export async function waitForNavCacheUpdate(
  * Returns true if the agent is docked within maxTicks, false otherwise.
  */
 export async function waitForDockCacheUpdate(
-  client: { waitForTick: (ms?: number) => Promise<void> },
+  client: Pick<GameClientLike, "waitForTick">,
   agentName: string,
   statusCache: Map<string, { data: Record<string, unknown>; fetchedAt: number }>,
   maxTicks = 5,

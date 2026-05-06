@@ -9,6 +9,7 @@ import { createLogger } from "../../lib/logger.js";
 import type { CompoundToolDeps, CompoundResult } from "./types.js";
 import { classifyItemSource, isSelfSourceable } from "./item-source.js";
 import type { ItemSource } from "./item-source.js";
+import { buildPriceMap } from "./utils.js";
 
 const log = createLogger("compound-tools");
 
@@ -34,17 +35,6 @@ interface RecipeEntry {
   skill_name?: string;
   skill_level?: number;
   recipe_id?: string;
-}
-
-interface MarketEntry {
-  item_id?: string;
-  id?: string;
-  buy_price?: number;
-  sell_price?: number;
-  best_buy?: number;
-  best_sell?: number;
-  price?: number;
-  demand?: number;
 }
 
 interface ProfitableRecipe {
@@ -85,48 +75,6 @@ function extractRecipes(catalogResult: unknown): RecipeEntry[] {
         : [];
 
   return list as RecipeEntry[];
-}
-
-/**
- * Build a price map from analyze_market result: item_id -> { buy, sell }.
- * buy_price = what station pays us (sell to station)
- * sell_price = what station charges us (buy from station)
- */
-function buildPriceMap(
-  marketResult: unknown,
-): Map<string, { buy: number; sell: number }> {
-  const out = new Map<string, { buy: number; sell: number }>();
-
-  if (!marketResult || typeof marketResult !== "object") return out;
-
-  const raw = marketResult as Record<string, unknown>;
-
-  // Market entries may be nested under `items`, `listings`, `market`, or direct array
-  const list = Array.isArray(raw.items)
-    ? raw.items
-    : Array.isArray(raw.listings)
-      ? raw.listings
-      : Array.isArray(raw.market)
-        ? raw.market
-        : Array.isArray(marketResult)
-          ? (marketResult as unknown[])
-          : [];
-
-  for (const entry of list as MarketEntry[]) {
-    const itemId = String(entry.item_id ?? entry.id ?? "");
-    if (!itemId) continue;
-
-    // buy_price = station buys from us (what we receive when selling)
-    // sell_price = station sells to us (what we pay when buying inputs)
-    const buy =
-      entry.buy_price ?? entry.best_buy ?? entry.price ?? 0;
-    const sell =
-      entry.sell_price ?? entry.best_sell ?? entry.price ?? 0;
-
-    out.set(itemId, { buy: Number(buy), sell: Number(sell) });
-  }
-
-  return out;
 }
 
 // ---------------------------------------------------------------------------

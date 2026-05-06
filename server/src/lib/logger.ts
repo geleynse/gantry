@@ -29,11 +29,8 @@ let currentLogLevel: LogLevel = LogLevel.INFO;
  * @throws Error if the string is not a valid log level
  */
 export function parseLogLevel(str: string): LogLevel {
-  const upper = str.toUpperCase();
-  if (upper === "DEBUG") return LogLevel.DEBUG;
-  if (upper === "INFO") return LogLevel.INFO;
-  if (upper === "WARN") return LogLevel.WARN;
-  if (upper === "ERROR") return LogLevel.ERROR;
+  const upper = str.toUpperCase() as keyof typeof LogLevel;
+  if (upper in LogLevel && typeof LogLevel[upper] === "number") return LogLevel[upper];
   throw new Error(`Invalid log level: "${str}". Valid levels: DEBUG, INFO, WARN, ERROR`);
 }
 

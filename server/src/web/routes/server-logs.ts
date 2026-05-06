@@ -16,7 +16,6 @@ export function createServerLogsRouter(fleetDir: string): Router {
 
     req.on('close', () => {
       aborted = true;
-      watcher.close();
     });
 
     try {

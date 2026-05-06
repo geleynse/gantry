@@ -70,7 +70,7 @@ router.post('/', (req, res) => {
   let target: string | undefined;
   let tab: Tab | undefined;
 
-  if (body.agent !== undefined && body.agent !== null && body.agent !== '') {
+  if (body.agent != null && body.agent !== '') {
     if (typeof body.agent !== 'string' || !body.agent.trim()) {
       res.status(400).json({ error: 'agent must be a string or omitted for fleet-wide' });
       return;
@@ -83,7 +83,7 @@ router.post('/', (req, res) => {
     target = trimmed;
   }
 
-  if (body.tab !== undefined && body.tab !== null && body.tab !== '') {
+  if (body.tab != null && body.tab !== '') {
     if (typeof body.tab !== 'string' || !VALID_TABS.has(body.tab as Tab)) {
       res.status(400).json({
         error: 'tab must be one of "station", "owned", "build", "faction" (or omitted for all)',

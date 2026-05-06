@@ -11,6 +11,20 @@ export interface TimelineEntry {
 
 const TIMESTAMP_RE = /^\[(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?.*?)\]/;
 
+function parseLogLines(content: string): { timestamp: string; message: string }[] {
+  const results: { timestamp: string; message: string }[] = [];
+  for (const line of content.split('\n')) {
+    const match = line.match(TIMESTAMP_RE);
+    if (match) {
+      results.push({
+        timestamp: match[1],
+        message: line.slice(match[0].length).trim(),
+      });
+    }
+  }
+  return results;
+}
+
 export function parseCommsTimeline(baseDir?: string): TimelineEntry[] {
   const base = baseDir ?? FLEET_DIR;
   const logsDir = join(base, 'logs');
@@ -18,17 +32,13 @@ export function parseCommsTimeline(baseDir?: string): TimelineEntry[] {
 
   // Parse orders archive
   try {
-    const ordersPath = join(logsDir, 'orders-archive.log');
-    const ordersContent = readFileSync(ordersPath, 'utf-8');
-    for (const line of ordersContent.split('\n')) {
-      const match = line.match(TIMESTAMP_RE);
-      if (match) {
-        entries.push({
-          timestamp: match[1],
-          type: 'order',
-          message: line.slice(match[0].length).trim(),
-        });
-      }
+    const ordersContent = readFileSync(join(logsDir, 'orders-archive.log'), 'utf-8');
+    for (const parsed of parseLogLines(ordersContent)) {
+      entries.push({
+        timestamp: parsed.timestamp,
+        type: 'order',
+        message: parsed.message,
+      });
     }
   } catch {
     // No orders archive — skip
@@ -42,20 +52,13 @@ export function parseCommsTimeline(baseDir?: string): TimelineEntry[] {
       const agent = basename(file, '-comms.log');
       try {
         const content = readFileSync(join(logsDir, file), 'utf-8');
-        const blocks = content.split('---');
-        for (const block of blocks) {
-          const trimmed = block.trim();
-          if (!trimmed) continue;
-          const match = trimmed.match(TIMESTAMP_RE);
-          if (match) {
-            const message = trimmed.slice(match[0].length).trim();
-            entries.push({
-              timestamp: match[1],
-              type: 'report',
-              agent,
-              message,
-            });
-          }
+        for (const parsed of parseLogLines(content)) {
+          entries.push({
+            timestamp: parsed.timestamp,
+            type: 'report',
+            agent,
+            message: parsed.message,
+          });
         }
       } catch {
         // Skip unreadable comms file

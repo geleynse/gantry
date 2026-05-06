@@ -16,23 +16,22 @@
  */
 
 import { watchFile, unwatchFile } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FLEET_DIR } from '../config.js';
 import { createLogger } from '../lib/logger.js';
+import { FileWatcher } from './file-watcher.js';
 
 const log = createLogger('log-streamer');
 
 /** Interval for fs.watchFile polling, in milliseconds. */
 const POLL_INTERVAL_MS = 500;
 
-/** Max bytes to read per poll cycle (safety limit). */
-const MAX_READ_BYTES = 65536; // 64 KB
-
 export type LineCallback = (line: string) => void;
 
 interface Tailer {
   logPath: string;
+  watcher: FileWatcher;
   offset: number;
   callback: LineCallback;
 }
@@ -56,35 +55,6 @@ function shouldSkipLine(line: string): boolean {
 }
 
 /**
- * Read new bytes from offset, return new lines and updated offset.
- * Handles truncation by resetting offset to 0 if file shrank.
- */
-async function readNewLines(logPath: string, fromOffset: number): Promise<{ lines: string[]; offset: number }> {
-  let fh;
-  try {
-    fh = await open(logPath, 'r');
-    const stat = await fh.stat();
-    const size = stat.size;
-
-    // File was truncated / rotated
-    if (fromOffset > size) fromOffset = 0;
-    if (fromOffset === size) return { lines: [], offset: size };
-
-    const toRead = Math.min(size - fromOffset, MAX_READ_BYTES);
-    const buf = Buffer.alloc(toRead);
-    const { bytesRead } = await fh.read(buf, 0, toRead, fromOffset);
-    const text = buf.subarray(0, bytesRead).toString('utf-8');
-
-    const lines = text.split('\n').filter((l) => l !== '');
-    return { lines, offset: fromOffset + bytesRead };
-  } catch {
-    return { lines: [], offset: fromOffset };
-  } finally {
-    await fh?.close();
-  }
-}
-
-/**
  * Start tailing an agent's log file, pushing new assistant-output lines via callback.
  * Safe to call multiple times for the same agent — previous tailer is stopped first.
  */
@@ -97,16 +67,14 @@ export async function startTailing(agentName: string, onLine: LineCallback): Pro
   // Seek to current end so we only stream new output
   let initialOffset = 0;
   try {
-    const fh = await open(logPath, 'r');
-    const stat = await fh.stat();
-    initialOffset = stat.size;
-    await fh.close();
+    initialOffset = (await stat(logPath)).size;
   } catch {
     // File may not exist yet — start at 0, will create when agent starts
   }
 
   const tailer: Tailer = {
     logPath,
+    watcher: new FileWatcher(logPath),
     offset: initialOffset,
     callback: onLine,
   };
@@ -118,7 +86,7 @@ export async function startTailing(agentName: string, onLine: LineCallback): Pro
     if (!current) return; // was stopped
 
     try {
-      const { lines, offset } = await readNewLines(current.logPath, current.offset);
+      const { lines, offset } = await current.watcher.readFrom(current.offset);
       current.offset = offset;
 
       for (const line of lines) {

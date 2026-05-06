@@ -54,7 +54,7 @@ router.get('/:name/inject', (req, res) => {
 });
 
 // Set an inject instruction for an agent
-router.post('/:name/inject', agentControlLimiter, async (req, res) => {
+router.post('/:name/inject', agentControlLimiter, (req, res) => {
   const name = req.params.name as string;
   if (!validateAgentName(name)) {
     res.status(404).json({ error: 'Unknown agent' });
@@ -81,14 +81,13 @@ router.get('/:name/shutdown', (req, res) => {
   res.json({ pending: hasSignal(name, 'shutdown') });
 });
 
-router.post('/:name/shutdown', agentControlLimiter, async (req, res) => {
+router.post('/:name/shutdown', agentControlLimiter, (req, res) => {
   const name = req.params.name as string;
   if (!validateAgentName(name)) {
     res.status(404).json({ error: 'Unknown agent' });
     return;
   }
-  const body = req.body ?? {};
-  createSignal(name, 'shutdown', (body as Record<string, string>).message ?? '');
+  createSignal(name, 'shutdown', (req.body ?? {}).message ?? '');
   res.json({ ok: true });
 });
 

@@ -42,24 +42,8 @@ export interface CoordinatorQuota {
   status: "active" | "completed" | "cancelled";
 }
 
-export interface CoordinatorConfig {
-  /** Whether the coordinator is active */
-  enabled: boolean;
-  /** Tick interval in minutes */
-  intervalMinutes: number;
-  /** Target fleet role distribution */
-  defaultDistribution: {
-    miners: number;
-    crafters: number;
-    traders: number;
-    flex: number;
-  };
-  /** Quota system defaults */
-  quotaDefaults: {
-    batchSize: number;
-    maxActiveQuotas: number;
-  };
-}
+import type { CoordinatorConfig } from "../../config/types.js";
+export type { CoordinatorConfig };
 
 export interface CoordinatorTickResult {
   /** Monotonically increasing tick number */

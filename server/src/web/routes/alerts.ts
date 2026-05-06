@@ -13,6 +13,7 @@ import {
   acknowledgeAlert,
   acknowledgeAll,
 } from '../../services/alerts-db.js';
+import { queryString } from '../middleware/query-helpers.js';
 
 const router = Router();
 
@@ -24,7 +25,7 @@ router.get('/count', (_req, res) => {
 
 // POST /acknowledge-all — must be before /:id routes
 router.post('/acknowledge-all', (req, res) => {
-  const agent = typeof req.query.agent === 'string' ? req.query.agent : undefined;
+  const agent = queryString(req, 'agent');
   const by = req.auth?.identity ?? 'operator';
   const count = acknowledgeAll(agent);
   res.json({ ok: true, acknowledged: count, by });
@@ -32,7 +33,7 @@ router.post('/acknowledge-all', (req, res) => {
 
 // GET / — list pending alerts
 router.get('/', (req, res) => {
-  const agent = typeof req.query.agent === 'string' ? req.query.agent : undefined;
+  const agent = queryString(req, 'agent');
   const alerts = getPendingAlerts(agent);
   res.json(alerts);
 });

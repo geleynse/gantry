@@ -808,8 +808,6 @@ export async function createMcpServer(config: GantryConfig) {
         const newTransport = createTransport("v1 MCP");
         const { mcpServer } = createServerInstance();
         await mcpServer.connect(newTransport);
-        if (guardToolCall("v1", req, res)) return;
-        logSanitized("v1", req.body);
         await newTransport.handleRequest(req as Parameters<typeof newTransport.handleRequest>[0], res, req.body);
       } else {
         sendBadSession(res, req.body);
@@ -853,8 +851,6 @@ export async function createMcpServer(config: GantryConfig) {
         }
         const newTransport = createTransport(`v2 MCP (${preset})`);
         await v2Instance.mcpServer.connect(newTransport);
-        if (guardToolCall("v2", req, res)) return;
-        logSanitized("v2", req.body);
         await newTransport.handleRequest(req as Parameters<typeof newTransport.handleRequest>[0], res, req.body);
       } else {
         sendBadSession(res, req.body);
@@ -912,8 +908,6 @@ export async function createMcpServer(config: GantryConfig) {
         // Close any existing connection before reconnecting — McpServer only allows one transport at a time
         try { await overseerMcpServer.close(); } catch { /* ignore if not connected */ }
         await overseerMcpServer.connect(newTransport);
-        if (guardToolCall("overseer", req, res)) return;
-        logSanitized("overseer", req.body);
         await newTransport.handleRequest(req as Parameters<typeof newTransport.handleRequest>[0], res, req.body);
       } else {
         sendBadSession(res, req.body);
@@ -924,17 +918,9 @@ export async function createMcpServer(config: GantryConfig) {
     }
   });
 
-  router.get("/mcp", (_req, res) => {
-    res.status(405).set("Allow", "POST").send("Method Not Allowed");
-  });
-
-  router.get("/mcp/v2", (_req, res) => {
-    res.status(405).set("Allow", "POST").send("Method Not Allowed");
-  });
-
-  router.get("/mcp/overseer", (_req, res) => {
-    res.status(405).set("Allow", "POST").send("Method Not Allowed");
-  });
+  for (const path of ["/mcp", "/mcp/v2", "/mcp/overseer"]) {
+    router.get(path, (_req, res) => res.status(405).set("Allow", "POST").send("Method Not Allowed"));
+  }
 
   router.get("/health", (_req, res) => {
     const breaker = breakerRegistry.getAggregateStatus();

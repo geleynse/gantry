@@ -38,9 +38,6 @@ interface ChartDataPoint {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Y-axis tick labels — compact credits form with "cr" suffix.
-const formatCreditsAxis = (n: number) => formatCreditsCompact(n);
-
 // X-axis tick labels — short HH:MM via the shared helper.
 const formatTimestamp = formatTimeShort;
 // Tooltip title — canonical absolute form.
@@ -186,7 +183,7 @@ export function CreditChart({ agentName }: CreditChartProps) {
             interval="preserveStartEnd"
           />
           <YAxis
-            tickFormatter={formatCreditsAxis}
+            tickFormatter={formatCreditsCompact}
             tick={{ fill: "#616e88", fontSize: 10 }}
             tickLine={false}
             axisLine={{ stroke: "#4c566a" }}

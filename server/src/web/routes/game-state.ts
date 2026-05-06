@@ -259,16 +259,12 @@ function flatten(raw: GantryGameState, marketCache?: MarketCache): Record<string
   const ship = (rawAsAny.ship ?? rawPlayer?.ship) as GantryGameState['ship'] | undefined;
   const flat = buildFlatState(player, ship, rawAsAny.modules as unknown[] | undefined, marketCache);
 
-  // Pass through lifetime_stats if present — available in game v0.253+
-  // May live at root level or inside the player wrapper
-  const lifetimeStats = rawAsAny.lifetime_stats ?? rawPlayer?.lifetime_stats ?? player.lifetime_stats;
+  const lifetimeStats = player.lifetime_stats;
   if (lifetimeStats && typeof lifetimeStats === 'object') {
     flat.lifetime_stats = lifetimeStats;
   }
 
-  // Pass through standings if present — available in game v0.271.0+
-  // May live at root level or inside the player wrapper
-  const standings = rawAsAny.standings ?? rawPlayer?.standings ?? player.standings;
+  const standings = player.standings;
   if (standings && typeof standings === 'object') {
     flat.standings = standings;
   }

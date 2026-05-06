@@ -62,7 +62,7 @@ function parseMetadata(meta: string | null): Record<string, unknown> | null {
   }
 }
 
-export function getOrderId(entry: CommsLogEntry): number | null {
+function getOrderId(entry: CommsLogEntry): number | null {
   const meta = parseMetadata(entry.metadata_json);
   if (!meta) return null;
   const id = meta.order_id;
@@ -80,9 +80,8 @@ export function buildTimelineRows(entries: CommsLogEntry[]): TimelineRow[] {
     if (entry.type === "order") {
       ordersByOrderId.set(orderId, entry);
     } else if (entry.type === "delivery") {
-      const list = deliveriesByOrderId.get(orderId) ?? [];
-      list.push(entry);
-      deliveriesByOrderId.set(orderId, list);
+      if (!deliveriesByOrderId.has(orderId)) deliveriesByOrderId.set(orderId, []);
+      deliveriesByOrderId.get(orderId)!.push(entry);
     }
   }
 

@@ -149,9 +149,6 @@ export class NudgeStateManager {
           return false;
         }
 
-      case 3:
-        return false;
-
       default:
         return false;
     }

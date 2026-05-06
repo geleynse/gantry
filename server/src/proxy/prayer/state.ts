@@ -39,7 +39,7 @@ export function cargoPct(data: Record<string, unknown>): number {
     return Math.round((used / capacity) * 100);
   }
   const cargoTotal = [...cargoByItem(data).values()].reduce((sum, qty) => sum + qty, 0);
-  return cargoTotal > 0 && Number.isFinite(capacity) && capacity > 0 ? Math.round((cargoTotal / capacity) * 100) : 0;
+  return capacity > 0 ? Math.round((cargoTotal / capacity) * 100) : 0;
 }
 
 export function currentSystem(data: Record<string, unknown>): string | null {

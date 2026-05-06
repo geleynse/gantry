@@ -18,7 +18,7 @@ import {
 
 const log = createLogger('captains-logs-route');
 
-export function createCaptainsLogsRouter(): import("express").Router {
+export function createCaptainsLogsRouter(): Router {
   const router = Router();
 
   /**
@@ -54,14 +54,14 @@ export function createCaptainsLogsRouter(): import("express").Router {
   router.post('/:agent/search', (req: Request, res: Response) => {
     try {
       const agent = req.params.agent as string;
-      const { query } = req.body as Record<string, unknown>;
+      const { query, limit: limitRaw } = req.body as Record<string, unknown>;
 
       if (!query || typeof query !== 'string') {
         return res.status(400).json({ error: 'Missing or invalid query parameter' });
       }
 
       const limit = Math.min(
-        parseInt((req.body.limit as string) || '20'),
+        parseInt(String(limitRaw ?? '20'), 10),
         100
       );
 

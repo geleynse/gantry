@@ -37,11 +37,11 @@ function readSchemaCache(): SchemaCache | null {
 }
 
 function writeSchemaCache(cache: SchemaCache): void {
+  const cachePath = getSchemaCachePath();
   try {
-    mkdirSync(dirname(getSchemaCachePath()), { recursive: true });
-    writeFileSync(getSchemaCachePath(), JSON.stringify(cache, null, 2));
+    mkdirSync(dirname(cachePath), { recursive: true });
+    writeFileSync(cachePath, JSON.stringify(cache, null, 2));
   } catch (err) {
-    const cachePath = getSchemaCachePath();
 
     // In test environments, FLEET_DIR may be /dev/null; silently skip cache writes
     if (cachePath.includes("/dev/null")) {
@@ -137,30 +137,31 @@ const DENIED_TOOLS = new Set([
   "deposit_credits",
   "withdraw_credits",
 
-  // Factions — too complex for current fleet, adds 36 tools to system prompt
+  // Factions — most blocked as too complex; allow membership tools so agents
+  // can self-organize (leader invites, members join/leave/check invites).
   "create_faction",
-  "join_faction",
-  "leave_faction",
+  // "join_faction",          // ENABLED — members accept invites
+  // "leave_faction",         // ENABLED — members can leave
   "faction_accept_peace",
   "faction_cancel_mission",
   "faction_create_buy_order",
   "faction_create_role",
   "faction_create_sell_order",
   "faction_declare_war",
-  "faction_decline_invite",
+  // "faction_decline_invite",// ENABLED — members can decline
   "faction_delete_role",
   "faction_delete_room",
   "faction_deposit_credits",
   "faction_deposit_items",
   "faction_edit",
   "faction_edit_role",
-  "faction_get_invites",
+  // "faction_get_invites",   // ENABLED — members check pending invites
   "faction_gift",
-  "faction_info",
+  // "faction_info",          // ENABLED — read faction details
   "faction_intel_status",
-  "faction_invite",
+  // "faction_invite",        // ENABLED — leader invites members
   "faction_kick",
-  "faction_list",
+  // "faction_list",          // ENABLED — browse factions
   "faction_list_missions",
   "faction_post_mission",
   "faction_promote",

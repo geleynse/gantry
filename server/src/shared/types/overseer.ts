@@ -1,30 +1,3 @@
-/**
- * Type definitions for the overseer agent.
- * The overseer monitors fleet health and issues corrective actions autonomously.
- */
-
-export interface OverseerConfig {
-  enabled: boolean;
-  model: string;
-  intervalMinutes: number;
-  cooldownSeconds: number;
-  maxActionsPerTick: number;
-  eventTriggers: string[];
-  creditThreshold: number;
-  historyWindow: number;
-}
-
-export const DEFAULT_OVERSEER_CONFIG: OverseerConfig = {
-  enabled: false,
-  model: "haiku",
-  intervalMinutes: 10,
-  cooldownSeconds: 60,
-  maxActionsPerTick: 5,
-  eventTriggers: ["agent_stranded", "agent_died", "agent_stopped", "credits_critical", "combat_alert"],
-  creditThreshold: 1000,
-  historyWindow: 3,
-};
-
 export type OverseerActionType =
   | "issue_order"
   | "trigger_routine"
@@ -44,7 +17,6 @@ export interface ActionResult {
   message: string;
 }
 
-export type OverseerState = "idle" | "thinking" | "executing" | "stopped";
 export type OverseerDecisionStatus = "success" | "error" | "no_action";
 
 export interface OverseerDecision {
@@ -65,15 +37,3 @@ export interface OverseerDecision {
   created_at: string;
 }
 
-export interface OverseerStatus {
-  state: OverseerState;
-  enabled: boolean;
-  tickNumber: number;
-  lastTickAt: string | null;
-  lastTriggeredBy: string | null;
-  nextTickAt: string | null;
-  model: string;
-  costToday: number;
-  decisionsToday: number;
-  config: OverseerConfig;
-}

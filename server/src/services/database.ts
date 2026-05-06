@@ -6,7 +6,6 @@ import { createLogger } from '../lib/logger.js';
 const log = createLogger('db');
 
 let db: Database | null = null;
-let dbInstanceId: string | null = null;
 
 // Cache for prepared statements (keyed by SQL)
 const statementCache = new Map<string, Statement>();
@@ -24,7 +23,6 @@ export function createDatabase(dbPath?: string): void {
     db = null;
   }
   db = new Database(path);
-  dbInstanceId = Math.random().toString(36).slice(2);
 
   // Enable WAL mode for concurrency (readers don't block writers)
   // We enable it even for tests now to ensure consistent behavior under load.
@@ -108,19 +106,6 @@ function getPreparedStatement(sql: string): Statement {
 
 export function getDbIfInitialized(): Database | null {
   return db;
-}
-
-export function getDbInstanceId(): string | null {
-  return dbInstanceId;
-}
-
-export function verifyDatabaseWorks(): boolean {
-  try {
-    const result = getPreparedStatement('SELECT 1 as test').get() as { test: number } | undefined;
-    return result?.test === 1;
-  } catch {
-    return false;
-  }
 }
 
 export function closeDb(): void {

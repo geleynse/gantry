@@ -21,18 +21,29 @@ export interface CachedQueryDeps {
   transitStuckDetector?: TransitStuckDetector;
 }
 
+function injectTransitContext(player: Record<string, unknown>, result: Record<string, unknown>, note: string): void {
+  const poi = player.current_poi as string | undefined;
+  if (!poi || (typeof poi === "string" && poi.trim() === "")) {
+    result.in_transit = true;
+    result._note = note;
+    const transitDest = player.transit_destination as string | undefined;
+    if (transitDest) result.destination = transitDest;
+    const ticksRemaining = player.ticks_remaining as number | undefined;
+    if (typeof ticksRemaining === "number") result.eta_ticks = ticksRemaining;
+  }
+}
+
 /** Pure extraction functions for each cached query tool. Shared by v1 and v2 handlers. */
 export const STATUS_SLICE_EXTRACTORS: Record<string, (data: Record<string, unknown>) => unknown> = {
   get_status: (d) => {
     // state_update shape: { tick, player, ship, modules, nearby, in_combat }
     const player = (d.player ?? d) as Record<string, unknown>;
     const ship = (d.ship ?? player.ship ?? {}) as Record<string, unknown>;
-    const currentPoi = player.current_poi as string | undefined;
     const statusResult: Record<string, unknown> = {
       username: player.username,
       credits: player.credits,
       current_system: player.current_system,
-      current_poi: currentPoi,
+      current_poi: player.current_poi,
       docked_at_base: player.docked_at_base,
       ship: {
         name: ship.name, class_id: ship.class_id,
@@ -44,14 +55,7 @@ export const STATUS_SLICE_EXTRACTORS: Record<string, (data: Record<string, unkno
       in_combat: d.in_combat,
     };
 
-    // Add transit context when location is empty
-    if (!currentPoi || (typeof currentPoi === "string" && currentPoi.trim() === "")) {
-      statusResult.in_transit = true;
-      statusResult._note = "You are in hyperspace/transit. Do productive work while waiting — do NOT repeatedly check location.";
-      const transitDest = player.transit_destination as string | undefined;
-      if (transitDest) statusResult.destination = transitDest;
-    }
-
+    injectTransitContext(player, statusResult, "You are in hyperspace/transit. Do productive work while waiting — do NOT repeatedly check location.");
     return summarizeToolResult("get_status", statusResult);
   },
   get_credits: (d) => {
@@ -60,19 +64,8 @@ export const STATUS_SLICE_EXTRACTORS: Record<string, (data: Record<string, unkno
   },
   get_location: (d) => {
     const player = (d.player ?? d) as Record<string, unknown>;
-    const system = player.current_system as string | undefined;
-    const poi = player.current_poi as string | undefined;
-    const result: Record<string, unknown> = { system, poi, docked_at_base: player.docked_at_base };
-
-    // When POI is empty, the agent is in transit. Add helpful context instead of bare empty string.
-    if (!poi || (typeof poi === "string" && poi.trim() === "")) {
-      result.in_transit = true;
-      result._note = "You are in hyperspace/transit. Do NOT repeatedly check location. Do productive work (check cargo, read docs, plan sells) while waiting. The proxy notifies you when you arrive.";
-      const transitDest = player.transit_destination as string | undefined;
-      if (transitDest) result.destination = transitDest;
-      const ticksRemaining = player.ticks_remaining as number | undefined;
-      if (typeof ticksRemaining === "number") result.eta_ticks = ticksRemaining;
-    }
+    const result: Record<string, unknown> = { system: player.current_system, poi: player.current_poi, docked_at_base: player.docked_at_base };
+    injectTransitContext(player, result, "You are in hyperspace/transit. Do NOT repeatedly check location. Do productive work (check cargo, read docs, plan sells) while waiting. The proxy notifies you when you arrive.");
     return result;
   },
   get_cargo_summary: (d) => {

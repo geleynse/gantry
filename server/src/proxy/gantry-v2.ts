@@ -454,6 +454,28 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
     resourceKnowledge,
   };
 
+  function acquireRoutineLock(agentName: string, job?: RoutineJob): void {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => { resolve = r; });
+    agentRoutineLocks.set(agentName, { promise, resolve, job });
+  }
+
+  function releaseRoutineLock(agentName: string): void {
+    const lock = agentRoutineLocks.get(agentName);
+    if (lock) {
+      lock.resolve();
+      agentRoutineLocks.delete(agentName);
+    }
+  }
+
+  function startSessionKeepalive(sessionId: string | undefined): ReturnType<typeof setInterval> {
+    return setInterval(() => {
+      if (shared.sessions.store) {
+        shared.sessions.store.getSession(sessionId ?? "");
+      }
+    }, 60_000);
+  }
+
   async function handlePrayerAction(
     rawArgs: Record<string, unknown>,
     agentName: string,
@@ -499,15 +521,8 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
     const prayerStartMs = Date.now();
     log.info(`[${agentName}] pray START | trace: ${traceId}`);
 
-    let routineLockResolve: () => void;
-    const routineLockPromise = new Promise<void>((resolve) => { routineLockResolve = resolve; });
-    agentRoutineLocks.set(agentName, { promise: routineLockPromise, resolve: routineLockResolve! });
-
-    const sessionKeepalive = setInterval(() => {
-      if (shared.sessions.store) {
-        shared.sessions.store.getSession(sessionId ?? "");
-      }
-    }, 60_000);
+    acquireRoutineLock(agentName);
+    const sessionKeepalive = startSessionKeepalive(sessionId);
 
     try {
       const trackedClient = makeTrackedClient(client, agentName, passthroughDeps.rateLimitTracker);
@@ -607,11 +622,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
       return textResult(result);
     } finally {
       clearInterval(sessionKeepalive);
-      const lock = agentRoutineLocks.get(agentName);
-      if (lock) {
-        lock.resolve();
-        agentRoutineLocks.delete(agentName);
-      }
+      releaseRoutineLock(agentName);
     }
   }
 
@@ -884,18 +895,8 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
         // fails we don't want the agent's turn to hang forever.
         const ROUTINE_OUTER_TIMEOUT_MS = 20 * 60 * 1000; // 20 min (generous margin over runner's 15 min)
 
-        // Set routine lock with a promise that resolves when routine completes
-        let routineLockResolve: () => void;
-        const routineLockPromise = new Promise<void>((resolve) => { routineLockResolve = resolve; });
-        agentRoutineLocks.set(agentName, { promise: routineLockPromise, resolve: routineLockResolve!, job });
-
-        // Keep session alive during long-running routines.
-        // Without this, the idle timeout (5 min) kills the session mid-routine.
-        const sessionKeepalive = setInterval(() => {
-          if (shared.sessions.store) {
-            shared.sessions.store.getSession(extra.sessionId ?? "");
-          }
-        }, 60_000);
+        acquireRoutineLock(agentName, job);
+        const sessionKeepalive = startSessionKeepalive(extra.sessionId);
 
         const executeRoutineJob = async (): Promise<ReturnType<typeof textResult>> => {
           try {
@@ -995,12 +996,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
           return textResult({ error: `Routine ${routineId} crashed: ${errMsg}` });
         } finally {
           clearInterval(sessionKeepalive);
-          // Release routine lock — notify waiting callers
-          const lock = agentRoutineLocks.get(agentName);
-          if (lock) {
-            lock.resolve();
-            agentRoutineLocks.delete(agentName);
-          }
+          releaseRoutineLock(agentName);
         }
         };
 

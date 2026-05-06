@@ -149,23 +149,18 @@ async function run(ctx: RoutineContext, rawParams: UpgradeShipParams): Promise<R
   const marketResp = await ctx.client.execute("view_market");
   const marketResult = marketResp.result as Record<string, unknown> | undefined;
 
-  // Market modules: try common shapes — items/modules/equipment arrays
-  let marketItems: Array<Record<string, unknown>> = [];
-  for (const key of ["modules", "equipment", "items"]) {
-    if (Array.isArray((marketResult as Record<string, unknown> | undefined)?.[key])) {
-      marketItems = (marketResult as Record<string, unknown>)[key] as Array<Record<string, unknown>>;
-      break;
+  // Market modules: try common shapes — items/modules/equipment arrays, direct or nested under market.*
+  const MARKET_ITEM_KEYS = ["modules", "equipment", "items"];
+  const findMarketArray = (obj: Record<string, unknown> | undefined): Array<Record<string, unknown>> => {
+    if (!obj) return [];
+    for (const key of MARKET_ITEM_KEYS) {
+      if (Array.isArray(obj[key])) return obj[key] as Array<Record<string, unknown>>;
     }
-  }
-  // Also check nested market.modules or market.items
+    return [];
+  };
+  let marketItems = findMarketArray(marketResult);
   if (marketItems.length === 0) {
-    const nested = (marketResult as Record<string, unknown> | undefined)?.market as Record<string, unknown> | undefined;
-    for (const key of ["modules", "equipment", "items"]) {
-      if (Array.isArray(nested?.[key])) {
-        marketItems = nested![key] as Array<Record<string, unknown>>;
-        break;
-      }
-    }
+    marketItems = findMarketArray((marketResult as Record<string, unknown> | undefined)?.market as Record<string, unknown> | undefined);
   }
 
   phases.push(completePhase(surveyPhase, { marketItemCount: marketItems.length, credits, effectiveBudget }));

@@ -6,7 +6,7 @@ import { Router } from "express";
 import { readFileSync, existsSync } from "node:fs";
 import { atomicWriteFileSync } from "../../lib/atomic-write.js";
 import { join } from "node:path";
-import * as env from "../../config/env.js";
+import { FLEET_DIR } from "../../config/env.js";
 import { loadConfig, saveConfig, getAgentNames, resolveConfigPath } from "../../config/fleet.js";
 import { AgentConfigSchema } from "../../config/schemas.js";
 import { registerAccount } from "../../services/game-registration.js";
@@ -69,11 +69,11 @@ router.get("/enrollment-options", (req, res) => {
  * Admin-only route to enroll a new agent.
  */
 router.post("/enroll", async (req, res) => {
-  const { 
-    agentName, 
-    registrationCode, 
-    username, 
-    empire, 
+  const {
+    agentName,
+    registrationCode,
+    username,
+    empire,
     password: providedPassword,
     role,
     roleType,
@@ -81,8 +81,6 @@ router.post("/enroll", async (req, res) => {
     mcpPreset,
     model = "claude-haiku-4-5"
   } = req.body as EnrollRequest;
-
-  const FLEET_DIR = env.FLEET_DIR;
 
   // 1. Validation
   if (!agentName || !username || (!registrationCode && !providedPassword)) {
@@ -198,7 +196,6 @@ router.post("/enroll", async (req, res) => {
  */
 router.post("/:name/deploy-prompt", async (req, res) => {
   const { name } = req.params;
-  const FLEET_DIR = env.FLEET_DIR;
   const config = loadConfig(FLEET_DIR);
   const agent = config.agents.find(a => a.name === name);
 
@@ -229,7 +226,6 @@ router.post("/:name/deploy-prompt", async (req, res) => {
  */
 router.get("/:name/prompt-preview", async (req, res) => {
   const { name } = req.params;
-  const FLEET_DIR = env.FLEET_DIR;
   const config = loadConfig(FLEET_DIR);
   const agent = config.agents.find(a => a.name === name);
 

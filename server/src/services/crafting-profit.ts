@@ -13,7 +13,7 @@
  */
 
 import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('crafting-profit');
@@ -77,19 +77,12 @@ export interface CraftChain {
 let _recipes: BomRecipe[] | null = null;
 
 function getBomPath(): string {
-  // In tests the cwd may differ; resolve relative to this module's location.
-  // __dirname not available in ESM; use import.meta.url fallback or process.cwd()
   const candidates = [
     join(process.cwd(), 'data', 'vendor', 'spacemolt-crafting-bom.json'),
     join(process.cwd(), 'server', 'data', 'vendor', 'spacemolt-crafting-bom.json'),
   ];
   for (const p of candidates) {
-    try {
-      readFileSync(p);
-      return p;
-    } catch {
-      // try next
-    }
+    if (existsSync(p)) return p;
   }
   throw new Error('spacemolt-crafting-bom.json not found. Checked: ' + candidates.join(', '));
 }
@@ -133,16 +126,6 @@ export function getRecipes(): BomRecipe[] {
 // ---------------------------------------------------------------------------
 // Analyzer
 // ---------------------------------------------------------------------------
-
-/**
- * Build a price map from the MarketCache items.
- * bid = station pays us, ask = station charges us.
- */
-export function buildPriceMap(
-  rawPrices: Map<string, { bid: number; ask: number }>,
-): Map<string, PricePoint> {
-  return rawPrices;
-}
 
 /**
  * For a single recipe, calculate profit given the price map.

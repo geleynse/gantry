@@ -64,6 +64,15 @@ export interface ContextSummary {
   }>;
 }
 
+interface ToolCallRow {
+  tool_name: string;
+  args_summary: string | null;
+  result_summary: string | null;
+  success: number;
+  duration_ms: number | null;
+  timestamp: string;
+}
+
 // ── Factory ────────────────────────────────────────────────────────────────
 
 /**
@@ -112,14 +121,6 @@ export function createContextSummaryRouter(
       };
 
       // --- Last 5 tool calls (from DB) ---
-      interface ToolCallRow {
-        tool_name: string;
-        args_summary: string | null;
-        result_summary: string | null;
-        success: number;
-        duration_ms: number | null;
-        timestamp: string;
-      }
       const toolCallRows = queryAll<ToolCallRow>(
         `SELECT tool_name, args_summary, result_summary, success, duration_ms, timestamp
          FROM proxy_tool_calls
@@ -149,7 +150,9 @@ export function createContextSummaryRouter(
 
       // --- Recent events (peek, do not drain) ---
       const eventBuffer = eventBuffers.get(name);
-      const recent_events = eventBuffer ? peekRecentEvents(eventBuffer, 3) : [];
+      const recent_events = eventBuffer
+        ? eventBuffer.toArray().slice(-3).map((e) => ({ type: e.type, payload: e.payload, receivedAt: e.receivedAt }))
+        : [];
 
       const summary: ContextSummary = {
         status: statusData,
@@ -170,32 +173,3 @@ export function createContextSummaryRouter(
   return router;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Peek at the most recent N events from an event buffer without draining them.
- * We use the internal drain/re-push pattern to avoid exposing private buffer state.
- * Since EventBuffer doesn't have a read-only peek, we drain up to N events and
- * immediately push them back. This is safe for a read-only summary.
- */
-function peekRecentEvents(
-  buffer: EventBuffer,
-  limit: number,
-): Array<{ type: string; payload: unknown; receivedAt: number }> {
-  // EventBuffer.drain() removes events — we need peek semantics.
-  // Access via a read-only view: drain all, snapshot, re-push.
-  // Use the drain() method which returns events in order (oldest first).
-  const drained = buffer.drain(undefined, undefined);
-  const recent = drained.slice(-limit);
-
-  // Re-push all events back in order so the buffer is unchanged
-  for (const event of drained) {
-    buffer.push(event);
-  }
-
-  return recent.map((e) => ({
-    type: e.type,
-    payload: e.payload,
-    receivedAt: e.receivedAt,
-  }));
-}

@@ -65,23 +65,22 @@ function limitArray(arr: unknown[] | undefined, max: number): unknown[] {
   return arr.slice(0, max);
 }
 
+const MODULE_KEYS = ["id", "name", "slot_type", "slot", "type", "item_id", "item_name", "module_id", "module_name"];
+
+function summarizeModules(modules: unknown): unknown {
+  if (!Array.isArray(modules)) return modules;
+  return (modules as Record<string, unknown>[]).map(m => discoverPick("module", m, MODULE_KEYS));
+}
+
 const SUMMARIZERS: Record<string, Summarizer> = {
   get_status: (r) => {
     const d = (r && typeof r === "object") ? r as Record<string, unknown> : {};
     const ship = d.ship && typeof d.ship === "object" ? d.ship as Record<string, unknown> : undefined;
-    
-    let modules = ship?.modules;
-    if (Array.isArray(modules)) {
-      modules = (modules as Record<string, unknown>[]).map(m => 
-        discoverPick("module", m, ["id", "name", "slot_type", "slot", "type", "item_id", "item_name", "module_id", "module_name"])
-      );
-    }
-
     const summarized = discoverPick("get_status", d, ["username", "credits", "current_system", "current_poi", "docked_at_base", "skills", "stats", "discovered_systems", "status_message", "ship"]);
     if (ship) {
       summarized.ship = {
         ...discoverPick("ship", ship, ["name", "class_id", "hull", "max_hull", "shield", "max_shield", "fuel", "max_fuel", "cargo_used", "cargo_capacity", "stats", "position", "modules"]),
-        modules
+        modules: summarizeModules(ship.modules),
       };
     }
     return summarized;
@@ -104,14 +103,8 @@ const SUMMARIZERS: Record<string, Summarizer> = {
   },
   get_ship: (r) => {
     const ship = (r && typeof r === "object") ? r as Record<string, unknown> : {};
-    let modules = ship.modules;
-    if (Array.isArray(modules)) {
-      modules = (modules as Record<string, unknown>[]).map(m => 
-        discoverPick("module", m, ["id", "name", "slot_type", "slot", "type", "item_id", "item_name", "module_id", "module_name"])
-      );
-    }
     const summarized = discoverPick("get_ship", ship, ["name", "class_id", "hull", "max_hull", "shield", "max_shield", "fuel", "max_fuel", "cargo_used", "cargo_capacity", "stats", "modules"]);
-    summarized.modules = modules;
+    summarized.modules = summarizeModules(ship.modules);
     return summarized;
   },
   mine: (r) => discoverPick("mine", r as Record<string, unknown>, ["ore_type", "quantity", "message"]),
@@ -219,38 +212,19 @@ const SUMMARIZERS: Record<string, Summarizer> = {
   },
 };
 
-function isErrorResponse(result: unknown): boolean {
-  if (result === null || result === undefined) return false;
-  if (typeof result !== "object") return false;
-  return "error" in (result as Record<string, unknown>);
-}
-
-function isPendingResponse(result: unknown): boolean {
-  if (result === null || result === undefined) return false;
-  if (typeof result !== "object") return false;
-  return "pending" in (result as Record<string, unknown>);
-}
-
 export function summarizeToolResult(toolName: string, result: unknown): unknown {
-  if (isErrorResponse(result)) return result;
-  if (isPendingResponse(result)) return result;
-  
-  // Hardened input check to prevent "obj is not an Object" errors
-  if (result === null || result === undefined || typeof result !== "object") {
-    return result;
-  }
+  if (result === null || result === undefined || typeof result !== "object") return result;
+  const obj = result as Record<string, unknown>;
+  if ("error" in obj || "pending" in obj) return result;
 
   const summarizer = SUMMARIZERS[toolName];
-  let summarized = summarizer ? summarizer(result) : stripFields(result);
+  const summarized = summarizer ? summarizer(result) : stripFields(result);
 
-  // Preserve proxy-injected fields (starting with _) that might have been
-  // added before summarization (e.g. _nav_warning, _calledTools).
-  if (typeof result === "object" && result !== null && typeof summarized === "object" && summarized !== null) {
-    const resObj = result as Record<string, unknown>;
+  if (typeof summarized === "object" && summarized !== null) {
     const sumObj = summarized as Record<string, unknown>;
-    for (const key of Object.keys(resObj)) {
+    for (const key of Object.keys(obj)) {
       if (key.startsWith("_") && !(key in sumObj)) {
-        sumObj[key] = resObj[key];
+        sumObj[key] = obj[key];
       }
     }
   }

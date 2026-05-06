@@ -142,9 +142,13 @@ export class MarketReservationCache {
    * are not subtracted (they already "own" that inventory).
    */
   getAvailable(station: string, itemId: string, totalQuantity: number, requestingAgent?: string): number {
-    const reserved = this.activeReservations(
-      r => r.station === station && r.itemId === itemId && r.agent !== requestingAgent,
-    ).reduce((sum, r) => sum + r.quantity, 0);
+    const now = Date.now();
+    let reserved = 0;
+    for (const r of this.reservations.values()) {
+      if (r.expiresAt > now && r.station === station && r.itemId === itemId && r.agent !== requestingAgent) {
+        reserved += r.quantity;
+      }
+    }
     return Math.max(0, totalQuantity - reserved);
   }
 
@@ -198,6 +202,11 @@ export class MarketReservationCache {
    * Total number of active (non-expired) reservations.
    */
   get size(): number {
-    return this.activeReservations().length;
+    const now = Date.now();
+    let count = 0;
+    for (const r of this.reservations.values()) {
+      if (r.expiresAt > now) count++;
+    }
+    return count;
   }
 }

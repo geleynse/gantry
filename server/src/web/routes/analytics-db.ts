@@ -80,7 +80,7 @@ router.get('/system-pois', (req, res) => {
 // Returns { agent: string; systems: string[] }[] — recent system history per agent.
 router.get('/agent-trails', (req, res) => {
   const filter = parseFilter(req);
-  const limit = queryInt(req, 'limit') || 10;
+  const limit = queryInt(req, 'limit') ?? 10;
   res.json(getAgentTrails(filter.hours ?? 24, limit));
 });
 

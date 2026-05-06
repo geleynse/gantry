@@ -110,10 +110,7 @@ export function createFacilitiesRouter(statusCache: StatusCache): Router {
     const agentParam = queryString(req, "agent");
     const tab = queryString(req, "tab") ?? "station";
 
-    // Resolve agent — use the requested agent or fall back to the first cached entry
-    const agentName = agentParam && statusCache.has(agentParam)
-      ? agentParam
-      : agentParam ?? null;
+    const agentName = agentParam ?? null;
 
     const cached = agentName ? statusCache.get(agentName) : null;
 

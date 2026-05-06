@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { createLogger } from '../../lib/logger.js';
+import { queryString } from '../middleware/query-helpers.js';
 import { getExploredSystems } from '../../services/analytics-query.js';
 import { classifyConnections, getWormholes } from '../../services/wormhole-classifier.js';
 import { getPoisBySystem } from '../../services/galaxy-poi-registry.js';
@@ -45,6 +46,18 @@ interface MapAgentState {
 export function createMapRouter(): Router {
   let mapCache: MapCache | null = null;
 
+  /** Fetch map systems, using the in-scope cache when fresh. */
+  async function getMapSystems(): Promise<MapSystem[] | null> {
+    if (mapCache && Date.now() - mapCache.fetchedAt < CACHE_TTL) {
+      return (mapCache.data as { systems: MapSystem[] }).systems ?? [];
+    }
+    const resp = await fetch(GAME_MAP_URL, { signal: AbortSignal.timeout(5000) });
+    if (!resp.ok) return null;
+    const data = await resp.json() as { systems: MapSystem[] };
+    mapCache = { data, fetchedAt: Date.now() };
+    return data.systems ?? [];
+  }
+
   const router = Router();
 
   // GET /api/map — Galaxy topology
@@ -55,16 +68,9 @@ export function createMapRouter(): Router {
         return;
       }
 
-      const resp = await fetch(GAME_MAP_URL, {
-        signal: AbortSignal.timeout(5000),
-      });
-
+      const resp = await fetch(GAME_MAP_URL, { signal: AbortSignal.timeout(5000) });
       if (!resp.ok) {
-        res
-          .status(502)
-          .json({
-            error: `Failed to fetch map: ${resp.status} ${resp.statusText}`,
-          });
+        res.status(502).json({ error: `Failed to fetch map: ${resp.status} ${resp.statusText}` });
         return;
       }
 
@@ -133,19 +139,10 @@ export function createMapRouter(): Router {
   // GET /api/map/wormholes — Connections classified as wormholes
   router.get("/wormholes", async (_req, res) => {
     try {
-      // Get map data (use cache if available)
-      let mapSystems: MapSystem[];
-      if (mapCache && Date.now() - mapCache.fetchedAt < CACHE_TTL) {
-        mapSystems = (mapCache.data as { systems: MapSystem[] }).systems ?? [];
-      } else {
-        const resp = await fetch(GAME_MAP_URL, { signal: AbortSignal.timeout(5000) });
-        if (!resp.ok) {
-          res.json([]);
-          return;
-        }
-        const data = await resp.json() as { systems: MapSystem[] };
-        mapCache = { data, fetchedAt: Date.now() };
-        mapSystems = data.systems ?? [];
+      const mapSystems = await getMapSystems();
+      if (!mapSystems) {
+        res.json([]);
+        return;
       }
 
       // Build deduplicated connection pairs
@@ -173,25 +170,14 @@ export function createMapRouter(): Router {
 
   // GET /api/map/system-detail?system=<id> — Consolidated system info for popup
   router.get("/system-detail", async (req, res) => {
-    const systemId = req.query.system as string;
+    const systemId = queryString(req, 'system');
     if (!systemId) {
       res.status(400).json({ error: "system parameter required" });
       return;
     }
 
     try {
-      // Get map data for system info
-      let mapSystems: MapSystem[] = [];
-      if (mapCache && Date.now() - mapCache.fetchedAt < CACHE_TTL) {
-        mapSystems = (mapCache.data as { systems: MapSystem[] }).systems ?? [];
-      } else {
-        const resp = await fetch(GAME_MAP_URL, { signal: AbortSignal.timeout(5000) });
-        if (resp.ok) {
-          const data = await resp.json() as { systems: MapSystem[] };
-          mapCache = { data, fetchedAt: Date.now() };
-          mapSystems = data.systems ?? [];
-        }
-      }
+      const mapSystems = await getMapSystems().then(s => s ?? []);
 
       const system = mapSystems.find(s => s.id === systemId);
       if (!system) {
@@ -199,31 +185,26 @@ export function createMapRouter(): Router {
         return;
       }
 
-      // Get POIs from galaxy_pois table
-      const pois = getPoisBySystem(systemId);
+      // Fetch POIs (sync) and agent state (async) in parallel now that we know the system exists
+      const [pois, stateData] = await Promise.all([
+        Promise.resolve(getPoisBySystem(systemId)),
+        fetch(`${GANTRY_URL}/game-state/all`, { signal: AbortSignal.timeout(3000) })
+          .then(r => r.ok ? r.json() as Promise<Record<string, MapAgentState>> : {})
+          .catch(() => ({} as Record<string, MapAgentState>)),
+      ]);
 
-      // Get agent positions
-      let agents: Array<{ name: string; poi: string | null; docked: boolean; shipClass: string | null }> = [];
-      try {
-        const stateResp = await fetch(`${GANTRY_URL}/game-state/all`, {
-          signal: AbortSignal.timeout(3000),
-        });
-        if (stateResp.ok) {
-          const stateData: Record<string, MapAgentState> = await stateResp.json();
-          for (const [name, raw] of Object.entries(stateData)) {
-            const agentSystem = raw?.player?.current_system ?? raw?.current_system;
-            if (agentSystem === systemId) {
-              agents.push({
-                name,
-                poi: raw.player?.current_poi ?? raw.current_poi ?? null,
-                docked: !!(raw.player?.docked_at_base ?? raw.docked_at_base),
-                shipClass: raw?.ship?.class_id ?? null,
-              });
-            }
-          }
+      // Filter agents in this system
+      const agents: Array<{ name: string; poi: string | null; docked: boolean; shipClass: string | null }> = [];
+      for (const [name, raw] of Object.entries(stateData)) {
+        const agentSystem = raw?.player?.current_system ?? raw?.current_system;
+        if (agentSystem === systemId) {
+          agents.push({
+            name,
+            poi: raw.player?.current_poi ?? raw.current_poi ?? null,
+            docked: !!(raw.player?.docked_at_base ?? raw.docked_at_base),
+            shipClass: raw?.ship?.class_id ?? null,
+          });
         }
-      } catch {
-        // Non-fatal
       }
 
       // Connected system names

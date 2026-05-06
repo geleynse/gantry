@@ -16,8 +16,9 @@ const log = createLogger("auth:loopback");
  *   "adapter": "loopback"
  * }
  */
+const LOOPBACK_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
 export function createLoopbackAdapter(): AuthAdapter {
-  const loopbackIps = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 
   return {
     name: "loopback",
@@ -35,7 +36,7 @@ export function createLoopbackAdapter(): AuthAdapter {
       }
 
       // Check if IP is loopback
-      if (loopbackIps.has(ip)) {
+      if (LOOPBACK_IPS.has(ip)) {
         log.debug(`✓ IP ${ip} ALLOWED (loopback)`);
         return {
           role: "admin",

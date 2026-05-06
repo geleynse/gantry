@@ -93,13 +93,9 @@ export function isRestartSuppressed(agent: string, nowMs = Date.now()): {
   try {
     const row = getCooldownRow(agent);
     if (!row) return { suppressed: false };
-    const until = new Date(row.stopped_until).getTime();
-    if (nowMs < until) {
-      return {
-        suppressed: true,
-        stoppedUntil: new Date(row.stopped_until),
-        reason: row.stop_reason,
-      };
+    const stoppedUntil = new Date(row.stopped_until);
+    if (nowMs < stoppedUntil.getTime()) {
+      return { suppressed: true, stoppedUntil, reason: row.stop_reason };
     }
     return { suppressed: false };
   } catch (err) {

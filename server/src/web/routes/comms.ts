@@ -107,11 +107,6 @@ router.get("/", (req, res) => {
   res.json({ orders, timeline: log });
 });
 
-router.get("/timeline", (req, res) => {
-  const log = getCommsLog();
-  res.json({ entries: log });
-});
-
 // Session handoff routes
 router.post("/handoff", (req, res) => {
   const body = req.body;

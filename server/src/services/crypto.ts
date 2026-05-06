@@ -147,18 +147,14 @@ export function decrypt(encrypted: string, secret: string): string {
     throw new Error("[crypto] Invalid encrypted format - missing required parts");
   }
 
-  const salt = Buffer.from(saltHex, "hex");
-  const key = scryptSync(secret, salt, KEY_LENGTH);
-  const iv = Buffer.from(ivHex, "hex");
-  const authTag = Buffer.from(authTagHex, "hex");
+  const key = scryptSync(secret, Buffer.from(saltHex, "hex"), KEY_LENGTH);
+  return runDecipher(key, ivHex, ciphertext, authTagHex);
+}
 
-  const decipher = createDecipheriv(ALGORITHM, key, iv);
-  decipher.setAuthTag(authTag);
-
-  let plaintext = decipher.update(ciphertext, "hex", "utf-8");
-  plaintext += decipher.final("utf-8");
-
-  return plaintext;
+function runDecipher(key: Buffer, ivHex: string, ciphertext: string, authTagHex: string): string {
+  const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(ivHex, "hex"));
+  decipher.setAuthTag(Buffer.from(authTagHex, "hex"));
+  return decipher.update(ciphertext, "hex", "utf-8") + decipher.final("utf-8");
 }
 
 /**
@@ -209,10 +205,6 @@ export function getSecretPath(): string {
   return overriddenSecretPath || SECRET_FILE;
 }
 
-// Backward compatibility - these are constants but getter functions are available
-export const PREV_SECRET_PATH = PREV_SECRET_FILE;
-export const SECRET_PATH = SECRET_FILE;
-
 /**
  * Decrypt with fallback to previous secret and old format.
  * Handles three cases:
@@ -221,14 +213,12 @@ export const SECRET_PATH = SECRET_FILE;
  * 3. Old 3-part format (iv:ciphertext:authTag) with fallback salt (backward compatibility)
  */
 export function decryptWithFallback(encrypted: string): string {
-  const current = getEncryptionSecret();
-  const secrets = [current, ...(previousSecret ? [previousSecret] : [])];
+  const secrets = [getEncryptionSecret(), ...(previousSecret ? [previousSecret] : [])];
 
-  for (const secret of secrets) {
-    try { return decrypt(encrypted, secret); } catch { /* try next */ }
-  }
-  for (const secret of secrets) {
-    try { return decryptOldFormat(encrypted, secret); } catch { /* try next */ }
+  for (const fn of [decrypt, decryptOldFormat]) {
+    for (const secret of secrets) {
+      try { return fn(encrypted, secret); } catch { /* try next */ }
+    }
   }
 
   throw new Error("[crypto] Failed to decrypt with current/previous secret or old format");
@@ -255,14 +245,5 @@ function decryptOldFormat(encrypted: string, secret: string): string {
   }
 
   const key = scryptSync(secret, FALLBACK_SALT, KEY_LENGTH);
-  const iv = Buffer.from(ivHex, "hex");
-  const authTag = Buffer.from(authTagHex, "hex");
-
-  const decipher = createDecipheriv(ALGORITHM, key, iv);
-  decipher.setAuthTag(authTag);
-
-  let plaintext = decipher.update(ciphertext, "hex", "utf-8");
-  plaintext += decipher.final("utf-8");
-
-  return plaintext;
+  return runDecipher(key, ivHex, ciphertext, authTagHex);
 }

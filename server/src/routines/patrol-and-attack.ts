@@ -17,7 +17,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, done, handoff, phase, completePhase } from "./routine-utils.js";
+import { withRetry, done, handoff, phase, completePhase, getStatPct } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -62,12 +62,7 @@ async function run(ctx: RoutineContext, params: PatrolAndAttackParams): Promise<
   const statusResp = await ctx.client.execute("get_status");
   const status = statusResp.result as Record<string, unknown> | undefined;
   const ship = status?.ship as Record<string, unknown> | undefined;
-  const hullCurrent = typeof ship?.hull === "number" ? ship.hull : undefined;
-  const hullMax = typeof ship?.max_hull === "number" ? ship.max_hull
-                : typeof ship?.hull_max === "number" ? ship.hull_max
-                : undefined;
-  const hullPct = (hullCurrent !== undefined && hullMax !== undefined && hullMax > 0)
-    ? (hullCurrent / hullMax) * 100 : 100;
+  const hullPct = getStatPct(ship, "hull") ?? 100;
 
   // Use live status for currentSystem, fall back to cache
   const statusPlayer = status?.player as Record<string, unknown> | undefined;
@@ -79,7 +74,7 @@ async function run(ctx: RoutineContext, params: PatrolAndAttackParams): Promise<
   if (hullPct < 30) {
     return handoff(
       `Hull critically low (${Math.round(hullPct)}%) — cannot patrol`,
-      { hull_pct: Math.round(hullPct), hull: hullCurrent, hull_max: hullMax },
+      { hull_pct: Math.round(hullPct), hull: ship?.hull, hull_max: ship?.max_hull ?? ship?.hull_max },
       phases,
     );
   }
@@ -143,20 +138,12 @@ async function run(ctx: RoutineContext, params: PatrolAndAttackParams): Promise<
 
     // Check defeat/fled — handoff to LLM
     if (outcome === "defeat" || outcome === "fled" || outcome === "destroyed") {
-      // Get updated hull status
       const postStatusResp = await ctx.client.execute("get_status");
-      const postStatus = postStatusResp.result as Record<string, unknown> | undefined;
-      const postShip = postStatus?.ship as Record<string, unknown> | undefined;
-      const postHull = typeof postShip?.hull === "number" ? postShip.hull : hullCurrent;
-      const postHullMax = typeof postShip?.max_hull === "number" ? postShip.max_hull
-                        : typeof postShip?.hull_max === "number" ? postShip.hull_max
-                        : hullMax;
-      const postHullPct = (postHull !== undefined && postHullMax !== undefined && postHullMax > 0)
-        ? (postHull / postHullMax) * 100 : 0;
-
+      const postShip = (postStatusResp.result as Record<string, unknown> | undefined)?.ship as Record<string, unknown> | undefined;
+      const postHullPct = getStatPct(postShip, "hull") ?? 0;
       return handoff(
         `Combat ${outcome} in ${system} — hull at ${Math.round(postHullPct)}%`,
-        { system, outcome, hull_pct: Math.round(postHullPct), hull: postHull, hull_max: postHullMax, total_kills: totalKills, total_loot: totalLoot },
+        { system, outcome, hull_pct: Math.round(postHullPct), hull: postShip?.hull, hull_max: postShip?.max_hull ?? postShip?.hull_max, total_kills: totalKills, total_loot: totalLoot },
         phases,
       );
     }
@@ -182,18 +169,13 @@ async function run(ctx: RoutineContext, params: PatrolAndAttackParams): Promise<
 
     // Check hull after combat
     const postCombatStatus = await ctx.client.execute("get_status");
-    const postShip = (postCombatStatus.result as Record<string, unknown> | undefined)?.ship as Record<string, unknown> | undefined;
-    const postHull = typeof postShip?.hull === "number" ? postShip.hull : undefined;
-    const postHullMax2 = typeof postShip?.max_hull === "number" ? postShip.max_hull
-                       : typeof postShip?.hull_max === "number" ? postShip.hull_max
-                       : undefined;
-    const postHullPct = (postHull !== undefined && postHullMax2 !== undefined && postHullMax2 > 0)
-      ? (postHull / postHullMax2) * 100 : 100;
+    const postCombatShip = (postCombatStatus.result as Record<string, unknown> | undefined)?.ship as Record<string, unknown> | undefined;
+    const postCombatHullPct = getStatPct(postCombatShip, "hull") ?? 100;
 
-    if (postHullPct < 30) {
+    if (postCombatHullPct < 30) {
       return handoff(
-        `Hull dropped to ${Math.round(postHullPct)}% after combat in ${system} — aborting patrol`,
-        { system, hull_pct: Math.round(postHullPct), hull: postHull, hull_max: postHullMax2, total_kills: totalKills, total_loot: totalLoot, systems_patrolled: systemsPatrolled },
+        `Hull dropped to ${Math.round(postCombatHullPct)}% after combat in ${system} — aborting patrol`,
+        { system, hull_pct: Math.round(postCombatHullPct), hull: postCombatShip?.hull, hull_max: postCombatShip?.max_hull ?? postCombatShip?.hull_max, total_kills: totalKills, total_loot: totalLoot, systems_patrolled: systemsPatrolled },
         phases,
       );
     }

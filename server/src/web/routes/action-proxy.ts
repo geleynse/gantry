@@ -121,11 +121,11 @@ export function createActionProxyRouter(sessions: KickableSessionHandle, toolCou
   // GET /sessions — returns agent names and usernames (no passwords)
   router.get('/sessions', (_req, res) => {
     const rows = queryAll<{ agent: string; username: string }>('SELECT agent, username FROM proxy_sessions');
-    const sessions = rows.map((r) => ({
+    const result = rows.map((r) => ({
       agentName: r.agent,
       credentials: { username: r.username },
     }));
-    res.json(sessions);
+    res.json(result);
   });
 
   // GET /sessions/credentials — returns full credentials (passwords encrypted) for agent restoration
@@ -134,11 +134,11 @@ export function createActionProxyRouter(sessions: KickableSessionHandle, toolCou
     const rows = queryAll<{ agent: string; username: string; password: string }>(
       'SELECT agent, username, password FROM proxy_sessions'
     );
-    const sessions = rows.map((r) => ({
+    const result = rows.map((r) => ({
       agentName: r.agent,
       credentials: { username: r.username, password: r.password }, // Already encrypted in DB
     }));
-    res.json(sessions);
+    res.json(result);
   });
 
   router.post('/sessions', sessionLimiter, async (req, res) => {

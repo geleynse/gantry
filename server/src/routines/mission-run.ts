@@ -121,18 +121,16 @@ async function run(ctx: RoutineContext, params: MissionRunParams): Promise<Routi
   const availMissions = extractMissionList(availResp.result);
 
   // Filter to acceptable types
-  const acceptable = availMissions.filter((m) => {
-    const mType = String(m.type ?? m.mission_type ?? m.category ?? "").toLowerCase();
-    return ACCEPTABLE_MISSION_TYPES.has(mType);
-  });
+  const acceptable = availMissions
+    .map((m) => ({ mission: m, mType: String(m.type ?? m.mission_type ?? m.category ?? "").toLowerCase() }))
+    .filter(({ mType }) => ACCEPTABLE_MISSION_TYPES.has(mType));
 
-  for (const mission of acceptable) {
+  for (const { mission, mType } of acceptable) {
     const missionId = String(mission.id ?? mission.mission_id ?? "");
     if (!missionId) continue;
 
     // Pre-flight cost check for trade missions: skip if agent can't afford the buy-in.
     // Mining/delivery missions have no upfront cost so we only gate trade types.
-    const mType = String(mission.type ?? mission.mission_type ?? mission.category ?? "").toLowerCase();
     const isTradeType = mType === "trading" || mType === "trade";
     if (isTradeType && availableCredits !== undefined) {
       const missionCost = getTradeMissionCost(mission);

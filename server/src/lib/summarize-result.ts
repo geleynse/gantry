@@ -80,7 +80,7 @@ export function summarizeResult(raw: string, toolName?: string): string {
     if (Array.isArray(parsed)) {
       return `[${parsed.length} item${parsed.length !== 1 ? "s" : ""}]`;
     }
-    if (parsed !== null && typeof parsed === "object") {
+    if (typeof parsed === "object") {
       const obj = parsed as Record<string, unknown>;
       const field = firstStringField(obj);
       if (field) {

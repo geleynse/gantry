@@ -71,13 +71,4 @@ export class ProxyHealthService {
   }
 }
 
-// Module-level singleton. Prefer importing this directly over the
-// deprecated getProxyStatuses() wrapper.
 export const proxyHealthService = new ProxyHealthService();
-
-/**
- * @deprecated Use `proxyHealthService.getProxyStatuses()` directly.
- */
-export async function getProxyStatuses(): Promise<ProxyInfo[]> {
-  return proxyHealthService.getProxyStatuses();
-}

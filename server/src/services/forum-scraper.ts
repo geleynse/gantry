@@ -62,14 +62,11 @@ export interface ForumService {
  *   - Handle rate limiting / auth tokens from fleet-config.json
  */
 export class StubForumService implements ForumService {
-  private forumUrl: string | undefined;
-
-  constructor(forumUrl?: string) {
-    this.forumUrl = forumUrl;
-    if (!forumUrl) {
-      log.debug("Forum service initialized without URL — running in stub mode");
-    } else {
+  constructor(private forumUrl?: string) {
+    if (forumUrl) {
       log.info("Forum service initialized", { url: forumUrl });
+    } else {
+      log.debug("Forum service initialized without URL — running in stub mode");
     }
   }
 
@@ -77,34 +74,23 @@ export class StubForumService implements ForumService {
     return !!this.forumUrl;
   }
 
-  async getLatestPosts(_category?: string): Promise<ForumPost[]> {
-    if (!this.forumUrl) {
-      // TODO: when forumUrl is set, fetch from `${this.forumUrl}/posts?category=${category}`
-      return [];
+  private async stubFetch(): Promise<ForumPost[]> {
+    if (this.forumUrl) {
+      log.warn("Forum URL is set but live scraping not yet implemented");
     }
-    // TODO: implement actual HTTP fetch and parse
-    log.warn("Forum URL is set but live scraping not yet implemented");
     return [];
   }
 
-  async searchPosts(_query: string): Promise<ForumPost[]> {
-    if (!this.forumUrl) {
-      // TODO: when forumUrl is set, fetch from `${this.forumUrl}/search?q=${encodeURIComponent(query)}`
-      return [];
-    }
-    // TODO: implement actual HTTP fetch and parse
-    log.warn("Forum URL is set but live scraping not yet implemented");
-    return [];
+  getLatestPosts(_category?: string): Promise<ForumPost[]> {
+    return this.stubFetch();
   }
 
-  async getGameUpdates(): Promise<ForumPost[]> {
-    if (!this.forumUrl) {
-      // TODO: when forumUrl is set, fetch from `${this.forumUrl}/posts?category=updates`
-      return [];
-    }
-    // TODO: implement actual HTTP fetch and parse
-    log.warn("Forum URL is set but live scraping not yet implemented");
-    return [];
+  searchPosts(_query: string): Promise<ForumPost[]> {
+    return this.stubFetch();
+  }
+
+  getGameUpdates(): Promise<ForumPost[]> {
+    return this.stubFetch();
   }
 }
 
@@ -124,55 +110,39 @@ const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
  * Reduces repeated requests during a single server uptime.
  */
 export class CachedForumService implements ForumService {
-  private inner: ForumService;
-  private latestPostsCache = new Map<string, CacheEntry<ForumPost[]>>();
-  private searchCache = new Map<string, CacheEntry<ForumPost[]>>();
-  private updatesCache: CacheEntry<ForumPost[]> | null = null;
+  private cache = new Map<string, CacheEntry<ForumPost[]>>();
 
-  constructor(inner: ForumService) {
-    this.inner = inner;
-  }
+  constructor(private inner: ForumService) {}
 
   isConfigured(): boolean {
     return this.inner.isConfigured();
   }
 
-  async getLatestPosts(category?: string): Promise<ForumPost[]> {
-    const key = category ?? "__all__";
-    const cached = this.latestPostsCache.get(key);
+  private async memoize(key: string, fetch: () => Promise<ForumPost[]>): Promise<ForumPost[]> {
+    const cached = this.cache.get(key);
     if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
       return cached.data;
     }
-    const data = await this.inner.getLatestPosts(category);
-    this.latestPostsCache.set(key, { data, fetchedAt: Date.now() });
+    const data = await fetch();
+    this.cache.set(key, { data, fetchedAt: Date.now() });
     return data;
   }
 
-  async searchPosts(query: string): Promise<ForumPost[]> {
-    const key = query.toLowerCase().trim();
-    const cached = this.searchCache.get(key);
-    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-      return cached.data;
-    }
-    const data = await this.inner.searchPosts(query);
-    this.searchCache.set(key, { data, fetchedAt: Date.now() });
-    return data;
+  getLatestPosts(category?: string): Promise<ForumPost[]> {
+    return this.memoize(`latest:${category ?? "__all__"}`, () => this.inner.getLatestPosts(category));
   }
 
-  async getGameUpdates(): Promise<ForumPost[]> {
-    if (this.updatesCache && Date.now() - this.updatesCache.fetchedAt < CACHE_TTL_MS) {
-      return this.updatesCache.data;
-    }
-    const data = await this.inner.getGameUpdates();
-    this.updatesCache = { data, fetchedAt: Date.now() };
-    return data;
+  searchPosts(query: string): Promise<ForumPost[]> {
+    return this.memoize(`search:${query.toLowerCase().trim()}`, () => this.inner.searchPosts(query));
+  }
+
+  getGameUpdates(): Promise<ForumPost[]> {
+    return this.memoize("updates", () => this.inner.getGameUpdates());
   }
 
   /** Invalidate all caches (e.g., for testing or forced refresh). */
   clearCache(): void {
-    this.latestPostsCache.clear();
-    this.searchCache.clear();
-    this.updatesCache = null;
+    this.cache.clear();
   }
 }
 

@@ -114,18 +114,7 @@ export class EventBuffer {
 
   /** Drain only critical-priority events, leaving normal events in the buffer. */
   drainCritical(): GameEvent[] {
-    const critical: GameEvent[] = [];
-    const rest: GameEvent[] = [];
-    const len = this.count;
-    let idx = this.head;
-    for (let i = 0; i < len; i++) {
-      const e = this.buf[idx]!;
-      if (categorizeEvent(e.type) === EventPriority.Critical) critical.push(e);
-      else rest.push(e);
-      idx = (idx + 1) % this.buf.length;
-    }
-    this.rebuildFrom(rest);
-    return critical;
+    return this.drain(Array.from(CRITICAL_TYPES));
   }
 
   /**
@@ -177,7 +166,7 @@ export class EventBuffer {
   }
 
   /** Read all events in order without modifying the buffer. */
-  private toArray(): GameEvent[] {
+  toArray(): GameEvent[] {
     const result: GameEvent[] = [];
     let idx = this.head;
     for (let i = 0; i < this.count; i++) {

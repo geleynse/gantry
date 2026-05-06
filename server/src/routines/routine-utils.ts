@@ -249,6 +249,26 @@ export function getTradeMissionCost(mission: Record<string, unknown>): number | 
 }
 
 /**
+ * Read hull or fuel percentage from a ship status object.
+ * Handles both field name variants (max_hull / hull_max, max_fuel / fuel_max).
+ * Returns null if data is missing.
+ */
+export function getStatPct(
+  ship: Record<string, unknown> | undefined,
+  stat: "hull" | "fuel",
+): number | null {
+  if (!ship) return null;
+  const current = typeof ship[stat] === "number" ? (ship[stat] as number) : undefined;
+  const maxKey = `max_${stat}` as const;
+  const maxKeyAlt = `${stat}_max` as const;
+  const max = typeof ship[maxKey] === "number" ? (ship[maxKey] as number)
+            : typeof ship[maxKeyAlt] === "number" ? (ship[maxKeyAlt] as number)
+            : undefined;
+  if (current === undefined || max === undefined || max <= 0) return null;
+  return (current / max) * 100;
+}
+
+/**
  * Utility to parse cargo data from game tool results and calculate utilization.
  * Handles the nested result shape from ctx.client.execute().
  */
@@ -262,14 +282,16 @@ export function getCargoUtilization(cargoResult: unknown): {
 
   // Sometimes we get the raw tool response { result: { ... }, error: ... }
   // or just the result object itself.
-  const data = (cargoResult as any).result || cargoResult;
-
-  if (typeof data !== "object" || data === null) return null;
+  const obj = cargoResult as Record<string, unknown>;
+  const unwrapped = typeof obj.result === "object" && obj.result !== null ? obj.result : cargoResult;
+  if (typeof unwrapped !== "object" || unwrapped === null) return null;
+  const data = unwrapped as Record<string, unknown>;
 
   // SpaceMolt 'get_cargo' returns { used, capacity, cargo: [...] }
   // Some mining tools return { cargo_after: { used, max } } or similar.
-  const used = typeof data.used === "number" ? data.used : (typeof data.cargo_after?.used === "number" ? data.cargo_after.used : null);
-  const capacity = typeof data.capacity === "number" ? data.capacity : (typeof data.max === "number" ? data.max : (typeof data.cargo_after?.max === "number" ? data.cargo_after.max : null));
+  const cargoAfter = typeof data.cargo_after === "object" && data.cargo_after !== null ? data.cargo_after as Record<string, unknown> : undefined;
+  const used = typeof data.used === "number" ? data.used : (typeof cargoAfter?.used === "number" ? cargoAfter.used : null);
+  const capacity = typeof data.capacity === "number" ? data.capacity : (typeof data.max === "number" ? data.max : (typeof cargoAfter?.max === "number" ? cargoAfter.max : null));
 
   if (used === null || capacity === null || capacity <= 0) {
     return null;
