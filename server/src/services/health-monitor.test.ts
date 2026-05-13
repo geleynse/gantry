@@ -3,6 +3,7 @@ import { createHealthMonitor } from "./health-monitor.js";
 import * as proc from "./process-manager.js";
 import * as signalsDb from "./signals-db.js";
 import * as agentManager from "./agent-manager.js";
+import * as cooldowns from "./overseer-stop-cooldown.js";
 import type { AgentConfig } from "../config.js";
 
 const testAgents: AgentConfig[] = [
@@ -14,12 +15,14 @@ describe("createHealthMonitor", () => {
   let mockHasSession: ReturnType<typeof spyOn>;
   let mockHasSignal: ReturnType<typeof spyOn>;
   let mockStartAgent: ReturnType<typeof spyOn>;
+  let mockIsRestartSuppressed: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     mock.restore();
     mockHasSession = spyOn(proc, "hasSession").mockResolvedValue(false);
     mockHasSignal = spyOn(signalsDb, "hasSignal").mockReturnValue(false);
     mockStartAgent = spyOn(agentManager, "startAgent").mockResolvedValue({ ok: true, message: "started" });
+    mockIsRestartSuppressed = spyOn(cooldowns, "isRestartSuppressed").mockReturnValue({ suppressed: false });
   });
 
   describe("tick — agent is alive", () => {
@@ -166,6 +169,47 @@ describe("createHealthMonitor", () => {
       // Only drifter-gale should be restarted
       expect(mockStartAgent).toHaveBeenCalledWith("drifter-gale");
       expect(mockStartAgent).not.toHaveBeenCalledWith("sable-thorn");
+    });
+
+    it("preserves desiredState=running during a normal overseer cooldown so auto-restart can resume after expiry", async () => {
+      mockHasSession.mockResolvedValue(false);
+      mockHasSignal.mockReturnValue(false);
+      mockIsRestartSuppressed
+        .mockReturnValueOnce({
+          suppressed: true,
+          stoppedUntil: new Date(Date.now() + 60_000),
+          reason: "overseer stop",
+          holdOffline: false,
+        })
+        .mockReturnValueOnce({ suppressed: false });
+
+      const monitor = createHealthMonitor([testAgents[0]]);
+      monitor.markRunning("drifter-gale");
+
+      await monitor.tick();
+      expect(mockStartAgent).not.toHaveBeenCalled();
+      expect(monitor.getState("drifter-gale")?.desiredState).toBe("running");
+
+      await monitor.tick();
+      expect(mockStartAgent).toHaveBeenCalledWith("drifter-gale");
+    });
+
+    it("switches to desiredState=stopped when hold_offline is set", async () => {
+      mockHasSession.mockResolvedValue(false);
+      mockHasSignal.mockReturnValue(false);
+      mockIsRestartSuppressed.mockReturnValue({
+        suppressed: true,
+        stoppedUntil: new Date(Date.now() + 60_000),
+        reason: "overseer escalation",
+        holdOffline: true,
+      });
+
+      const monitor = createHealthMonitor([testAgents[0]]);
+      monitor.markRunning("drifter-gale");
+
+      await monitor.tick();
+      expect(mockStartAgent).not.toHaveBeenCalled();
+      expect(monitor.getState("drifter-gale")?.desiredState).toBe("stopped");
     });
   });
 

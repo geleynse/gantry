@@ -72,6 +72,7 @@ export function createDatabase(dbPath?: string): void {
     `ALTER TABLE agent_docs ADD COLUMN importance INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE agent_diary ADD COLUMN importance INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE galaxy_pois ADD COLUMN dockable INTEGER`,
+    `ALTER TABLE overseer_stop_cooldowns ADD COLUMN hold_offline INTEGER NOT NULL DEFAULT 0`,
   ];
   for (const sql of columnUpgrades) {
     try {
@@ -679,11 +680,15 @@ CREATE INDEX IF NOT EXISTS idx_ext_snapshots_date ON external_market_snapshots(a
 -- stopped_until: auto-restart suppressed until this ISO timestamp.
 -- alert_fired_at: non-null when an escalation alert has been fired for the current
 --   threshold crossing (cleared when rolling-24h count drops back below threshold).
+-- hold_offline: 1 when the agent has crossed the escalation threshold and must be
+--   reviewed by an operator before any restart. Suppresses auto-restart regardless
+--   of stopped_until. Cleared only by clearCooldownForOperatorStart.
 CREATE TABLE IF NOT EXISTS overseer_stop_cooldowns (
   agent TEXT PRIMARY KEY,
   stopped_until TEXT NOT NULL,
   stop_reason TEXT NOT NULL DEFAULT '',
   alert_fired_at TEXT,
+  hold_offline INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -30,6 +30,7 @@ import toolCallsRoutes, { agentReasoningRouter } from "./tool-calls.js";
 import { createServerLogsRouter } from "./server-logs.js";
 import combatRoutes from "./combat.js";
 import economyRoutes from "./economy.js";
+import surveyMonetizationRoutes from "./survey-monetization.js";
 import knowledgeRoutes from "./knowledge.js";
 import directivesRoutes from "./directives.js";
 import { agentFleetControlRouter, routinesRouter } from "./fleet-control.js";
@@ -131,6 +132,7 @@ export function createApiRoutes(deps: ApiRouteDeps): Router {
   router.use("/server/logs", createServerLogsRouter(fleetDir));
   router.use("/combat", combatRoutes);
   router.use("/economy", economyRoutes);
+  router.use("/survey-monetization", surveyMonetizationRoutes);
   router.use("/captains-logs", createCaptainsLogsRouter());
   router.use("/knowledge", knowledgeRoutes);
   router.use("/pois", createPoiExplorerRouter());

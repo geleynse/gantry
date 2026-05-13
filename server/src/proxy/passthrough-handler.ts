@@ -53,6 +53,40 @@ export function textResult(data: unknown): McpTextResult {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
 }
 
+/**
+ * Guard: reject `refuel(target=...)` before it reaches the game client.
+ *
+ * Background: the game's refuel command is self-only — there is no proxy or
+ * server handler for cross-player fuel transfer. Without this guard the game
+ * silently accepts the call, ignores the bogus param, and returns a misleading
+ * error (e.g. `unknown_item: 'fleet'`, `no_fuel_cells`) which agents read as
+ * "different errors, must be a syntax variant" and keep retrying. Sable-thorn's
+ * 2026-05-04 incident showed the agent thought it had rescued a stranded ally
+ * when it had only refueled itself. Silently stripping the param would
+ * reproduce the same footgun, so the rejection is loud and explicit.
+ *
+ * Returns the structured error envelope when the guard fires, or null when the
+ * call is fine to pass through. Both v1 (`refuel`) and v2
+ * (`spacemolt(action="refuel", ...)`) call paths funnel through
+ * handlePassthrough with `v1ToolName === "refuel"`, so a single chokepoint is
+ * sufficient.
+ */
+export function checkRefuelTargetGuard(
+  v1ToolName: string,
+  payload: Record<string, unknown> | undefined,
+): { status: "error"; code: string; message: string } | null {
+  if (v1ToolName !== "refuel") return null;
+  if (!payload || payload.target === undefined || payload.target === null || payload.target === "") return null;
+  return {
+    status: "error",
+    code: "refuel_target_unsupported",
+    message:
+      "target= parameter is not supported by this proxy/game build. " +
+      "Use refuel() for self-refuel only. To rescue a stranded fleet member, " +
+      "see common-rules §12.5 OR escalate to operator.",
+  };
+}
+
 /** Minimal client interface required by handlePassthrough */
 export interface PassthroughClient {
   execute: (cmd: string, args?: Record<string, unknown>) => Promise<{ result?: unknown; error?: { code?: unknown; message?: unknown } | null }>;
@@ -229,6 +263,20 @@ export async function handlePassthrough(
 
   // Record agent activity to prevent stale-session detection during active tool execution
   recordActivity?.(agentName);
+
+  // --- 0. refuel(target=) guard ---
+  // Loud, structured rejection. Silently stripping `target` is what burned us:
+  // the game treats unknown params loosely and returned cryptic errors that agents
+  // misread as syntax variants and kept retrying (see proxy-todos.md 2026-05-04).
+  const refuelGuard = checkRefuelTargetGuard(v1ToolName, payload);
+  if (refuelGuard) {
+    if (!opts?.skipLogging) {
+      const guardId = logToolCallStart(agentName, action, payload, { traceId });
+      logToolCallComplete(guardId, agentName, action, refuelGuard, 0, { success: false, errorCode: "refuel_target_unsupported" });
+    }
+    log.warn("refuel target= rejected by proxy guard", { agent: agentName, target: String(payload?.target) });
+    return await withInjections(agentName, textResult(refuelGuard));
+  }
 
   // --- 1. Nav BEFORE capture + auto-undock before jump ---
 
@@ -1115,9 +1163,12 @@ export async function handlePassthrough(
     }
   }
 
-  // Validate and mirror captains_log_add to local Gantry diary DB
+  // Validate and mirror captains_log_add to local Gantry diary DB.
+  // Game tool name varies: agents use `content=` (current v2), older code used `entry=`.
+  // Accept both — `content` is authoritative when both are present.
   if (v1ToolName === "captains_log_add") {
-    const entry = (payload as Record<string, unknown>)?.entry;
+    const payloadObj = payload as Record<string, unknown> | undefined;
+    const entry = (payloadObj?.content ?? payloadObj?.entry) as unknown;
     if (typeof entry === "string" && entry.trim()) {
       // Validate captain's log format
       const validation = validateCaptainsLogFormat(entry);
@@ -1148,22 +1199,36 @@ export async function handlePassthrough(
         log.warn("Failed to mirror diary entry to local DB", { agentName, err: String(err) });
       }
 
-      // Also persist to captain's logs table if this was a successful add
-      if (typeof result === "object" && result !== null) {
+      // Also persist to captain's logs table if this was a successful add.
+      // Game-server returns either a string ("Captain's log entry #N added.")
+      // or, hypothetically, a structured {status, log_id} envelope. Handle both —
+      // the string-only path was previously unhandled and silently dropped 100% of entries.
+      let persistLogId: string | undefined;
+      let persistSeq: number | undefined;
+      if (typeof result === "string") {
+        const m = result.match(/Captain's log entry #(\d+) added/);
+        if (m) {
+          persistLogId = m[1];
+          persistSeq = Number(m[1]);
+        }
+      } else if (typeof result === "object" && result !== null) {
         const resultObj = result as Record<string, unknown>;
         if (resultObj.status === "ok" && resultObj.log_id) {
-          try {
-            persistCaptainsLogEntry(agentName, entry, String(resultObj.log_id));
-            log.debug("persisted captain's log entry to captains_logs table", {
-              agent: agentName,
-              log_id: resultObj.log_id,
-            });
-          } catch (err) {
-            log.warn("Failed to persist captain's log to DB", {
-              agent: agentName,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
+          persistLogId = String(resultObj.log_id);
+        }
+      }
+      if (persistLogId !== undefined) {
+        try {
+          persistCaptainsLogEntry(agentName, entry, persistLogId, persistSeq);
+          log.debug("persisted captain's log entry to captains_logs table", {
+            agent: agentName,
+            log_id: persistLogId,
+          });
+        } catch (err) {
+          log.warn("Failed to persist captain's log to DB", {
+            agent: agentName,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     }

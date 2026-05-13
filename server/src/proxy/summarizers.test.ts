@@ -125,4 +125,83 @@ describe("summarizeToolResult", () => {
     expect(orders).toHaveLength(15);
     expect(orders[0]).not.toHaveProperty("created_at");
   });
+
+  // ---------------------------------------------------------------------------
+  // get_ship — v0.275+ shape regression (rsned/spacemolt a18420d, 2026-05-07)
+  // ---------------------------------------------------------------------------
+  //
+  // Server v0.275+ changed get_ship to put cargo_used/cargo_max at the response
+  // top level and to nest the ship-instance fields under a "class" key (the
+  // pre-v0.275 name was "ship"; "class" reuses a legacy name for the same data).
+  // rsned hit a 840/420 cargo over-cap drift because his Go parser only looked
+  // for "ship" and silently dropped the resync. Our path is different — Gantry
+  // doesn't drive cargo state from get_ship (we use the get_status text
+  // dashboard) — but we still pass the get_ship result through to agents and
+  // through summarizers/passthrough consumers. These tests pin the new shape so
+  // we notice if discoverPick regresses to a strict allow-list.
+  //
+  // Fields verified:
+  //   - top-level cargo_used / cargo_max are forwarded (authoritative resync)
+  //   - top-level modules is forwarded as the canonical module list
+  //   - the renamed ship-instance object ("class") is forwarded opaquely
+
+  it("get_ship: forwards v0.275+ shape (cargo at top-level, ship-instance under class)", () => {
+    // Approximate v0.275+ get_ship shape per rsned/spacemolt commit a18420d.
+    const raw = {
+      cargo_used: 12,
+      cargo_max: 30,
+      modules: [
+        { id: "laser-1", class_id: "weapon_laser_mk1", slot: "weapon", size: "S" },
+        { id: "thrust-1", class_id: "engine_thrust_mk1", slot: "engine", size: "M" },
+      ],
+      class: {
+        name: "Windrunner",
+        class_id: "scout",
+        hull: 80, max_hull: 100,
+        shield: 40, max_shield: 50,
+        fuel: 60, max_fuel: 100,
+      },
+    };
+    const result = summarizeToolResult("get_ship", raw) as Record<string, unknown>;
+    // Authoritative cargo resync fields preserved at top level
+    expect(result.cargo_used).toBe(12);
+    expect(result.cargo_max).toBe(30);
+    // Modules preserved at top level (passthrough handler consumers read here)
+    const modules = result.modules as Array<Record<string, unknown>>;
+    expect(Array.isArray(modules)).toBe(true);
+    expect(modules).toHaveLength(2);
+    expect(modules[0].id).toBe("laser-1");
+    // Ship-instance under "class" forwarded opaquely (discoverPick is non-destructive)
+    const cls = result.class as Record<string, unknown>;
+    expect(cls).toBeDefined();
+    expect(cls.class_id).toBe("scout");
+    expect(cls.hull).toBe(80);
+    expect(cls.max_hull).toBe(100);
+    expect(cls.fuel).toBe(60);
+    expect(cls.max_fuel).toBe(100);
+  });
+
+  it("get_ship: legacy pre-v0.275 shape still works (ship-instance fields at top level)", () => {
+    // Pre-v0.275 shape: hull/max_hull/etc. at the top level. Some pinned older
+    // game-server deployments may still emit this; discoverPick must keep
+    // forwarding these named fields without normalization.
+    const raw = {
+      name: "Windrunner",
+      class_id: "scout",
+      hull: 80, max_hull: 100,
+      shield: 40, max_shield: 50,
+      fuel: 60, max_fuel: 100,
+      cargo_used: 12, cargo_capacity: 30,
+      modules: [{ id: "laser-1", class_id: "weapon_laser_mk1" }],
+    };
+    const result = summarizeToolResult("get_ship", raw) as Record<string, unknown>;
+    expect(result.class_id).toBe("scout");
+    expect(result.hull).toBe(80);
+    expect(result.max_hull).toBe(100);
+    expect(result.cargo_used).toBe(12);
+    // legacy field name (pre-v0.275 used cargo_capacity rather than cargo_max)
+    expect(result.cargo_capacity).toBe(30);
+    const modules = result.modules as Array<Record<string, unknown>>;
+    expect(modules).toHaveLength(1);
+  });
 });

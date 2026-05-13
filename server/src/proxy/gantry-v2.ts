@@ -153,9 +153,10 @@ const STANDALONE_PROXY_TOOLS = new Set([
 ]);
 
 export function withPrayerScriptSchema(toolName: string, serverTool?: ServerTool): ServerTool | undefined {
-  // Catalog: extend `type` enum with proxy-injected types (craft_chains, etc.) so
-  // agents calling `spacemolt_catalog(type="craft_chains")` clear schema validation.
-  // The actual handlers live in the v2 dispatcher (`spacemolt_catalog && action === "craft_chains"`).
+  // Catalog: extend `type` enum with proxy-injected types (craft_chains,
+  // arbitrage_routes, etc.) so agents calling `spacemolt_catalog(type="...")`
+  // clear schema validation. The actual handlers live in the v2 dispatcher
+  // (`spacemolt_catalog && action === "<type>"`).
   if (toolName === "spacemolt_catalog") {
     if (!serverTool) return serverTool;
     const inputSchema = serverTool.inputSchema ?? { type: "object", properties: {}, required: [] };
@@ -163,7 +164,7 @@ export function withPrayerScriptSchema(toolName: string, serverTool?: ServerTool
     const required = [...(inputSchema.required ?? [])];
     const typeProp = properties.type as { enum?: string[]; type?: string; description?: string } | undefined;
     if (typeProp?.enum) {
-      const proxyTypes = ["craft_chains"];
+      const proxyTypes = ["craft_chains", "arbitrage_routes"];
       const missing = proxyTypes.filter(name => !typeProp.enum!.includes(name));
       if (missing.length > 0) {
         properties.type = { ...typeProp, enum: [...typeProp.enum, ...missing] };
@@ -189,7 +190,12 @@ export function withPrayerScriptSchema(toolName: string, serverTool?: ServerTool
 
   const action = properties.action as { enum?: string[]; type?: string; description?: string } | undefined;
   if (action?.enum) {
-    const proxyActions = ["pray", "get_routine_status"];
+    // Proxy-only actions on the `spacemolt` consolidated tool. `pray` /
+    // `get_routine_status` are handled directly in the dispatcher;
+    // `get_craft_profitability` / `craft_path_to` are compound tools
+    // (buildCompoundActions) that v2 agents couldn't reach because they
+    // weren't in the upstream action enum, so client-side Zod rejected them.
+    const proxyActions = ["pray", "get_routine_status", "get_craft_profitability", "craft_path_to"];
     const missingActions = proxyActions.filter((name) => !action.enum!.includes(name));
     if (missingActions.length > 0) {
       properties.action = { ...action, enum: [...action.enum, ...missingActions] };
@@ -262,6 +268,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
   const gameHealthRef = shared.proxy.gameHealthRef;
   const sellLog = shared.fleet.sellLog;
   const marketCache = shared.cache.market;
+  const arbitrageAnalyzer = shared.fleet.arbitrageAnalyzer;
 
   // Build PipelineContext for shared pipeline functions
   const directivesCallCounters = new Map<string, number>();
@@ -1126,14 +1133,34 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
             }
           }
           const results = findCraftChains(ingredient, priceMap, target);
+          const hasPartial = results.some((c) => c.data_quality === "partial");
           return textResult({
             chains: results,
             note: results.length === 0
               ? "No profitable craft chains found. Market prices may not cover input costs, or no recipes exist for the given ingredient."
-              : `Found ${results.length} craft chain(s). Uses vendored BOM data from rsned/spacemolt-crafting-server.`,
+              : `Found ${results.length} craft chain(s). Uses vendored BOM data from rsned/spacemolt-crafting-server${hasPartial ? " plus recipes discovered in the live game catalog (data_quality:'partial' — double-check inputs before committing)" : ""}.`,
           });
         } catch (e) {
           return textResult({ error: `craft_chains failed: ${e instanceof Error ? e.message : String(e)}` });
+        }
+      }
+
+      // spacemolt_catalog: arbitrage_routes action — cross-empire price spreads
+      // (cheapest-ask empire vs richest-bid empire per item), computed from the
+      // cached global market (5-min TTL). FREE — no game turn. Same engine that
+      // backs GET /api/market/arbitrage and the v1 get_arbitrage tool; this is
+      // the v2 surface. Empire-granular only: no system IDs / hop counts.
+      if (toolName === "spacemolt_catalog" && action === "arbitrage_routes") {
+        try {
+          const opps = arbitrageAnalyzer.getOpportunities(marketCache);
+          return textResult({
+            opportunities: opps,
+            note: opps.length === 0
+              ? "No cross-empire arbitrage opportunities above 10% margin in cached market data. The market cache may be cold — try again shortly."
+              : `${opps.length} cross-empire opportunit${opps.length === 1 ? "y" : "ies"} (5-min cache). Empire-level only — resolve systems/hops with find_local_route (keep total jumps short) and watch for frontier pirates / lawless border hops before committing.`,
+          });
+        } catch (e) {
+          return textResult({ error: `arbitrage_routes failed: ${e instanceof Error ? e.message : String(e)}` });
         }
       }
 

@@ -17,15 +17,36 @@ import { GalaxyGraph } from "../pathfinder.js";
 
 type StatusEntry = { data: Record<string, unknown>; fetchedAt: number };
 
+/**
+ * Build a default waitForTick that simulates a successful refreshStatus by
+ * advancing the cache entry's fetchedAt for `agentName`. multi-sell now uses
+ * fetchedAt advancement as the signal for "post-action verification succeeded";
+ * tests that don't override waitForTick should reflect the success path.
+ */
+function makeAdvancingWaitForTick(
+  cache: Map<string, StatusEntry>,
+  agentName: string,
+): GameClientLike["waitForTick"] {
+  return async () => {
+    const entry = cache.get(agentName);
+    if (entry) cache.set(agentName, { data: entry.data, fetchedAt: Date.now() + 1 });
+  };
+}
+
 function makeClient(
   overrides: Partial<{
     execute: GameClientLike["execute"];
     waitForTick: GameClientLike["waitForTick"];
   }> = {},
+  // Optional cache + agent so the default waitForTick advances fetchedAt
+  cacheCtx?: { cache: Map<string, StatusEntry>; agentName: string },
 ): GameClientLike {
+  const defaultWaitForTick = cacheCtx
+    ? makeAdvancingWaitForTick(cacheCtx.cache, cacheCtx.agentName)
+    : (async () => {}) as GameClientLike["waitForTick"];
   return {
     execute: overrides.execute ?? (async () => ({ result: { ok: true } })),
-    waitForTick: overrides.waitForTick ?? (async () => {}),
+    waitForTick: overrides.waitForTick ?? defaultWaitForTick,
     lastArrivalTick: null,
   };
 }
@@ -96,7 +117,7 @@ describe("multi-sell (direct import)", () => {
         }
         return { result: {} };
       },
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
 
     const items: MultiSellItem[] = [
@@ -119,7 +140,7 @@ describe("multi-sell (direct import)", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
 
     const result = await multiSell(
@@ -140,7 +161,7 @@ describe("multi-sell (direct import)", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
 
     const result = await multiSell(
@@ -162,7 +183,7 @@ describe("multi-sell (direct import)", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
 
     // calledTools is empty, but cache has recent market analysis
@@ -185,7 +206,7 @@ describe("multi-sell (direct import)", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
 
     const result = await multiSell(
@@ -211,7 +232,7 @@ describe("multi-sell (direct import)", () => {
         }
         return { result: {} };
       },
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
 
     const result = await multiSell(
@@ -232,7 +253,7 @@ describe("multi-sell (direct import)", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
 
     const result = await multiSell(
@@ -262,7 +283,7 @@ describe("multi-sell (direct import)", () => {
         }
         return { result: {} };
       },
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
 
     const result = await multiSell(
@@ -282,7 +303,7 @@ describe("multi-sell (direct import)", () => {
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
       // credits never change in cache
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
 
     const result = await multiSell(
@@ -303,7 +324,7 @@ describe("multi-sell (direct import)", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache, { sellLog });
 
     await multiSell(
@@ -332,7 +353,7 @@ describe("multi-sell (direct import)", () => {
         if (tool === "sell") return { error: { error: "item_not_found", code: 404 } };
         return { result: {} };
       },
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache, { sellLog });
 
     await multiSell(
@@ -363,7 +384,7 @@ describe("multi-sell (direct import)", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache, { sellLog });
 
     const result = await multiSell(
@@ -394,6 +415,9 @@ describe("multi-sell (direct import)", () => {
       },
       waitForTick: async () => {
         tickCount++;
+        // Simulate refreshStatus success: advance fetchedAt so verification passes
+        const entry = cache.get("agent");
+        if (entry) cache.set("agent", { data: entry.data, fetchedAt: Date.now() + tickCount });
       },
     });
     const deps = makeDeps("agent", client, cache);
@@ -422,6 +446,9 @@ describe("multi-sell (direct import)", () => {
       execute: async () => ({ result: { ok: true } }),
       waitForTick: async () => {
         tickCount++;
+        // Simulate refreshStatus success: advance fetchedAt so verification passes
+        const entry = cache.get("agent");
+        if (entry) cache.set("agent", { data: entry.data, fetchedAt: Date.now() + tickCount });
       },
     });
     const deps = makeDeps("agent", client, cache);
@@ -434,6 +461,95 @@ describe("multi-sell (direct import)", () => {
 
     // At minimum, 1 final tick wait should occur
     expect(tickCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("flags verification_status=rate_limited when post-sell refreshStatus fails (does NOT lie about credits_delta=0)", async () => {
+    // Repro: rust-vane plasma sale 2026-05-06. multi_sell completes the underlying sell
+    // calls; refreshStatus then hits -32029 rate-limit; pre-sale cache stays stale; old
+    // code returned credits_delta=0 + "cargo unchanged" warning, agent narrated item loss.
+    // Expected new behavior: verification_status="rate_limited", no credits_delta lie,
+    // explicit "verify with get_status / get_cargo" message.
+    const cache = makeStatusCache("agent", {
+      player: { current_poi: "ccc_central", credits: 50_845_456, docked_at_base: "ccc_central" },
+      ship: { cargo_used: 189 },
+    });
+    let sellCount = 0;
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "sell") {
+          sellCount++;
+          // Game returns the buggy success-shape "Sold 0 for 0cr" — same as production
+          return { result: { message: "Sold 0 for 0cr" } };
+        }
+        return { result: {} };
+      },
+      // Critical: waitForTick returns but does NOT advance fetchedAt — simulates
+      // refreshStatus hitting -32029 on both get_status + get_location.
+      waitForTick: async () => { /* no-op: cache stays stale */ },
+    });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await multiSell(
+      deps,
+      [{ item_id: "plasma_cell_pack", quantity: 75 }],
+      new Set(["analyze_market"]),
+    );
+
+    expect(sellCount).toBe(1);
+    expect(result.status).toBe("completed");
+    // The fix: report rate-limited verification, not a fabricated zero delta.
+    expect(result.verification_status).toBe("rate_limited");
+    expect(String(result.verification_message)).toContain("rate-limited");
+    expect(String(result.verification_message)).toContain("get_cargo");
+    // Must NOT emit the misleading shape that started this whole incident.
+    expect(result.cargo_warning).toBeUndefined();
+    expect(result.warning).toBeUndefined();
+    expect(result.credits_after).toBeUndefined();
+    expect((result as Record<string, unknown>).credits_delta).toBeUndefined();
+    // Pre-sale state is exposed under explicit "_before" names so the agent knows
+    // these are NOT the post-sale numbers.
+    expect(result.credits_before).toBe(50_845_456);
+    expect(result.cargo_used_before).toBe(189);
+  }, 15_000); // helper retries with 1s backoff x2 — generous timeout
+
+  it("flags verification_status=ok and computes credits_delta when refresh succeeds", async () => {
+    // Counterpoint to the rate-limited test: when the post-sell refresh succeeds
+    // (cache.fetchedAt advances), normal verification + delta computation runs.
+    const cache = makeStatusCache("agent", {
+      player: { current_poi: "ccc_central", credits: 50_845_456, docked_at_base: "ccc_central" },
+      ship: { cargo_used: 189 },
+    });
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "sell") {
+          // Simulate the sell settling: bump credits, drop cargo
+          const entry = cache.get("agent")!;
+          cache.set("agent", {
+            ...entry,
+            data: {
+              ...entry.data,
+              player: { ...(entry.data.player as Record<string, unknown>), credits: 50_850_691 },
+              ship: { cargo_used: 114 },
+            },
+          });
+          return { result: { ok: true } };
+        }
+        return { result: {} };
+      },
+    }, { cache, agentName: "agent" });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await multiSell(
+      deps,
+      [{ item_id: "plasma_cell_pack", quantity: 75 }],
+      new Set(["analyze_market"]),
+    );
+
+    expect(result.verification_status).toBe("ok");
+    expect(result.credits_after).toBe(50_850_691);
+    expect(result.cargo_warning).toBeUndefined();
+    expect(result.warning).toBeUndefined();
+    expect(result.verification_message).toBeUndefined();
   });
 
   it("includes all sell results even when some fail", async () => {
@@ -451,7 +567,7 @@ describe("multi-sell (direct import)", () => {
         }
         return { result: {} };
       },
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
 
     const items: MultiSellItem[] = [

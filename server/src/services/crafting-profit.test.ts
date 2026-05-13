@@ -5,15 +5,18 @@
  * Uses a fixture BOM so tests are not coupled to the vendored JSON file.
  */
 
-import { describe, it, expect, beforeAll } from 'bun:test';
+import { describe, it, expect, beforeAll, afterEach } from 'bun:test';
 import {
   loadBom,
   evaluateRecipe,
   findCraftChains,
   findAllChains,
+  getDbRecipes,
   type BomRecipe,
   type PricePoint,
 } from './crafting-profit.js';
+import { createDatabase, closeDb } from './database.js';
+import { registerRecipe } from './recipe-registry.js';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -297,5 +300,140 @@ describe('findAllChains', () => {
     const result = findAllChains(undefined, prices);
     expect(result.profitable.length).toBeGreaterThan(0);
     expect(result.unpriceable.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// evaluateRecipe data_quality override
+// ---------------------------------------------------------------------------
+
+describe('evaluateRecipe data_quality', () => {
+  it('defaults data_quality to "live"', () => {
+    const prices = new Map<string, PricePoint>([
+      ['iron_ore', { bid: 4, ask: 5 }],
+      ['steel_plate', { bid: 80, ask: 90 }],
+    ]);
+    const chain = evaluateRecipe(FIXTURE_BOM.recipes[0], prices)!;
+    expect(chain.data_quality).toBe('live');
+  });
+
+  it('honors an explicit data_quality argument', () => {
+    const prices = new Map<string, PricePoint>([
+      ['iron_ore', { bid: 4, ask: 5 }],
+      ['steel_plate', { bid: 80, ask: 90 }],
+    ]);
+    const chain = evaluateRecipe(FIXTURE_BOM.recipes[0], prices, 'partial')!;
+    expect(chain.data_quality).toBe('partial');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Game-catalog DB fallback (consolidation: findCraftChains now also scans the
+// game_recipes table populated by discovery-service / game-catalog, so the
+// 20-recipe vendored BOM is no longer the only source for multi-step chains).
+// ---------------------------------------------------------------------------
+
+describe('findCraftChains — game-catalog DB fallback', () => {
+  beforeAll(() => {
+    loadBom(fixturePath);
+  });
+
+  afterEach(() => {
+    closeDb();
+  });
+
+  it('getDbRecipes returns [] when the DB is not initialized', () => {
+    // No createDatabase() in this test — getAllRecipes throws, getDbRecipes
+    // swallows it. Used by the dispatcher with a cold DB at startup.
+    expect(getDbRecipes()).toEqual([]);
+  });
+
+  it('includeDbRecipes:false keeps findCraftChains restricted to the vendored set', () => {
+    createDatabase(':memory:');
+    registerRecipe({
+      id: 'forge_reactor_core',
+      output_item_id: 'reactor_core',
+      output_quantity: 1,
+      inputs: [{ item_id: 'platinum_ore', quantity: 4 }],
+      time_seconds: 60,
+    });
+    const prices = new Map<string, PricePoint>([
+      ['platinum_ore', { bid: 80, ask: 100 }],
+      ['reactor_core', { bid: 1000, ask: 1100 }],
+    ]);
+    // platinum_ore has no vendored recipe; with the DB fallback off, nothing.
+    expect(findCraftChains('platinum_ore', prices, undefined, { includeDbRecipes: false })).toEqual([]);
+  });
+
+  it('falls back to game-catalog recipes when the vendored set has no match', () => {
+    createDatabase(':memory:');
+    registerRecipe({
+      id: 'forge_reactor_core',
+      output_item_id: 'reactor_core',
+      output_quantity: 1,
+      inputs: [{ item_id: 'platinum_ore', quantity: 4 }],
+      time_seconds: 60,
+    });
+    const prices = new Map<string, PricePoint>([
+      ['platinum_ore', { bid: 80, ask: 100 }],   // 4 * 100 = 400 input cost
+      ['reactor_core', { bid: 1000, ask: 1100 }], // 1 * 1000 = 1000 revenue
+    ]);
+    const result = findCraftChains('platinum_ore', prices);
+    expect(result).toHaveLength(1);
+    expect(result[0].recipe_id).toBe('forge_reactor_core');
+    expect(result[0].output_item_id).toBe('reactor_core');
+    expect(result[0].profit).toBe(600);
+    expect(result[0].data_quality).toBe('partial');
+    // 60s → ~2 ticks → profit_per_tick = round(600/2) = 300
+    expect(result[0].ticks).toBe(2);
+    expect(result[0].profit_per_tick).toBe(300);
+  });
+
+  it('vendored recipes win over DB recipes with the same id (no duplicates)', () => {
+    createDatabase(':memory:');
+    // Register a DB recipe whose id collides with a vendored fixture recipe.
+    registerRecipe({
+      id: 'smelt_iron',
+      output_item_id: 'steel_plate',
+      output_quantity: 99,                 // absurd value — would dwarf the vendored one
+      inputs: [{ item_id: 'iron_ore', quantity: 1 }],
+      time_seconds: 1,
+    });
+    const prices = new Map<string, PricePoint>([
+      ['iron_ore', { bid: 4, ask: 5 }],
+      ['steel_plate', { bid: 80, ask: 90 }],
+    ]);
+    const result = findCraftChains('iron_ore', prices);
+    const smelt = result.filter((c) => c.recipe_id === 'smelt_iron');
+    expect(smelt).toHaveLength(1);
+    // The vendored recipe (output_qty 1) wins, not the DB one (output_qty 99).
+    expect(smelt[0].output_qty).toBe(1);
+    expect(smelt[0].data_quality).toBe('live');
+  });
+
+  it('keeps both vendored (live) and DB (partial) chains in one ranked result', () => {
+    createDatabase(':memory:');
+    registerRecipe({
+      id: 'forge_reactor_core',
+      output_item_id: 'reactor_core',
+      output_quantity: 1,
+      inputs: [{ item_id: 'platinum_ore', quantity: 4 }],
+      time_seconds: 60,
+    });
+    const prices = new Map<string, PricePoint>([
+      ['iron_ore', { bid: 4, ask: 5 }],
+      ['steel_plate', { bid: 80, ask: 90 }],
+      ['platinum_ore', { bid: 80, ask: 100 }],
+      ['reactor_core', { bid: 1000, ask: 1100 }],
+    ]);
+    const result = findCraftChains(undefined, prices);
+    const qualities = new Set(result.map((c) => c.data_quality));
+    expect(qualities.has('live')).toBe(true);
+    expect(qualities.has('partial')).toBe(true);
+    // Ranked by profit descending — reactor_core (profit 600) tops steel chains.
+    expect(result[0].recipe_id).toBe('forge_reactor_core');
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i - 1].profit).toBeGreaterThanOrEqual(result[i].profit);
+    }
   });
 });

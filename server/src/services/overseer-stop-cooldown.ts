@@ -49,6 +49,7 @@ export interface CooldownRow {
   stopped_until: string; // ISO timestamp
   stop_reason: string;
   alert_fired_at: string | null; // ISO timestamp or null
+  hold_offline: number; // 0 = normal cooldown, 1 = blocked until operator review
   updated_at: string;
 }
 
@@ -66,7 +67,7 @@ interface StopHistoryRow {
 /** Return the raw cooldown row for an agent, or null if none exists. */
 function getCooldownRow(agent: string): CooldownRow | null {
   return queryOne<CooldownRow>(
-    `SELECT agent, stopped_until, stop_reason, alert_fired_at, updated_at
+    `SELECT agent, stopped_until, stop_reason, alert_fired_at, hold_offline, updated_at
      FROM overseer_stop_cooldowns WHERE agent = ?`,
     agent,
   );
@@ -75,9 +76,12 @@ function getCooldownRow(agent: string): CooldownRow | null {
 /**
  * Check whether auto-restart is suppressed for this agent right now.
  *
- * Returns `{ suppressed: true, stoppedUntil, reason }` if the cooldown is
- * still active, or `{ suppressed: false }` if the cooldown has expired or
- * no cooldown row exists.
+ * Suppression sources, in priority order:
+ *   1. hold_offline = 1 — agent crossed the 24h escalation threshold and is
+ *      held until an operator manually starts it. Indefinite; ignores stopped_until.
+ *   2. stopped_until > now — normal 1h post-stop cooldown.
+ *
+ * Returns `{ suppressed: false }` if neither applies, or no row exists.
  *
  * On DB error, returns `{ suppressed: false }` (fail-open — allow restart
  * rather than permanently locking an agent).
@@ -89,10 +93,19 @@ export function isRestartSuppressed(agent: string, nowMs = Date.now()): {
   suppressed: boolean;
   stoppedUntil?: Date;
   reason?: string;
+  holdOffline?: boolean;
 } {
   try {
     const row = getCooldownRow(agent);
     if (!row) return { suppressed: false };
+    if (row.hold_offline === 1) {
+      return {
+        suppressed: true,
+        stoppedUntil: new Date(row.stopped_until),
+        reason: row.stop_reason,
+        holdOffline: true,
+      };
+    }
     const stoppedUntil = new Date(row.stopped_until);
     if (nowMs < stoppedUntil.getTime()) {
       return { suppressed: true, stoppedUntil, reason: row.stop_reason };
@@ -231,13 +244,17 @@ function checkEscalation(agent: string, now: Date): void {
 
   const alertId = createAlert(agent, "critical", "overseer-loop", message);
 
-  // Mark the debounce flag.
+  // Mark the debounce flag AND raise hold_offline — the agent has crossed the
+  // 24h threshold; auto-restart stays blocked until an operator clears it via
+  // clearCooldownForOperatorStart (i.e. a manual start).
   queryRun(
-    `UPDATE overseer_stop_cooldowns SET alert_fired_at = ? WHERE agent = ?`,
+    `UPDATE overseer_stop_cooldowns
+     SET alert_fired_at = ?, hold_offline = 1
+     WHERE agent = ?`,
     now.toISOString(), agent,
   );
 
-  log.warn("Overseer escalation alert fired", { agent, count, alertId });
+  log.warn("Overseer escalation alert fired — hold_offline raised", { agent, count, alertId });
 }
 
 // ---------------------------------------------------------------------------
@@ -247,9 +264,12 @@ function checkEscalation(agent: string, now: Date): void {
 /**
  * Clear an active cooldown when an operator manually starts the agent.
  *
- * Logs the override (agent name, how long was left, the overseer's stop reason)
- * so the operator knows the cooldown was bypassed. Does nothing if no active
- * cooldown exists.
+ * Clears both the timestamp-based cooldown AND the hold_offline flag — a
+ * manual start is the operator's signal that they have reviewed the
+ * escalation and the agent is cleared to run.
+ *
+ * Logs the override (agent name, how long was left, the overseer's stop reason,
+ * whether hold_offline was set) so the operator knows what was bypassed.
  *
  * @param nowMs - Injectable current timestamp (ms since epoch). Defaults to Date.now().
  */
@@ -259,20 +279,25 @@ export function clearCooldownForOperatorStart(agent: string, nowMs = Date.now())
     if (!row) return;
 
     const until = new Date(row.stopped_until).getTime();
-    if (nowMs < until) {
-      const remainingMin = Math.round((until - nowMs) / 60_000);
-      const nowIso = new Date(nowMs).toISOString();
-      queryRun(
-        `UPDATE overseer_stop_cooldowns SET stopped_until = ?, updated_at = ? WHERE agent = ?`,
-        nowIso, nowIso, agent,
-      );
-      log.info("Operator overrode overseer stop cooldown", {
-        agent,
-        hadCooldownUntil: row.stopped_until,
-        remainingMin,
-        overseerReason: row.stop_reason,
-      });
-    }
+    const heldOffline = row.hold_offline === 1;
+    const cooldownActive = nowMs < until;
+    if (!cooldownActive && !heldOffline) return;
+
+    const remainingMin = cooldownActive ? Math.round((until - nowMs) / 60_000) : 0;
+    const nowIso = new Date(nowMs).toISOString();
+    queryRun(
+      `UPDATE overseer_stop_cooldowns
+       SET stopped_until = ?, hold_offline = 0, updated_at = ?
+       WHERE agent = ?`,
+      nowIso, nowIso, agent,
+    );
+    log.info("Operator overrode overseer stop cooldown", {
+      agent,
+      hadCooldownUntil: row.stopped_until,
+      remainingMin,
+      heldOffline,
+      overseerReason: row.stop_reason,
+    });
   } catch (err) {
     log.warn("clearCooldownForOperatorStart DB error", {
       agent,
@@ -289,7 +314,7 @@ export function clearCooldownForOperatorStart(agent: string, nowMs = Date.now())
 export function getAllCooldowns(): CooldownRow[] {
   try {
     return queryAll<CooldownRow>(
-      `SELECT agent, stopped_until, stop_reason, alert_fired_at, updated_at
+      `SELECT agent, stopped_until, stop_reason, alert_fired_at, hold_offline, updated_at
        FROM overseer_stop_cooldowns
        ORDER BY updated_at DESC`,
     );

@@ -42,6 +42,12 @@ const V1_PROXIED_TOOLS = new Set([
   "forum_list", "forum_get_thread", "forum_create_thread", "forum_reply", "forum_upvote",
   "trade_offer", "trade_accept", "trade_decline", "trade_cancel", "get_trades",
   "get_skills", "help", "catalog", "get_guide",
+  // Survey-monetization saleable notes — drifter-gale + lumen-shoal post
+  // tagged INTEL-/BELT-REPORT- notes via spacemolt_social(action="create_note"),
+  // and survey-monetization reads them back via spacemolt_social(action="get_notes")
+  // to populate the `sold` field. See services/survey-monetization.ts.
+  "create_note",
+  "get_notes",
   // V2 pass-through targets (resolved at dispatch time from V2_ACTION_TO_V1_NAME)
   "faction_list",
 ]);
@@ -59,11 +65,18 @@ const INTENTIONALLY_SKIPPED = new Set([
   // Cosmetic — agents don't need these
   "set_colors", "set_anonymous", "set_status",
 
-  // Drones — not implemented, agents hallucinate them
-  "deploy_drone", "recall_drone", "order_drone",
+  // Drones — game v0.278.0 added a bay-based drone system (load_drone,
+  // unload_drone, upload_drone_script, get_drones, get_drone, plus
+  // bay-based deploy_drone/recall_drone; order_drone was removed). The
+  // fleet doesn't use drones, so we don't proxy any of it.
+  "deploy_drone", "recall_drone",
+  "load_drone", "unload_drone", "upload_drone_script", "get_drones", "get_drone",
 
-  // Game's built-in notes — we use our own proxy note tools
-  "create_note", "read_note", "write_note", "get_notes",
+  // Game's built-in notes — `read_note`/`write_note` stay denied (they
+  // overlap with proxy-side write_doc/read_doc internal memory).
+  // `create_note` and `get_notes` are proxied for survey-monetization
+  // (post + sale-detection round trip).
+  "read_note", "write_note",
 
   // V2 consolidated tools — game exposes but agents use spacemolt_* wrappers instead
   "v2_get_missions", "v2_get_cargo", "v2_get_ship", "v2_get_state",

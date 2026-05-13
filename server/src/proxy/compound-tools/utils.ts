@@ -153,6 +153,60 @@ export async function waitForNavCacheUpdate(
 }
 
 /**
+ * Refresh status with retries, detecting whether the underlying refreshStatus
+ * actually advanced the cache. Compound tools that read post-action state
+ * (e.g. multi_sell computing credits_delta) need to know whether the cache
+ * is fresh or whether refreshStatus hit a transport error like rate-limit
+ * (-32029) and silently fell back to the stale snapshot.
+ *
+ * Implementation: client.waitForTick() calls refreshStatus() internally and
+ * fires onStateUpdate (which advances cache.fetchedAt) only on success. By
+ * snapshotting fetchedAt before and comparing after, we can tell whether the
+ * refresh succeeded without depending on refreshStatus's return value.
+ *
+ * Behavior:
+ *   - Snapshot fetchedAt, call waitForTick().
+ *   - If fetchedAt advanced → updated:true, return immediately.
+ *   - Otherwise sleep `backoffMs` and retry up to `maxRetries` more times.
+ *   - On exhaustion, return updated:false. Caller is expected to surface a
+ *     verification_status flag rather than report stale data as authoritative.
+ *
+ * Caller must NOT use post-refresh cache values to compute deltas (credits,
+ * cargo, etc.) when updated is false — the cache is pre-action.
+ */
+export async function refreshStatusOrFlag(
+  client: Pick<GameClientLike, "waitForTick">,
+  agentName: string,
+  statusCache: Map<string, { data: Record<string, unknown>; fetchedAt: number }>,
+  opts: { maxRetries?: number; backoffMs?: number } = {},
+): Promise<{ updated: boolean; attempts: number }> {
+  const maxRetries = opts.maxRetries ?? 2;
+  const backoffMs = opts.backoffMs ?? 1000;
+
+  const before = statusCache.get(agentName)?.fetchedAt ?? 0;
+  let attempts = 0;
+
+  for (let i = 0; i <= maxRetries; i++) {
+    attempts++;
+    try {
+      await client.waitForTick();
+    } catch {
+      // waitForTick is documented as never throwing in production, but be
+      // defensive — a thrown error is equivalent to a failed refresh.
+    }
+    const after = statusCache.get(agentName)?.fetchedAt ?? 0;
+    if (after > before) return { updated: true, attempts };
+
+    // Don't sleep after the final attempt
+    if (i < maxRetries) {
+      await new Promise((r) => setTimeout(r, backoffMs));
+    }
+  }
+
+  return { updated: false, attempts };
+}
+
+/**
  * Wait for the status cache to reflect a docking change.
  * Returns true if the agent is docked within maxTicks, false otherwise.
  */

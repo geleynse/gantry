@@ -137,13 +137,24 @@ export function createHealthMonitor(agents: AgentConfig[]): HealthMonitor {
     const cooldown = isRestartSuppressed(name);
     if (cooldown.suppressed && cooldown.stoppedUntil) {
       const remainingMin = Math.round((cooldown.stoppedUntil.getTime() - Date.now()) / 60_000);
-      log.info("Auto-restart suppressed — overseer stop cooldown active", {
-        agent: name,
-        stoppedUntil: cooldown.stoppedUntil.toISOString(),
-        remainingMin,
-        reason: cooldown.reason,
-      });
-      state.desiredState = "stopped";
+      log.info(
+        cooldown.holdOffline
+          ? "Auto-restart suppressed — overseer hold_offline set (operator must manually start)"
+          : "Auto-restart suppressed — overseer stop cooldown active",
+        {
+          agent: name,
+          stoppedUntil: cooldown.stoppedUntil.toISOString(),
+          remainingMin,
+          holdOffline: cooldown.holdOffline ?? false,
+          reason: cooldown.reason,
+        },
+      );
+      // Preserve desiredState="running" for normal cooldowns so the monitor
+      // resumes auto-restart when the timestamp expires. Only indefinite
+      // hold_offline should move the agent to a manual-start state.
+      if (cooldown.holdOffline) {
+        state.desiredState = "stopped";
+      }
       return;
     }
 

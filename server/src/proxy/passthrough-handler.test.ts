@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
-import { handlePassthrough, waitForActionResult, textResult, executeForClient, type PassthroughDeps, type McpTextResult } from "./passthrough-handler.js";
+import { handlePassthrough, waitForActionResult, textResult, executeForClient, checkRefuelTargetGuard, type PassthroughDeps, type McpTextResult } from "./passthrough-handler.js";
 import { EventBuffer } from "./event-buffer.js";
 import { STATE_CHANGING_TOOLS } from "./proxy-constants.js";
 import { GalaxyGraph } from "./pathfinder.js";
@@ -1100,6 +1100,51 @@ NEXT: Jump to Kepler system.`;
     }
   });
 
+  it("persists when agent uses content= param (current v2 form)", async () => {
+    createDatabase(":memory:");
+    try {
+      const validLog = `LOC: Sol sol_belt_1 undocked
+CR: 1500 | FUEL: 45/100 | CARGO: 80/120
+DID: Mined ore.
+NEXT: Jump.`;
+      const client = createMockClient({ captains_log_add: { result: "Captain's log entry #3 added." } });
+      const deps = createMockDeps();
+
+      await handlePassthrough(deps, client, "test_agent", "captains_log_add", "captains_log_add", { content: validLog });
+
+      const db = getDb();
+      const rows = db.prepare("SELECT game_log_id, sequence_number FROM captains_logs WHERE agent = ?").all("test_agent") as Array<{ game_log_id: string; sequence_number: number }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0].game_log_id).toBe("3");
+      expect(rows[0].sequence_number).toBe(3);
+    } finally {
+      closeDb();
+    }
+  });
+
+  it("persists to captains_logs when game returns string \"Captain's log entry #N added.\"", async () => {
+    createDatabase(":memory:");
+    try {
+      const validLog = `LOC: Sol sol_belt_1 undocked
+CR: 1500 | FUEL: 45/100 | CARGO: 80/120
+DID: Mined ore from the belt.
+NEXT: Jump to Kepler system.`;
+      const client = createMockClient({ captains_log_add: { result: "Captain's log entry #7 added." } });
+      const deps = createMockDeps();
+
+      await handlePassthrough(deps, client, "test_agent", "captains_log_add", "captains_log_add", { entry: validLog });
+
+      const db = getDb();
+      const rows = db.prepare("SELECT agent, game_log_id, sequence_number, entry_text FROM captains_logs WHERE agent = ?").all("test_agent") as Array<{ agent: string; game_log_id: string; sequence_number: number; entry_text: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0].game_log_id).toBe("7");
+      expect(rows[0].sequence_number).toBe(7);
+      expect(rows[0].entry_text).toBe(validLog);
+    } finally {
+      closeDb();
+    }
+  });
+
   it("does NOT call addDiaryEntry on format validation failure", async () => {
     createDatabase(":memory:");
     try {
@@ -1255,6 +1300,56 @@ NEXT: Jump next.`;
     expect(shipResult).toBeDefined();
     // Cache should remain empty since there was nothing to merge into
     expect(statusCache.has("test-agent")).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // get_ship — v0.275+ shape regression (rsned/spacemolt a18420d, 2026-05-07)
+  // ---------------------------------------------------------------------------
+  //
+  // Server v0.275+ moved cargo_used/cargo_max to the response top level and
+  // nested ship-instance fields under "class" (legacy reuse of the name). Per
+  // rsned's commit, modules stay at the payload top level. The Gantry consumer
+  // at passthrough-handler.ts:~1525 reads result.modules from the top, which is
+  // the correct shape under v0.275+. This regression test pins that shape so a
+  // future refactor that starts reading shipResult.ship.modules silently breaks
+  // the loadout merge.
+  it("get_ship (v0.275+ shape): merges top-level modules with cargo_used/cargo_max alongside class", async () => {
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("test-agent", {
+      data: { player: { current_system: "sol" }, ship: { hull: 100, fuel: 80 }, tick: 42 },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+    const modules = [
+      { id: "mod1", slot_type: "weapon", name: "Autocannon Mk1" },
+      { id: "mod2", slot_type: "engine", name: "Thruster Mk1" },
+    ];
+    // v0.275+ shape: top-level cargo_used/cargo_max + modules; ship-instance under "class"
+    const client = createMockClient({
+      get_ship: {
+        result: {
+          cargo_used: 12,
+          cargo_max: 30,
+          modules,
+          class: { name: "Windrunner", class_id: "scout", hull: 80, max_hull: 100 },
+        },
+      },
+    });
+
+    await handlePassthrough(deps, client, "test-agent", "get_ship", "get_ship");
+
+    const cached = statusCache.get("test-agent");
+    const ship = cached?.data?.ship as Record<string, unknown>;
+    // Module merge still works under the new shape (modules at top level)
+    expect(Array.isArray(ship?.modules)).toBe(true);
+    expect((ship?.modules as unknown[]).length).toBe(2);
+    const weapons = ship?.weapons as Array<Record<string, unknown>>;
+    expect(weapons).toHaveLength(1);
+    expect(weapons[0].name).toBe("Autocannon Mk1");
+    // Pre-existing ship cache fields untouched (cargo state lives elsewhere — see
+    // refreshStatus() in http-game-client-v2.ts)
+    expect(ship?.hull).toBe(100);
+    expect(ship?.fuel).toBe(80);
   });
 
   it("get_skills: graceful when agent has no existing cache entry", async () => {
@@ -1728,6 +1823,122 @@ describe("pre-dock dockability check", () => {
     const cached = statusCache.get("claimant-agent");
     const insurance = cached?.data?.insurance as Record<string, unknown> | undefined;
     expect(insurance?.active).toBe(false);
+  });
+
+  // ------------------------------------------------------------------------
+  // refuel(target=) guard — silent-failure footgun (proxy-todos 2026-05-04)
+  // ------------------------------------------------------------------------
+
+  it("refuel() with no target: passes through to game client unchanged", async () => {
+    const client = createMockClient({ refuel: { result: { fuel_added: 100 } } });
+    const deps = createMockDeps();
+
+    const result = await handlePassthrough(deps, client, "test-agent", "refuel", "refuel");
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(client.execute).toHaveBeenCalledWith("refuel", undefined);
+    expect(parsed.status).toBe("completed");
+    expect(parsed).toHaveProperty("result");
+  });
+
+  it("refuel() with empty/undefined target: still passes through (no false positives)", async () => {
+    const client = createMockClient({ refuel: { result: { fuel_added: 50 } } });
+    const deps = createMockDeps();
+
+    // Empty string and undefined should NOT trigger the guard
+    await handlePassthrough(deps, client, "test-agent", "refuel", "refuel", { target: "" });
+    expect(client.execute).toHaveBeenCalledWith("refuel", { target: "" });
+  });
+
+  it("refuel(target='<player>'): returns refuel_target_unsupported error, never calls game client", async () => {
+    const client = createMockClient({ refuel: { result: { fuel_added: 100 } } });
+    const deps = createMockDeps();
+
+    const result = await handlePassthrough(
+      deps,
+      client,
+      "test-agent",
+      "refuel",
+      "refuel",
+      { target: "sable-thorn" },
+    );
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    // Game client must NOT have been called
+    expect(client.execute).not.toHaveBeenCalled();
+    expect(client.waitForTick).not.toHaveBeenCalled();
+
+    // Structured error envelope
+    expect(parsed.status).toBe("error");
+    expect(parsed.code).toBe("refuel_target_unsupported");
+    expect(typeof parsed.message).toBe("string");
+    expect((parsed.message as string).toLowerCase()).toContain("target");
+  });
+
+  it("v2 spacemolt(action='refuel', target=...): same guard fires, never calls game client", async () => {
+    // Mirrors gantry-v2.ts call site (line ~1311) where `action` is passed as
+    // both action and v1ToolName, with v2ToolHint="spacemolt".
+    const client = createMockClient({ refuel: { result: { fuel_added: 100 } } });
+    const deps = createMockDeps();
+
+    const result = await handlePassthrough(
+      deps,
+      client,
+      "test-agent",
+      "refuel",
+      "refuel",
+      { target: "lumen-shoal" },
+      undefined,
+      undefined,
+      { v2ToolHint: "spacemolt" },
+    );
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(client.execute).not.toHaveBeenCalled();
+    expect(parsed.code).toBe("refuel_target_unsupported");
+  });
+
+  it("non-refuel tool with target=: guard does NOT fire (refuel-only)", async () => {
+    // The guard must be tightly scoped — it only intercepts refuel.
+    const client = createMockClient({ scan: { result: { ships: [] } } });
+    const deps = createMockDeps();
+
+    await handlePassthrough(deps, client, "test-agent", "scan", "scan", { target: "anything" });
+    expect(client.execute).toHaveBeenCalledWith("scan", { target: "anything" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkRefuelTargetGuard — pure helper unit tests
+// ---------------------------------------------------------------------------
+
+describe("checkRefuelTargetGuard", () => {
+  it("returns null for refuel with no payload", () => {
+    expect(checkRefuelTargetGuard("refuel", undefined)).toBeNull();
+  });
+
+  it("returns null for refuel with payload but no target", () => {
+    expect(checkRefuelTargetGuard("refuel", { other: "param" })).toBeNull();
+  });
+
+  it("returns null for refuel with target=undefined or null or empty", () => {
+    expect(checkRefuelTargetGuard("refuel", { target: undefined })).toBeNull();
+    expect(checkRefuelTargetGuard("refuel", { target: null })).toBeNull();
+    expect(checkRefuelTargetGuard("refuel", { target: "" })).toBeNull();
+  });
+
+  it("returns structured error envelope when refuel has target=<player>", () => {
+    const result = checkRefuelTargetGuard("refuel", { target: "sable-thorn" });
+    expect(result).not.toBeNull();
+    expect(result?.status).toBe("error");
+    expect(result?.code).toBe("refuel_target_unsupported");
+    expect(result?.message).toContain("target=");
+  });
+
+  it("returns null for non-refuel tools even with target= set", () => {
+    expect(checkRefuelTargetGuard("scan", { target: "ship_id" })).toBeNull();
+    expect(checkRefuelTargetGuard("attack", { target: "pirate_1" })).toBeNull();
+    expect(checkRefuelTargetGuard("dock", { target: "station" })).toBeNull();
   });
 });
 

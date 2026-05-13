@@ -6,7 +6,7 @@
  * with simple in-memory objects — no imports from server.ts.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createDatabase, closeDb } from "../services/database.js";
 import { resetSessionShutdownManager } from "./session-shutdown.js";
 import { systemPoiCache } from "./poi-resolver.js";
@@ -35,21 +35,41 @@ import { GalaxyGraph } from "./pathfinder.js";
 // Test helpers
 // ---------------------------------------------------------------------------
 
+type StatusEntry = { data: Record<string, unknown>; fetchedAt: number };
+
+/**
+ * Build a default waitForTick that simulates a successful refreshStatus by
+ * advancing the cache entry's fetchedAt. multi-sell verification logic uses
+ * fetchedAt advancement to detect "post-action refresh succeeded"; tests that
+ * don't override waitForTick get the success path by default via this helper.
+ */
+function makeAdvancingWaitForTick(
+  cache: Map<string, StatusEntry>,
+  agentName: string,
+): GameClientLike["waitForTick"] {
+  return async () => {
+    const entry = cache.get(agentName);
+    if (entry) cache.set(agentName, { data: entry.data, fetchedAt: Date.now() + Math.random() });
+  };
+}
+
 function makeClient(
   overrides: Partial<{
     execute: GameClientLike["execute"];
     waitForTick: GameClientLike["waitForTick"];
     lastArrivalTick: number | null;
   }> = {},
+  cacheCtx?: { cache: Map<string, StatusEntry>; agentName: string },
 ): GameClientLike {
+  const defaultWaitForTick = cacheCtx
+    ? makeAdvancingWaitForTick(cacheCtx.cache, cacheCtx.agentName)
+    : (async () => {}) as GameClientLike["waitForTick"];
   return {
     execute: overrides.execute ?? (async () => ({ result: { ok: true } })),
-    waitForTick: overrides.waitForTick ?? (async () => {}),
+    waitForTick: overrides.waitForTick ?? defaultWaitForTick,
     lastArrivalTick: overrides.lastArrivalTick ?? null,
   };
 }
-
-type StatusEntry = { data: Record<string, unknown>; fetchedAt: number };
 
 function makeStatusCache(
   agentName: string,
@@ -547,7 +567,7 @@ describe("jumpRoute", () => {
   it("stops and reports reason when a jump fails", async () => {
     let jumpCount = 0;
     const client = makeClient({
-      execute: async (tool, args) => {
+      execute: async (tool, _args) => {
         if (tool === "jump") {
           jumpCount++;
           if (jumpCount === 2) return { error: { code: "jump_failed" } };
@@ -887,7 +907,7 @@ describe("multiSell", () => {
       },
     });
     const client = makeClient({
-      execute: async (tool, args) => {
+      execute: async (tool, _args) => {
         if (tool === "sell") {
           // Update credits in cache after first sell
           const prev = cache.get("agent")!;
@@ -902,7 +922,7 @@ describe("multiSell", () => {
         }
         return { result: {} };
       },
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
     const calledTools = new Set(["analyze_market"]);
 
@@ -926,7 +946,7 @@ describe("multiSell", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
     const calledTools = new Set<string>(); // missing analyze_market
 
@@ -961,7 +981,7 @@ describe("multiSell", () => {
     });
     let getStatusCalled = false;
     const client = makeClient({
-      execute: async (tool, args) => {
+      execute: async (tool, _args) => {
         if (tool === "get_status") {
           getStatusCalled = true;
           // Simulate the onStateUpdate callback updating the cache
@@ -979,7 +999,7 @@ describe("multiSell", () => {
         }
         return { result: {} };
       },
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
     const calledTools = new Set(["analyze_market"]);
 
@@ -996,7 +1016,7 @@ describe("multiSell", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: {} }), // credits don't change
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache);
     const calledTools = new Set(["analyze_market"]);
 
@@ -1012,15 +1032,20 @@ describe("multiSell", () => {
 
   it("waits for tick on pending sell results", async () => {
     let ticked = 0;
+    const cache = makeStatusCache("agent", {
+      player: { current_poi: "sol_station", credits: 1000, docked_at_base: "sol_station" },
+    });
     const client = makeClient({
       execute: async (tool) => {
         if (tool === "sell") return { result: { pending: true, command: "sell" } };
         return { result: {} };
       },
-      waitForTick: async () => { ticked++; },
-    });
-    const cache = makeStatusCache("agent", {
-      player: { current_poi: "sol_station", credits: 1000, docked_at_base: "sol_station" },
+      waitForTick: async () => {
+        ticked++;
+        // Simulate refreshStatus success: advance fetchedAt
+        const entry = cache.get("agent");
+        if (entry) cache.set("agent", { data: entry.data, fetchedAt: Date.now() + ticked });
+      },
     });
     const deps = makeDeps("agent", client, cache);
 
@@ -1037,7 +1062,7 @@ describe("multiSell", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-    });
+    }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache, { sellLog });
 
     await multiSell(
@@ -1067,7 +1092,12 @@ describe("multiSell", () => {
         }
         return { result: {} };
       },
-      waitForTick: async () => { tickWaits++; },
+      waitForTick: async () => {
+        tickWaits++;
+        // Simulate refreshStatus success: advance fetchedAt
+        const entry = cache.get("agent");
+        if (entry) cache.set("agent", { data: entry.data, fetchedAt: Date.now() + tickWaits });
+      },
     });
     const deps = makeDeps("agent", client, cache);
 
@@ -1091,7 +1121,11 @@ describe("multiSell", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-      waitForTick: async () => { tickWaits++; },
+      waitForTick: async () => {
+        tickWaits++;
+        const entry = cache.get("agent");
+        if (entry) cache.set("agent", { data: entry.data, fetchedAt: Date.now() + tickWaits });
+      },
     });
     const deps = makeDeps("agent", client, cache);
 
@@ -1671,7 +1705,7 @@ describe("waitForNavCacheUpdate", () => {
 
   it("fast path: uses waitForNextArrival signal then one get_status instead of polling", async () => {
     let waitForTickCalls = 0;
-    let arrivedCb: (() => void) | null = null;
+    let _arrivedCb: (() => void) | null = null;
     const cache = makeStatusCache("agent", { player: { current_system: "sol" } });
 
     const client: GameClientLike = {
@@ -2185,7 +2219,7 @@ describe("scanAndAttack Phase 4 enhancements", () => {
       nearby: [{ username: "pirate_player", player_id: "p1", in_combat: false, anonymous: false }],
     });
     const deps = makeDeps("agent", client, cache, {
-      upsertNote: (agentName, type, content) => {
+      upsertNote: (_agentName, type, content) => {
         noteLogs.push({ type, content });
       },
     });
@@ -2231,7 +2265,7 @@ describe("multiSell fleet_sell_warning", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-    });
+    }, { cache, agentName: "agent-b" });
     const deps = makeDeps("agent-b", client, cache, { sellLog });
 
     const result = await multiSell(
@@ -2252,7 +2286,7 @@ describe("multiSell fleet_sell_warning", () => {
     });
     const client = makeClient({
       execute: async () => ({ result: { ok: true } }),
-    });
+    }, { cache, agentName: "agent-a" });
     const deps = makeDeps("agent-a", client, cache, { sellLog });
 
     const result = await multiSell(

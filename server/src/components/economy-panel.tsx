@@ -5,6 +5,7 @@ import { cn, summarizeArgs } from "@/lib/utils";
 import { relativeTime } from "@/lib/time";
 import { formatCredits as formatCreditsFull, formatDelta } from "@/lib/format";
 import { CreditChart } from "./credit-chart";
+import { SurveyMonetizationPanel } from "./survey-monetization-panel";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -429,6 +430,9 @@ export function EconomyPanel({ agentName }: EconomyPanelProps) {
       <Panel title="Credits Over Time">
         <CreditChart agentName={agentName} />
       </Panel>
+
+      {/* Survey monetization — renders only for drifter-gale and lumen-shoal */}
+      <SurveyMonetizationPanel agentName={agentName} />
 
       {/* Two-column grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

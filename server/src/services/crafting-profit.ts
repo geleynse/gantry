@@ -15,6 +15,7 @@
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { createLogger } from '../lib/logger.js';
+import { getAllRecipes, type Recipe as DbRecipe } from './recipe-registry.js';
 
 const log = createLogger('crafting-profit');
 
@@ -123,6 +124,53 @@ export function getRecipes(): BomRecipe[] {
   return _recipes;
 }
 
+/**
+ * Approximate game ticks from a recipe's `time_seconds`. A tick is ~30s; we
+ * floor at 1 so `profit_per_tick` never divides by zero. Returns 0 when no
+ * time data is available (callers treat ticks=0 as instant/onboard crafts).
+ */
+function ticksFromSeconds(timeSeconds: number | undefined): number {
+  if (!timeSeconds || timeSeconds <= 0) return 0;
+  return Math.max(1, Math.round(timeSeconds / 30));
+}
+
+/** Map a game-catalog DB recipe (recipe-registry) onto the flat BomRecipe shape. */
+function dbRecipeToBom(recipe: DbRecipe): BomRecipe {
+  return {
+    id: recipe.id,
+    name: recipe.id, // DB recipes have no human label
+    output_item_id: recipe.output_item_id,
+    output_qty: recipe.output_quantity > 0 ? recipe.output_quantity : 1,
+    ticks: ticksFromSeconds(recipe.time_seconds),
+    skills: (recipe.skills ?? []).map((s) => `${s.skill_id} ${s.level}`),
+    inputs: (recipe.inputs ?? []).map((i) => ({ item_id: i.item_id, qty: i.quantity })),
+  };
+}
+
+/**
+ * Recipes the fleet has discovered in the live game catalog (the `game_recipes`
+ * SQLite table populated by discovery-service / game-catalog), mapped onto the
+ * BomRecipe shape and tagged so callers know they're DB-sourced (lower quality
+ * than the hand-verified vendored BOM). Returns [] if the DB is unavailable.
+ *
+ * Recipe IDs already present in the vendored set are skipped — the vendored
+ * recipe is authoritative for those.
+ */
+export function getDbRecipes(): BomRecipe[] {
+  let dbRecipes: DbRecipe[];
+  try {
+    dbRecipes = getAllRecipes();
+  } catch (e) {
+    log.warn('Could not load game-catalog recipes', { error: e });
+    return [];
+  }
+  if (dbRecipes.length === 0) return [];
+  const vendoredIds = new Set(getRecipes().map((r) => r.id));
+  return dbRecipes
+    .filter((r) => !vendoredIds.has(r.id) && r.inputs && r.inputs.length > 0)
+    .map(dbRecipeToBom);
+}
+
 // ---------------------------------------------------------------------------
 // Analyzer
 // ---------------------------------------------------------------------------
@@ -134,6 +182,7 @@ export function getRecipes(): BomRecipe[] {
 export function evaluateRecipe(
   recipe: BomRecipe,
   prices: Map<string, PricePoint>,
+  quality: 'live' | 'stale' | 'partial' = 'live',
 ): CraftChain | null {
   const outputPrices = prices.get(recipe.output_item_id);
   if (!outputPrices || outputPrices.bid <= 0) return null;
@@ -179,43 +228,65 @@ export function evaluateRecipe(
     profit,
     profit_per_tick: profitPerTick,
     margin_pct: marginPct,
-    data_quality: 'live',
+    data_quality: quality,
   };
 }
 
 /**
  * Find all profitable crafting chains, optionally filtered by ingredient or output target.
  *
+ * Searches the vendored BOM first; then falls back to recipes the fleet has
+ * discovered in the live game catalog (`game_recipes` table), which cover
+ * multi-step / component chains the 20-recipe vendored set doesn't. DB-sourced
+ * chains are tagged `data_quality: 'partial'` so callers can flag them as
+ * less-trusted. Pass `includeDbRecipes: false` to restrict to the vendored set.
+ *
  * @param ingredient  item_id to filter by (e.g. "iron_ore"). Matches any input.
  * @param prices      Current price map (bid/ask per item_id).
  * @param target      Optional output item_id filter.
+ * @param opts        Optional behavior flags.
  * @returns Ranked crafting paths sorted by profit descending.
  */
 export function findCraftChains(
   ingredient: string | undefined,
   prices: Map<string, PricePoint>,
   target?: string,
+  opts?: { includeDbRecipes?: boolean },
 ): CraftChain[] {
-  const recipes = getRecipes();
+  const includeDb = opts?.includeDbRecipes ?? true;
+  const sources: Array<{ recipes: BomRecipe[]; quality: 'live' | 'partial' }> = [
+    { recipes: getRecipes(), quality: 'live' },
+  ];
+  if (includeDb) {
+    const dbRecipes = getDbRecipes();
+    if (dbRecipes.length > 0) sources.push({ recipes: dbRecipes, quality: 'partial' });
+  }
+
   const results: CraftChain[] = [];
+  const seenRecipeIds = new Set<string>();
 
-  for (const recipe of recipes) {
-    // Filter by ingredient if specified
-    if (ingredient) {
-      const hasIngredient = recipe.inputs.some((inp) => inp.item_id === ingredient);
-      if (!hasIngredient) continue;
+  for (const { recipes, quality } of sources) {
+    for (const recipe of recipes) {
+      if (seenRecipeIds.has(recipe.id)) continue;
+
+      // Filter by ingredient if specified
+      if (ingredient) {
+        const hasIngredient = recipe.inputs.some((inp) => inp.item_id === ingredient);
+        if (!hasIngredient) continue;
+      }
+
+      // Filter by target output if specified
+      if (target && recipe.output_item_id !== target) continue;
+
+      const chain = evaluateRecipe(recipe, prices, quality);
+      if (!chain) continue;
+
+      // Only return profitable chains (positive margin)
+      if (chain.profit <= 0) continue;
+
+      seenRecipeIds.add(recipe.id);
+      results.push(chain);
     }
-
-    // Filter by target output if specified
-    if (target && recipe.output_item_id !== target) continue;
-
-    const chain = evaluateRecipe(recipe, prices);
-    if (!chain) continue;
-
-    // Only return profitable chains (positive margin)
-    if (chain.profit <= 0) continue;
-
-    results.push(chain);
   }
 
   // Sort by profit descending

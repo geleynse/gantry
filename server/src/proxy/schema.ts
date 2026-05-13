@@ -106,17 +106,33 @@ const DENIED_TOOLS = new Set([
   // "self_destruct",
   // "jettison",
 
-  // Drones — not implemented yet, agents hallucinate these
+  // Drones — game v0.278.0 shipped a bay-based drone system (load_drone /
+  // unload_drone / upload_drone_script / get_drones / get_drone, plus
+  // bay-based deploy_drone / recall_drone; the old order_drone command was
+  // removed). The fleet doesn't use drones, so block the whole surface to
+  // keep agents from wandering into it.
   "deploy_drone",
   "recall_drone",
-  "order_drone",
+  "load_drone",
+  "unload_drone",
+  "upload_drone_script",
+  "get_drones",
+  "get_drone",
 
 
-  // Game's built-in notes — we use our own MCP note tools (write_doc/read_doc)
-  "create_note",
+  // Game's built-in notes — `read_note` / `write_note` stay denied because
+  // they overlap with our internal write_doc/read_doc memory system (per-
+  // title own-doc CRUD). `create_note` and `get_notes` are intentionally
+  // allowed: `create_note` is the only path to posting tagged saleable
+  // notes to the game's marketplace, and `get_notes` is the only path to
+  // reading the marketplace back so survey-monetization can detect sales
+  // (services/survey-monetization.ts `sold` field). Neither has an
+  // internal-tool equivalent — write_doc/read_doc don't list other
+  // players' notes for sale. See docs/plans/survey-data-monetization.md.
+  // "create_note",
   "read_note",
   "write_note",
-  "get_notes",
+  // "get_notes",
 
   // v2 consolidated tools — agents hallucinate these and waste tokens
   // Block them so agents use the regular tool names instead
@@ -506,9 +522,36 @@ export const DENIED_ACTIONS_V2: Record<string, Set<string>> = {
   spacemolt: new Set(["trade_offer"]),
   spacemolt_social: new Set([
     "set_colors", "set_anonymous", "set_status",
-    "create_note", "read_note", "write_note", "get_notes",
+    // create_note and get_notes intentionally NOT denied — agents post
+    // tagged saleable notes via spacemolt_social(action="create_note"),
+    // and survey-monetization needs spacemolt_social(action="get_notes")
+    // passthroughs to detect sales (services/survey-monetization.ts
+    // `sold` field). See docs/plans/survey-data-monetization.md.
+    "read_note", "write_note",
   ]),
   spacemolt_auth: new Set(["register"]),
+  // Mirrors the v1-side faction blocks in DENIED_TOOLS (lines 150-184).
+  // Without this entry, v2 agents calling spacemolt_faction(action="kick", ...)
+  // dispatch straight to the game server: DENIED_TOOLS is a v1-name set and
+  // never sees the v2-namespaced call. Audit:
+  //   spacemolt/docs/research/faction-actions-reference-2026-05-07.md
+  // Note: remove_ally / remove_enemy are NOT included — they aren't blocked
+  // in v1 either, and the task scope was "match v1, don't expand."
+  spacemolt_faction: new Set([
+    "create",
+    "accept_peace",
+    "cancel_mission",
+    "declare_war",
+    "delete_role",
+    "delete_room",
+    "kick",
+    "list_missions",
+    "propose_peace",
+    "rooms",
+    "set_ally",
+    "set_enemy",
+    "visit_room",
+  ]),
 };
 
 /**

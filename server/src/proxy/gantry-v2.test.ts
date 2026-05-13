@@ -5,13 +5,12 @@
  * without requiring a live game server or database.
  */
 
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect } from "bun:test";
 import { createGantryServerV2, withPrayerScriptSchema, type V2SharedState } from "./gantry-v2.js";
 import { serverSchemaToZod, type ServerTool } from "./schema.js";
 import type { GantryConfig } from "../config.js";
 import { SessionManager } from "./session-manager.js";
 import { SessionStore } from "./session-store.js";
-import { EventBuffer } from "./event-buffer.js";
 import { MarketCache } from "./market-cache.js";
 import { GalaxyGraph } from "./pathfinder.js";
 import { SellLog } from "./sell-log.js";
@@ -158,6 +157,62 @@ describe("createGantryServerV2", () => {
     expect(parsed.success).toBe(true);
   });
 
+  // -------------------------------------------------------------------------
+  // Crafting compound tools grafted onto the spacemolt action enum — these
+  // were registered as compound actions (buildCompoundActions) but unreachable
+  // for v2 agents because the upstream `action` enum didn't list them, so
+  // client-side Zod rejected the call. Mirror of the craft_chains injection.
+  // -------------------------------------------------------------------------
+
+  it("withPrayerScriptSchema injects get_craft_profitability and craft_path_to into spacemolt action enum", () => {
+    const serverTool: ServerTool = {
+      name: "spacemolt",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["get_status", "mine", "craft"] },
+          id: { type: "string" },
+          text: { type: "string" },
+        },
+        required: ["action"],
+      },
+    };
+
+    const patched = withPrayerScriptSchema("spacemolt", serverTool)!;
+    const action = patched.inputSchema?.properties?.action as { enum?: string[] };
+    expect(action.enum).toContain("get_craft_profitability");
+    expect(action.enum).toContain("craft_path_to");
+    // Existing + other proxy actions preserved
+    expect(action.enum).toContain("craft");
+    expect(action.enum).toContain("pray");
+    expect(action.enum).toContain("get_routine_status");
+
+    // Round-trip through Zod: agent call with action=craft_path_to must validate
+    const parsed = serverSchemaToZod(patched).safeParse({
+      action: "craft_path_to",
+      id: "ship_engine",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("withPrayerScriptSchema is idempotent on spacemolt action enum (no duplicate proxy actions)", () => {
+    const serverTool: ServerTool = {
+      name: "spacemolt",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["mine", "pray", "get_routine_status", "get_craft_profitability", "craft_path_to"] },
+        },
+        required: ["action"],
+      },
+    };
+    const patched = withPrayerScriptSchema("spacemolt", serverTool)!;
+    const action = patched.inputSchema?.properties?.action as { enum?: string[] };
+    for (const name of ["pray", "get_routine_status", "get_craft_profitability", "craft_path_to"]) {
+      expect(action.enum!.filter((v) => v === name).length).toBe(1);
+    }
+  });
+
   it("returns shared session state", () => {
     const shared = createTestSharedState();
     const { sessions, sessionAgentMap, eventBuffers, callTrackers } = createGantryServerV2(testConfig, shared);
@@ -217,6 +272,67 @@ describe("createGantryServerV2", () => {
     const typeProp = patched.inputSchema?.properties?.type as { enum?: string[] };
     const occurrences = typeProp.enum!.filter(v => v === "craft_chains").length;
     expect(occurrences).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // arbitrage_routes — cross-empire arbitrage compute (arbitrage-analyzer.ts)
+  // surfaced to v2 agents as spacemolt_catalog(type="arbitrage_routes").
+  // Same engine that backs GET /api/market/arbitrage and the v1 get_arbitrage
+  // tool; this is the v2 surface. Pattern mirrors craft_chains exactly.
+  // -------------------------------------------------------------------------
+
+  it("withPrayerScriptSchema injects arbitrage_routes into spacemolt_catalog type enum", () => {
+    const serverTool: ServerTool = {
+      name: "spacemolt_catalog",
+      inputSchema: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["catalog", "weapons", "ships"] },
+          id: { type: "string" },
+        },
+        required: ["type"],
+      },
+    };
+
+    const patched = withPrayerScriptSchema("spacemolt_catalog", serverTool)!;
+    const typeProp = patched.inputSchema?.properties?.type as { enum?: string[] };
+    expect(typeProp.enum).toContain("arbitrage_routes");
+    // craft_chains still injected too, existing values preserved
+    expect(typeProp.enum).toContain("craft_chains");
+    expect(typeProp.enum).toContain("catalog");
+
+    // Round-trip through Zod: agent call with type=arbitrage_routes must validate
+    const parsed = serverSchemaToZod(patched).safeParse({ type: "arbitrage_routes" });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("withPrayerScriptSchema is idempotent on spacemolt_catalog (no duplicate arbitrage_routes)", () => {
+    const serverTool: ServerTool = {
+      name: "spacemolt_catalog",
+      inputSchema: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["catalog", "craft_chains", "arbitrage_routes"] },
+        },
+        required: ["type"],
+      },
+    };
+    const patched = withPrayerScriptSchema("spacemolt_catalog", serverTool)!;
+    const typeProp = patched.inputSchema?.properties?.type as { enum?: string[] };
+    expect(typeProp.enum!.filter(v => v === "arbitrage_routes").length).toBe(1);
+  });
+
+  it("arbitrage_routes is not in DENIED_ACTIONS_V2 (must reach agents)", async () => {
+    const { DENIED_ACTIONS_V2 } = await import("./schema.js");
+    // spacemolt_catalog has no deny entry at all — confirm, and confirm the
+    // proxy types aren't accidentally listed under any tool.
+    expect(DENIED_ACTIONS_V2.spacemolt_catalog).toBeUndefined();
+    for (const set of Object.values(DENIED_ACTIONS_V2)) {
+      expect(set.has("arbitrage_routes")).toBe(false);
+      expect(set.has("craft_chains")).toBe(false);
+      expect(set.has("get_craft_profitability")).toBe(false);
+      expect(set.has("craft_path_to")).toBe(false);
+    }
   });
 });
 

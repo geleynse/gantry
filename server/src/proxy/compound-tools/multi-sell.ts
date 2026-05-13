@@ -8,7 +8,7 @@
 import { createLogger } from "../../lib/logger.js";
 import type { SellEntry } from "../sell-log.js";
 import type { CompoundToolDeps, CompoundResult, MultiSellItem } from "./types.js";
-import { stripPendingFields } from "./utils.js";
+import { stripPendingFields, refreshStatusOrFlag } from "./utils.js";
 
 const log = createLogger("compound-tools");
 
@@ -147,12 +147,15 @@ export async function multiSell(
     }
   }
 
-  // Single tick wait after all sells — lets the game resolve pending sells
-  // and update credits in cache. Avoids multiple tick waits that caused
-  // HTTP response timeouts (multi_sell returned "" to agents).
-  await client.waitForTick();
+  // Refresh status after all sells — lets the game resolve pending sells
+  // and update credits/cargo in cache. Use refreshStatusOrFlag so a -32029
+  // rate-limit on the underlying get_status/get_location is detected: the
+  // pre-action cache must NOT be reported as the post-sale state. Sales
+  // settle server-side regardless of whether we can verify them; the agent
+  // gets told the verification status, not a fabricated credits_delta=0.
+  const refreshOutcome = await refreshStatusOrFlag(client, agentName, statusCache);
 
-  // Get final credits from cache
+  // Get final credits from cache (may be stale if refresh failed; we flag that below)
   const cached = statusCache.get(agentName);
   const player = cached?.data?.player as Record<string, unknown> | undefined;
   const credits = player?.credits ?? "unknown";
@@ -165,45 +168,73 @@ export async function multiSell(
     agent: agentName,
     credits_after: credits,
     credits_delta: creditDelta,
+    verification_updated: refreshOutcome.updated,
+    verification_attempts: refreshOutcome.attempts,
   });
 
   const sellResult: Record<string, unknown> = {
     status: "completed",
     sells: results,
     items_sold: results.length,
-    credits_after: credits,
   };
 
-  // Verify cargo actually changed — catches silent no-ops where the game accepts the call
-  // but doesn't actually remove items (e.g. session desync, station state issues).
-  const cargoUsedAfter = (statusCache.get(agentName)?.data?.ship as any)?.cargo_used as number | undefined;
-  const cargoReduced =
-    cargoUsedAfter !== undefined && cargoUsedBefore !== undefined && cargoUsedAfter < cargoUsedBefore;
-  const cargoDataAvailable = cargoUsedAfter !== undefined && cargoUsedBefore !== undefined;
-
-  if (cargoDataAvailable && !cargoReduced && results.length > 0) {
-    log.warn("multi_sell cargo unchanged after sells", {
+  if (!refreshOutcome.updated && results.length > 0) {
+    // Refresh hit a transport error (rate limit / network) on every attempt.
+    // Cache is pre-sale stale. Do NOT lie about credits_delta=0 or "cargo unchanged" —
+    // the sells may have settled server-side; we just can't see the result. Tell the
+    // agent explicitly so they can call get_status / get_cargo to reconcile.
+    log.warn("multi_sell verification failed (refreshStatus rate-limited or unavailable)", {
       agent: agentName,
+      refresh_attempts: refreshOutcome.attempts,
+      credits_before: creditsBefore,
       cargo_used_before: cargoUsedBefore,
-      cargo_used_after: cargoUsedAfter,
     });
-    sellResult.cargo_warning =
-      "WARNING: Cargo hold unchanged after sells — items may not have been removed. " +
-      "This can happen when the game is desynced or items have already been sold/listed. " +
-      "Call get_status to verify actual cargo, then retry if needed.";
+    sellResult.verification_status = "rate_limited";
+    sellResult.verification_message =
+      "Sells were dispatched to the game server, but post-sale verification was rate-limited. " +
+      "Cargo and credit deltas could NOT be confirmed from the proxy cache (it is pre-sale stale). " +
+      "Sales may have settled server-side. Call get_cargo() and get_status() in 5–10s to reconcile actual state. " +
+      "Do NOT retry the same sells without verifying — they may already be complete.";
+    sellResult.credits_before = creditsBefore;
+    sellResult.cargo_used_before = cargoUsedBefore;
+    // Intentionally omit credits_after / credits_delta / cargo_warning — emitting them with
+    // stale values is exactly the lie this fix exists to prevent.
+  } else {
+    // Cache is fresh — safe to compute deltas and run desync verification.
+    sellResult.credits_after = credits;
+    sellResult.verification_status = "ok";
+
+    // Verify cargo actually changed — catches silent no-ops where the game accepts the call
+    // but doesn't actually remove items (e.g. session desync, station state issues).
+    const cargoUsedAfter = (statusCache.get(agentName)?.data?.ship as any)?.cargo_used as number | undefined;
+    const cargoReduced =
+      cargoUsedAfter !== undefined && cargoUsedBefore !== undefined && cargoUsedAfter < cargoUsedBefore;
+    const cargoDataAvailable = cargoUsedAfter !== undefined && cargoUsedBefore !== undefined;
+
+    if (cargoDataAvailable && !cargoReduced && results.length > 0) {
+      log.warn("multi_sell cargo unchanged after sells", {
+        agent: agentName,
+        cargo_used_before: cargoUsedBefore,
+        cargo_used_after: cargoUsedAfter,
+      });
+      sellResult.cargo_warning =
+        "WARNING: Cargo hold unchanged after sells — items may not have been removed. " +
+        "This can happen when the game is desynced or items have already been sold/listed. " +
+        "Call get_status to verify actual cargo, then retry if needed.";
+    }
+
+    // Warn agent if sells earned nothing — likely no station demand
+    if (typeof creditDelta === "number" && creditDelta === 0 && results.length > 0) {
+      sellResult.warning =
+        "0 credits earned — this station has no demand for your items. " +
+        "Items remain in your cargo (not auto-listed). " +
+        "Travel to a different station with demand, or use analyze_market() to find buyers.";
+    }
   }
 
   // Inject market check advisory if no recent analyze_market
   if (marketWarning) {
     sellResult._market_advisory = marketWarning;
-  }
-
-  // Warn agent if sells earned nothing — likely no station demand
-  if (typeof creditDelta === "number" && creditDelta === 0 && results.length > 0) {
-    sellResult.warning =
-      "0 credits earned — this station has no demand for your items. " +
-      "Items remain in your cargo (not auto-listed). " +
-      "Travel to a different station with demand, or use analyze_market() to find buyers.";
   }
 
   // Record sells for fleet deconfliction

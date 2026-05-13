@@ -252,6 +252,76 @@ describe("overseer-stop-cooldown", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // hold_offline — set when escalation threshold is crossed; only operator can clear
+  // ---------------------------------------------------------------------------
+
+  describe("hold_offline flag", () => {
+    it("is NOT set after a single stop (below threshold)", () => {
+      const t0 = tsMs(0);
+      recordOverseerStop("rust-vane", "first stop", t0);
+      const cooldowns = getAllCooldowns().filter(c => c.agent === "rust-vane");
+      expect(cooldowns[0].hold_offline).toBe(0);
+      const result = isRestartSuppressed("rust-vane", t0 + 1_000);
+      expect(result.suppressed).toBe(true);
+      expect(result.holdOffline).toBeFalsy();
+    });
+
+    it("is set when escalation threshold is crossed", () => {
+      const agent = "lumen-shoal";
+      for (let i = 0; i < ESCALATION_THRESHOLD; i++) {
+        recordOverseerStop(agent, `stop ${i + 1}`, tsMs(i));
+      }
+      const cooldowns = getAllCooldowns().filter(c => c.agent === agent);
+      expect(cooldowns[0].hold_offline).toBe(1);
+    });
+
+    it("suppresses restart indefinitely — past the normal cooldown expiry", () => {
+      const agent = "cinder-wake";
+      const t0 = tsMs(0);
+      for (let i = 0; i < ESCALATION_THRESHOLD; i++) {
+        recordOverseerStop(agent, `stop ${i + 1}`, t0 + i * 1_000);
+      }
+      // Far past the normal 1h cooldown window.
+      const wayAfter = t0 + OVERSEER_STOP_COOLDOWN_MS + 10 * 60 * 60 * 1000;
+      const result = isRestartSuppressed(agent, wayAfter);
+      expect(result.suppressed).toBe(true);
+      expect(result.holdOffline).toBe(true);
+      expect(result.reason).toContain("stop");
+    });
+
+    it("is cleared by clearCooldownForOperatorStart", () => {
+      const agent = "sable-thorn";
+      const t0 = tsMs(0);
+      for (let i = 0; i < ESCALATION_THRESHOLD; i++) {
+        recordOverseerStop(agent, `stop ${i + 1}`, t0 + i * 1_000);
+      }
+      expect(isRestartSuppressed(agent, t0 + 5_000).holdOffline).toBe(true);
+
+      clearCooldownForOperatorStart(agent, t0 + 5_000);
+      const result = isRestartSuppressed(agent, t0 + 6_000);
+      expect(result.suppressed).toBe(false);
+      expect(result.holdOffline).toBeFalsy();
+
+      const cooldowns = getAllCooldowns().filter(c => c.agent === agent);
+      expect(cooldowns[0].hold_offline).toBe(0);
+    });
+
+    it("clearCooldownForOperatorStart handles hold_offline even when timestamp cooldown has already expired", () => {
+      const agent = "brass-meridian";
+      const t0 = tsMs(0);
+      for (let i = 0; i < ESCALATION_THRESHOLD; i++) {
+        recordOverseerStop(agent, `stop ${i + 1}`, t0 + i * 1_000);
+      }
+      // Jump past the timestamp cooldown — only hold_offline remains active.
+      const wayAfter = t0 + OVERSEER_STOP_COOLDOWN_MS + 60 * 60 * 1000;
+      expect(isRestartSuppressed(agent, wayAfter).holdOffline).toBe(true);
+
+      clearCooldownForOperatorStart(agent, wayAfter);
+      expect(isRestartSuppressed(agent, wayAfter + 1_000).suppressed).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // getAllCooldowns / getStopHistory
   // ---------------------------------------------------------------------------
 

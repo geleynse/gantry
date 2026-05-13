@@ -6,7 +6,7 @@ process.env.TEST_LOGS = "1";
 
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
-import { fetchGameCommands, applyPatches, DENIED_TOOLS, checkSchemaDrift, PARAM_REMAPS, resolveGameTools, invalidateSchemaCache, serverSchemaToZod, V2_TO_V1_PARAM_MAP } from "./schema.js";
+import { fetchGameCommands, applyPatches, DENIED_TOOLS, DENIED_ACTIONS_V2, checkSchemaDrift, PARAM_REMAPS, resolveGameTools, invalidateSchemaCache, serverSchemaToZod, V2_TO_V1_PARAM_MAP } from "./schema.js";
 import { setConfigForTesting } from "../config.js";
 
 // Set up test FLEET_DIR before importing config-dependent code
@@ -126,6 +126,94 @@ describe("DENIED_TOOLS", () => {
     expect(DENIED_TOOLS.has("mine")).toBe(false);
     expect(DENIED_TOOLS.has("sell")).toBe(false);
     expect(DENIED_TOOLS.has("travel")).toBe(false);
+  });
+
+  it("blocks the v0.278.0 drone surface and not the removed order_drone", () => {
+    // Game v0.278.0 shipped a bay-based drone system; the fleet doesn't use it.
+    for (const t of ["deploy_drone", "recall_drone", "load_drone", "unload_drone",
+                     "upload_drone_script", "get_drones", "get_drone"]) {
+      expect(DENIED_TOOLS.has(t)).toBe(true);
+    }
+    // order_drone was removed in v0.278.0 — no longer carried in the deny list.
+    expect(DENIED_TOOLS.has("order_drone")).toBe(false);
+  });
+
+  it("does not deny create_note (survey-monetization saleable notes)", () => {
+    // create_note is the only path agents have to post tagged saleable
+    // notes to the game's marketplace. See docs/plans/survey-data-monetization.md
+    // and services/survey-monetization.ts.
+    expect(DENIED_TOOLS.has("create_note")).toBe(false);
+  });
+
+  it("does not deny get_notes (survey-monetization sale detection)", () => {
+    // get_notes is the marketplace browse — the only path to detect
+    // whether a posted survey note SOLD. Without it the
+    // services/survey-monetization.ts `sold` field stays null forever.
+    // No internal-tool equivalent: write_doc/read_doc don't list other
+    // players' notes for sale.
+    expect(DENIED_TOOLS.has("get_notes")).toBe(false);
+  });
+});
+
+describe("DENIED_ACTIONS_V2", () => {
+  it("does not block spacemolt_social:create_note", () => {
+    // Survey-monetization metric depends on create_note reaching the
+    // game server. read_note/write_note stay denied — they overlap
+    // with proxy-side write_doc/read_doc for internal agent memory.
+    const social = DENIED_ACTIONS_V2.spacemolt_social;
+    expect(social.has("create_note")).toBe(false);
+    expect(social.has("write_note")).toBe(true);
+    expect(social.has("read_note")).toBe(true);
+  });
+
+  it("does not block spacemolt_social:get_notes", () => {
+    // Survey-monetization sale detection depends on get_notes reaching
+    // the game server so we can read back posted-note status.
+    const social = DENIED_ACTIONS_V2.spacemolt_social;
+    expect(social.has("get_notes")).toBe(false);
+  });
+
+  it("blocks destabilizing spacemolt_faction actions (mirrors v1 DENIED_TOOLS)", () => {
+    // Without this entry, v2 agents calling spacemolt_faction(action="kick")
+    // bypass DENIED_TOOLS (which is a v1-name set) and dispatch straight to
+    // the game server. See docs/research/faction-actions-reference-2026-05-07.md
+    // and feedback-deny-list-vs-preset-filter MEMORY note.
+    const faction = DENIED_ACTIONS_V2.spacemolt_faction;
+    expect(faction).toBeDefined();
+    for (const action of [
+      "create",
+      "accept_peace",
+      "cancel_mission",
+      "declare_war",
+      "delete_role",
+      "delete_room",
+      "kick",
+      "list_missions",
+      "propose_peace",
+      "rooms",
+      "set_ally",
+      "set_enemy",
+      "visit_room",
+    ]) {
+      expect(faction.has(action)).toBe(true);
+    }
+  });
+
+  it("does not block benign spacemolt_faction actions (info, list, join, etc.)", () => {
+    // Membership and read-only ops stay open so agents can self-organize:
+    // leader invites, members join/leave/decline/check invites, browse list.
+    const faction = DENIED_ACTIONS_V2.spacemolt_faction;
+    expect(faction.has("info")).toBe(false);
+    expect(faction.has("list")).toBe(false);
+    expect(faction.has("join")).toBe(false);
+    expect(faction.has("leave")).toBe(false);
+    expect(faction.has("invite")).toBe(false);
+    expect(faction.has("get_invites")).toBe(false);
+    expect(faction.has("decline_invite")).toBe(false);
+    expect(faction.has("help")).toBe(false);
+    // remove_ally / remove_enemy are NOT denied in v1 either — keep parity.
+    expect(faction.has("remove_ally")).toBe(false);
+    expect(faction.has("remove_enemy")).toBe(false);
   });
 });
 
