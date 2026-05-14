@@ -7,7 +7,7 @@
 //   3. login() falls back to mcpSessionId when greeting has no Session ID line
 //   4. execute() injects session_id for spacemolt/spacemolt_battle but not spacemolt_catalog
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
-import { HttpGameClientV2, parseGetStatusText } from "./http-game-client-v2.js";
+import { HttpGameClientV2, parseGetStatusText, SessionCreateSpacing } from "./http-game-client-v2.js";
 
 let fetchMock: ReturnType<typeof mock>;
 let fetchResponses: Array<{ status: number; body: string; headers?: Record<string, string> }>;
@@ -211,6 +211,9 @@ describe("HttpGameClientV2", () => {
 
   beforeEach(() => {
     fetchResponses = [];
+    // Disable cross-instance spacing during fast unit tests so they don't sleep.
+    // Specific spacing tests re-enable it explicitly.
+    SessionCreateSpacing.enabled = false;
     fetchMock = mock(async (_url: string | URL | Request, _opts?: RequestInit) => {
       const resp = fetchResponses.shift();
       if (!resp) throw new Error("No mock response queued");
@@ -229,6 +232,7 @@ describe("HttpGameClientV2", () => {
   afterEach(async () => {
     await client.close();
     globalThis.fetch = originalFetch;
+    SessionCreateSpacing.enabled = true;
   });
 
   // -------------------------------------------------------------------------
@@ -485,5 +489,74 @@ describe("HttpGameClientV2", () => {
     client.restoreCredentials({ username: "bot", password: "pw" });
     expect(client.getCredentials()?.username).toBe("bot");
     expect(client.isAuthenticated()).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Session creation: rate-limit retry + cross-instance spacing
+  // -------------------------------------------------------------------------
+
+  it("mcpInitialize retries when /api/v1/session returns rate_limited", async () => {
+    // First /api/v1/session response: rate_limited with retry_after=0 so the
+    // test doesn't sleep. Second: a normal session response. Then the rest of
+    // the init sequence + login tool.
+    fetchResponses.push({
+      status: 429,
+      body: JSON.stringify({ error: { code: "rate_limited", retry_after: 0, message: "Too many session/auth requests from your IP." } }),
+      headers: { "Content-Type": "application/json" },
+    });
+    pushLoginSequence();
+
+    const resp = await client.login("bot", "pw");
+    expect(resp.error).toBeUndefined();
+    // 1 rate-limited session call + 1 successful session call + initialize + initialized + login tool = 5
+    expect(fetchMock.mock.calls.length).toBe(5);
+  });
+
+  it("mcpInitialize gives up and throws after MAX rate-limited retries", async () => {
+    // Three consecutive rate_limited responses (the limit is 2 retries → 3
+    // total attempts).
+    for (let i = 0; i < 3; i++) {
+      fetchResponses.push({
+        status: 429,
+        body: JSON.stringify({ error: { code: "rate_limited", retry_after: 0, message: "Too many session/auth requests" } }),
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const resp = await client.login("bot", "pw");
+    // After exhausting retries, mcpInitialize throws → login() returns connection_failed.
+    expect(resp.error?.code).toBe("connection_failed");
+  });
+
+  it("awaitSessionCreateSlot enforces minimum spacing between concurrent session creations", async () => {
+    // Re-enable spacing for this specific test. Use tight bounds so the test
+    // is fast but the spacing effect is measurable.
+    SessionCreateSpacing.enabled = true;
+    const savedMin = SessionCreateSpacing.minSpacingMs;
+    const savedJitter = SessionCreateSpacing.jitterMs;
+    SessionCreateSpacing.minSpacingMs = 50;
+    SessionCreateSpacing.jitterMs = 0;
+    SessionCreateSpacing.lastCreateAtMs = 0;
+
+    try {
+      pushLoginSequence();
+      pushLoginSequence();
+      const client2 = new HttpGameClientV2("https://game.test/mcp", undefined, "test-agent-2", "standard");
+
+      const t0 = Date.now();
+      await client.login("bot1", "pw");
+      const after1 = Date.now();
+      await client2.login("bot2", "pw");
+      const after2 = Date.now();
+      await client2.close();
+
+      // First login should not be artificially delayed; second login must
+      // wait at least the min-spacing window after the first.
+      expect(after1 - t0).toBeLessThan(50);
+      expect(after2 - after1).toBeGreaterThanOrEqual(45); // allow ~5ms slop
+    } finally {
+      SessionCreateSpacing.minSpacingMs = savedMin;
+      SessionCreateSpacing.jitterMs = savedJitter;
+    }
   });
 });

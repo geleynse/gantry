@@ -6,10 +6,24 @@
  * Provides query/search interface for Gantry UI.
  */
 
-import { getDb } from './database.js';
+import { getDb, queryAll } from './database.js';
 import { createLogger } from '../lib/logger.js';
+import { isDockable } from './galaxy-poi-registry.js';
+import { markStrandedHold } from './overseer-stop-cooldown.js';
+import { createSignal } from './signals-db.js';
 
 const log = createLogger('captains-logs-db');
+
+/**
+ * Stranded-loop detection thresholds.
+ *
+ * Fuel threshold: ≤5 effectively means the agent has no useful jump capacity.
+ * Stations refuel — an agent docked at a station with 0 fuel is NOT stranded
+ * (it can refuel), so the POI-not-dockable check guards against false positives
+ * for low-fuel-at-station cases.
+ */
+const STRANDED_FUEL_MAX = 5;
+const STRANDED_HISTORY_DEPTH = 3;
 
 export interface CaptainsLogEntry {
   id: number;
@@ -136,7 +150,97 @@ export function persistCaptainsLogEntry(
   );
 
   log.info('Persisted captain log entry', { agent, game_log_id: gameLogId });
+
+  try {
+    detectStrandedLoop(agent);
+  } catch (err) {
+    // Detection failure must never block log persistence.
+    log.warn('Stranded-loop detection failed', {
+      agent,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   return result.lastInsertRowid as number;
+}
+
+/**
+ * Stranded-loop detector. Called after each captain's log persist.
+ *
+ * Trigger: the last STRANDED_HISTORY_DEPTH (3) captain's logs for this agent
+ * all show the agent at the same (system, poi) with fuel ≤ STRANDED_FUEL_MAX (5),
+ * and the poi is NOT a known dockable station. That pattern means the agent
+ * has logged in, run out of options, written a stranded-style log, and logged
+ * back in N times without progress — burning shared quota on a state only the
+ * operator can fix.
+ *
+ * Effect: calls markStrandedHold (sets hold_offline=1 immediately, suppressing
+ * auto-restart indefinitely) and writes a "shutdown" signal so the runner exits
+ * on the next turn boundary. Operator manual start clears the hold.
+ *
+ * No-ops if:
+ *   - fewer than STRANDED_HISTORY_DEPTH logs available
+ *   - any log lacks fuel or POI fields (parsed null)
+ *   - logs differ on system/poi (agent IS moving)
+ *   - fuel went above threshold at any point
+ *   - poi is known-dockable (agent can refuel at a station)
+ *   - agent is already on hold_offline (avoid duplicate writes per log entry)
+ *
+ * Exported for testing.
+ */
+export function detectStrandedLoop(agent: string): boolean {
+  const recent = queryAll<{
+    loc_system: string | null;
+    loc_poi: string | null;
+    cr_fuel_current: number | null;
+  }>(
+    `SELECT loc_system, loc_poi, cr_fuel_current
+     FROM captains_logs
+     WHERE agent = ?
+     ORDER BY id DESC
+     LIMIT ?`,
+    agent, STRANDED_HISTORY_DEPTH,
+  );
+
+  if (recent.length < STRANDED_HISTORY_DEPTH) return false;
+
+  const first = recent[0];
+  if (first.loc_system === null || first.loc_poi === null) return false;
+  if (first.cr_fuel_current === null) return false;
+
+  const allSamePoi = recent.every(r =>
+    r.loc_system === first.loc_system && r.loc_poi === first.loc_poi
+  );
+  if (!allSamePoi) return false;
+
+  const allLowFuel = recent.every(r =>
+    r.cr_fuel_current !== null && r.cr_fuel_current <= STRANDED_FUEL_MAX
+  );
+  if (!allLowFuel) return false;
+
+  // Don't flag a low-fuel-at-station situation — the agent can refuel.
+  // isDockable returns null when the POI isn't registered yet; we treat
+  // unknown POIs as not-dockable (the typical strand case is a belt/cloud
+  // /star that we've never registered as a station).
+  if (isDockable(first.loc_poi) === true) return false;
+
+  const reason =
+    `Stranded ${STRANDED_HISTORY_DEPTH} consecutive captain's logs at ` +
+    `${first.loc_system}/${first.loc_poi} with fuel=${first.cr_fuel_current} ` +
+    `(non-station POI). Auto-stop to preserve shared quota — operator manual ` +
+    `start required for recovery.`;
+
+  markStrandedHold(agent, reason);
+  createSignal(agent, 'shutdown', reason);
+
+  log.warn('Stranded-loop detected — hold_offline raised and shutdown signal written', {
+    agent,
+    system: first.loc_system,
+    poi: first.loc_poi,
+    fuel: first.cr_fuel_current,
+  });
+
+  return true;
 }
 
 /**

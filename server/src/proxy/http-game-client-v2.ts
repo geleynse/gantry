@@ -96,6 +96,57 @@ const THROTTLED_COMMANDS = new Set([
 
 export type McpPreset = "standard" | "full";
 
+/**
+ * Class-level coordinator for /api/v1/session creation across all instances
+ * in this process.
+ *
+ * Why: after a gantry server restart, all running agents discover their MCP
+ * sessions are stale and trigger mcpInitialize() near-simultaneously. The
+ * game server rate-limits /api/v1/session per IP, and all gantry agents
+ * share the same outbound IP — the burst causes a cascade of "rate_limited
+ * — try again in N seconds" errors and exhausts login retries.
+ *
+ * Mitigation: enforce a minimum spacing (plus small randomization) between
+ * session creations. Cheap, doesn't change happy-path behavior, eliminates
+ * lockstep bursts.
+ *
+ * Exported and writable for testing only.
+ */
+export const SessionCreateSpacing = {
+  lastCreateAtMs: 0,
+  /** Hard minimum spacing between sessions to stay under game-server burst limit. */
+  minSpacingMs: 600,
+  /** Extra randomized fuzz added to spacing (0..jitterMs). */
+  jitterMs: 600,
+  /** Disable (set to 0) during tests so they don't sleep. */
+  enabled: true,
+};
+
+/**
+ * Wait until the global session-create slot is available, then claim it.
+ *
+ * Called once at the top of mcpInitialize. If another instance just created
+ * a session, this awaits the remaining spacing window plus a small random
+ * jitter. The randomization is what prevents N concurrent callers from all
+ * unblocking at the same instant.
+ *
+ * The slot is claimed eagerly (lastCreateAtMs is set before the network call)
+ * so concurrent callers serialize correctly. If the actual call ends up
+ * failing or being retried, the spacing still applies.
+ */
+async function awaitSessionCreateSlot(): Promise<void> {
+  if (!SessionCreateSpacing.enabled) return;
+  const now = Date.now();
+  const required =
+    SessionCreateSpacing.minSpacingMs +
+    Math.random() * SessionCreateSpacing.jitterMs;
+  const earliest = SessionCreateSpacing.lastCreateAtMs + required;
+  if (now < earliest) {
+    await new Promise<void>(resolve => setTimeout(resolve, earliest - now));
+  }
+  SessionCreateSpacing.lastCreateAtMs = Date.now();
+}
+
 export class HttpGameClientV2 implements GameTransport {
   private readonly mcpUrl: string;       // Full v2 URL with preset query string
   private readonly apiBaseUrl: string;   // For /api/v1/session
@@ -197,27 +248,51 @@ export class HttpGameClientV2 implements GameTransport {
   private async mcpInitialize(): Promise<void> {
     // Step 1: Create game session (REST endpoint stays v1; both v1 and v2 REST
     // session endpoints return the same shape, no breaking change forces a switch).
+    // Stagger concurrent session creations across instances so we don't burst
+    // through the game-server per-IP rate limit after a gantry restart.
     const sessionUrl = `${this.apiBaseUrl}/api/v1/session`;
-    const sessionResp = await this.rawPost(sessionUrl, {});
-    let sessionData: { session?: { id?: string; expires_at?: string } };
-    try {
-      sessionData = JSON.parse(sessionResp.body);
-    } catch (err) {
-      log.error("Session creation: response not JSON", {
-        agent: this.label,
-        url: sessionUrl,
-        body: sessionResp.body.slice(0, 200),
-      });
-      throw new Error(`Session creation failed: response not JSON: ${sessionResp.body.slice(0, 100)}`);
+    let sessionData: { session?: { id?: string; expires_at?: string }; error?: { code?: string; message?: string; retry_after?: number } };
+    let attempt = 0;
+    const MAX_RATE_LIMIT_RETRIES = 2;
+    while (true) {
+      await awaitSessionCreateSlot();
+      const sessionResp = await this.rawPost(sessionUrl, {});
+      try {
+        sessionData = JSON.parse(sessionResp.body);
+      } catch {
+        log.error("Session creation: response not JSON", {
+          agent: this.label,
+          url: sessionUrl,
+          body: sessionResp.body.slice(0, 200),
+        });
+        throw new Error(`Session creation failed: response not JSON: ${sessionResp.body.slice(0, 100)}`);
+      }
+
+      // Honor an explicit rate_limited response: wait the retry_after window,
+      // then loop to claim a fresh slot.
+      const err = sessionData.error;
+      if (err?.code === "rate_limited" && attempt < MAX_RATE_LIMIT_RETRIES) {
+        const waitMs = ((err.retry_after ?? 5) + 1) * 1000;
+        log.warn("Session creation: rate-limited, backing off", {
+          agent: this.label,
+          retry_after: err.retry_after,
+          attempt: attempt + 1,
+          maxAttempts: MAX_RATE_LIMIT_RETRIES,
+        });
+        await new Promise<void>(resolve => setTimeout(resolve, waitMs));
+        attempt++;
+        continue;
+      }
+      break;
     }
     const session = sessionData.session;
     if (!session?.id) {
       log.error("Session creation: missing session.id", {
         agent: this.label,
         url: sessionUrl,
-        body: sessionResp.body.slice(0, 300),
+        body: JSON.stringify(sessionData).slice(0, 300),
       });
-      throw new Error(`Session creation failed: no session ID in response (body: ${sessionResp.body.slice(0, 100)})`);
+      throw new Error(`Session creation failed: no session ID in response (body: ${JSON.stringify(sessionData).slice(0, 100)})`);
     }
     this.gameSessionId = session.id;
     if (session.expires_at) {

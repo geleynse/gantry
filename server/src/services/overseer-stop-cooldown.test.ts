@@ -15,6 +15,7 @@ import {
   clearCooldownForOperatorStart,
   getAllCooldowns,
   getStopHistory,
+  markStrandedHold,
 } from "./overseer-stop-cooldown.js";
 import { getPendingAlerts } from "./alerts-db.js";
 
@@ -318,6 +319,46 @@ describe("overseer-stop-cooldown", () => {
 
       clearCooldownForOperatorStart(agent, wayAfter);
       expect(isRestartSuppressed(agent, wayAfter + 1_000).suppressed).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // markStrandedHold — immediate hold_offline, skips threshold
+  // ---------------------------------------------------------------------------
+
+  describe("markStrandedHold", () => {
+    it("raises hold_offline immediately on first call (no threshold required)", () => {
+      const t0 = tsMs(0);
+      markStrandedHold("sable-thorn", "stranded at wasat_gas_cloud", t0);
+      const result = isRestartSuppressed("sable-thorn", t0 + 1_000);
+      expect(result.suppressed).toBe(true);
+      expect(result.holdOffline).toBe(true);
+      expect(result.reason).toContain("wasat_gas_cloud");
+    });
+
+    it("appends to overseer_stop_history with STRANDED: prefix", () => {
+      const t0 = tsMs(0);
+      markStrandedHold("sable-thorn", "stranded", t0);
+      const history = getStopHistory("sable-thorn");
+      expect(history.length).toBe(1);
+      expect(history[0].reason).toContain("STRANDED:");
+    });
+
+    it("suppression survives past the normal 1h cooldown window", () => {
+      const t0 = tsMs(0);
+      markStrandedHold("sable-thorn", "stranded", t0);
+      const wayAfter = t0 + OVERSEER_STOP_COOLDOWN_MS + 60 * 60 * 1000;
+      expect(isRestartSuppressed("sable-thorn", wayAfter).suppressed).toBe(true);
+      expect(isRestartSuppressed("sable-thorn", wayAfter).holdOffline).toBe(true);
+    });
+
+    it("operator manual start clears the stranded hold", () => {
+      const t0 = tsMs(0);
+      markStrandedHold("sable-thorn", "stranded", t0);
+      expect(isRestartSuppressed("sable-thorn", t0 + 1_000).suppressed).toBe(true);
+
+      clearCooldownForOperatorStart("sable-thorn", t0 + 60_000);
+      expect(isRestartSuppressed("sable-thorn", t0 + 60_001).suppressed).toBe(false);
     });
   });
 

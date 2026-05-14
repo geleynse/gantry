@@ -257,6 +257,57 @@ function checkEscalation(agent: string, now: Date): void {
   log.warn("Overseer escalation alert fired — hold_offline raised", { agent, count, alertId });
 }
 
+/**
+ * Record a stranded-loop stop and raise hold_offline IMMEDIATELY (skipping the
+ * 24h escalation threshold).
+ *
+ * Why immediate hold: an agent stranded with no fuel at a non-station POI
+ * cannot recover without operator intervention. Letting stopped_until expire
+ * and retrying the same state burns shared quota for zero progress. The
+ * operator must clear the hold by manually starting the agent (which calls
+ * clearCooldownForOperatorStart).
+ *
+ * Also appends to overseer_stop_history so the rolling 24h count still sees
+ * this event — repeated stranded loops keep firing escalation alerts.
+ *
+ * @param nowMs - Injectable current timestamp (ms since epoch). Defaults to Date.now().
+ */
+export function markStrandedHold(agent: string, reason: string, nowMs = Date.now()): void {
+  const now = new Date(nowMs);
+  const stoppedUntil = new Date(nowMs + OVERSEER_STOP_COOLDOWN_MS).toISOString();
+
+  try {
+    queryRun(
+      `INSERT INTO overseer_stop_cooldowns (agent, stopped_until, stop_reason, hold_offline, updated_at)
+       VALUES (?, ?, ?, 1, ?)
+       ON CONFLICT(agent) DO UPDATE SET
+         stopped_until = excluded.stopped_until,
+         stop_reason   = excluded.stop_reason,
+         hold_offline  = 1,
+         updated_at    = excluded.updated_at`,
+      agent, stoppedUntil, reason, now.toISOString(),
+    );
+    log.warn("Stranded-loop hold raised — operator must manually start", { agent, reason });
+  } catch (err) {
+    log.warn("Failed to set stranded hold", {
+      agent,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  try {
+    queryInsert(
+      `INSERT INTO overseer_stop_history (agent, reason, stopped_at) VALUES (?, ?, ?)`,
+      agent, `STRANDED: ${reason}`, now.toISOString(),
+    );
+  } catch (err) {
+    log.warn("Failed to append stranded stop history", {
+      agent,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Operator override
 // ---------------------------------------------------------------------------
