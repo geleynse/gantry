@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { type Express } from "express";
+import { createProxyMiddleware } from "http-proxy-middleware";
 import type { GantryConfig } from "./config.js";
 import { createMcpServer } from "./proxy/server.js";
 import { createAuthAdapter } from "./web/auth/index.js";
@@ -9,6 +10,7 @@ import { createApiRoutes } from "./web/routes/api-routes.js";
 import { generalPostLimiter, bulkStateLimiter } from "./web/middleware/rate-limit.js";
 import { createLogger } from "./lib/logger.js";
 import type { HealthMonitor } from "./services/health-monitor.js";
+import { getDevtoolsBaseUrl } from "./lib/devtools.js";
 
 const log = createLogger("app");
 
@@ -305,6 +307,50 @@ export async function createApp(config: GantryConfig, options?: { bindHost?: str
   // --- MCP + proxy routes (mounted at root) ---
   const { router: mcpRouter, sessions, registeredToolCount, sharedState, overseerAgent, dispose: disposeProxy } = await createMcpServer(config);
   app.use("/", mcpRouter);
+
+  const devtoolsBaseUrl = getDevtoolsBaseUrl();
+
+  // --- /devtools/* → claude-devtools ---
+  const devtoolsProxy = createProxyMiddleware({
+    target: devtoolsBaseUrl,
+    changeOrigin: true,
+    ws: false,
+  });
+  app.use(
+    "/devtools",
+    // Trailing-slash redirect: ./assets URLs in the devtools HTML resolve relative
+    // to the request URL, so we need /devtools/ not /devtools. Check originalUrl
+    // because Express strips the mount prefix from req.path.
+    (req, res, next) => {
+      if (req.originalUrl === "/devtools") return res.redirect(301, "/devtools/");
+      next();
+    },
+    devtoolsProxy,
+  );
+  // Dev-tools' bundle calls /api/* from the origin root (no BASE_PATH support).
+  // Forward those calls to the dev-tools backend when the Referer is the
+  // /devtools/ page on THIS host. Same-origin check rejects forged Referer
+  // headers like `https://evil/devtools/` that would otherwise let any admin
+  // route arbitrary /api/* calls through the proxy. Mount before the gantry
+  // /api router so we intercept first; authMiddleware already populated req.auth.
+  app.use((req, res, next) => {
+    if (!req.path.startsWith("/api/")) return next();
+    const referer = req.get("referer");
+    if (!referer) return next();
+    let refererUrl: URL;
+    try {
+      refererUrl = new URL(referer);
+    } catch {
+      return next();
+    }
+    if (refererUrl.host !== req.get("host")) return next();
+    if (!refererUrl.pathname.startsWith("/devtools/")) return next();
+    if (req.auth?.role !== "admin") {
+      res.status(403).json({ error: "Admin access required" });
+      return;
+    }
+    return devtoolsProxy(req, res, next);
+  });
 
   // --- Web API routes ---
   app.use("/api", createApiRoutes({

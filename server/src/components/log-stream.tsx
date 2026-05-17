@@ -6,6 +6,11 @@ import { formatTime } from "@/lib/time";
 
 interface LogStreamProps {
   agentName: string;
+  /** Optional time-window filter (millisecond epoch). When provided, only lines
+   *  whose embedded ISO timestamp falls within [from, to] are shown. Lines with
+   *  no parsable timestamp pass through. Default: show all lines. */
+  from?: number;
+  to?: number;
 }
 
 interface LogEvent {
@@ -19,7 +24,16 @@ interface StatusEvent {
 
 const MAX_LINES = 500;
 
-export function LogStream({ agentName }: LogStreamProps) {
+/** Extract the first parsable ISO/space-separated timestamp from a log line.
+ *  Returns millisecond epoch, or null if no timestamp found. */
+function extractLineTimestamp(line: string): number | null {
+  const m = line.match(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/);
+  if (!m) return null;
+  const t = new Date(m[0]).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+export function LogStream({ agentName, from, to }: LogStreamProps) {
   const [lines, setLines] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -122,11 +136,23 @@ export function LogStream({ agentName }: LogStreamProps) {
     return { color: "inherit", className: "" };
   }
 
+  /** Apply optional time-window filter. Lines with no parsable timestamp pass through. */
+  const hasFilter = from !== undefined || to !== undefined;
+  const visibleLines = hasFilter
+    ? lines.filter((line) => {
+        const t = extractLineTimestamp(line);
+        if (t === null) return true; // no timestamp — always show
+        if (from !== undefined && t < from) return false;
+        if (to !== undefined && t > to) return false;
+        return true;
+      })
+    : lines;
+
   return (
     <div className="bg-card border border-border p-3 h-full flex flex-col">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-[10px] uppercase tracking-wider text-muted-foreground">
-          Live Logs
+          {hasFilter ? "Logs (filtered)" : "Live Logs"}
         </h3>
 
         <div className="flex items-center gap-2 text-[10px]">
@@ -157,12 +183,17 @@ export function LogStream({ agentName }: LogStreamProps) {
           maxHeight: "calc(100vh - 350px)",
         }}
       >
-        {lines.length === 0 && (
-          <div className="text-muted-foreground italic text-[10px] py-2">
-            Waiting for logs…
+        {hasFilter && (
+          <div className="text-[9px] text-info/70 px-1 pb-1 italic">
+            Time window: {from ? new Date(from).toISOString().replace("T", " ").slice(0, 19) + "Z" : "start"} → {to ? new Date(to).toISOString().replace("T", " ").slice(0, 19) + "Z" : "now"}
           </div>
         )}
-        {lines.map((line, idx) => {
+        {visibleLines.length === 0 && (
+          <div className="text-muted-foreground italic text-[10px] py-2">
+            {hasFilter ? "No log lines match this time window." : "Waiting for logs…"}
+          </div>
+        )}
+        {visibleLines.map((line, idx) => {
           const { className } = colorizeLogLine(line);
           return (
             <div key={idx} className={cn(

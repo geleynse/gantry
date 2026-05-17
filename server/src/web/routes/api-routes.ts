@@ -33,6 +33,7 @@ import economyRoutes from "./economy.js";
 import surveyMonetizationRoutes from "./survey-monetization.js";
 import knowledgeRoutes from "./knowledge.js";
 import directivesRoutes from "./directives.js";
+import agentSessionsRoutes from "./agent-sessions.js";
 import { agentFleetControlRouter, routinesRouter } from "./fleet-control.js";
 import broadcastRoutes from "./broadcast.js";
 import { createSurvivabilityRouter } from "./survivability.js";
@@ -101,6 +102,7 @@ export function createApiRoutes(deps: ApiRouteDeps): Router {
   router.use("/agents", directivesRoutes);
   router.use("/agents", agentFleetControlRouter);
   router.use("/agents", agentReasoningRouter);
+  router.use("/agents", agentSessionsRoutes);
   router.use("/agents", createContextSummaryRouter(sharedState.cache.status, sharedState.cache.events));
 
   // --- Routines ---

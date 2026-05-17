@@ -5,7 +5,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { queryOne, queryAll, queryRun, queryInsert } from "../services/database.js";
+import { queryOne, queryAll, queryRun, queryInsert, getDbIfInitialized } from "../services/database.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("session-store");
@@ -85,12 +85,18 @@ export class SessionStore {
   }
 
   /**
-   * Check if a session exists and is valid.
+   * Check if a session is valid (exists and not expired).
    */
   isValidSession(id: string): boolean {
+    if (!getDbIfInitialized()) return false;
     const now = new Date().toISOString();
-    return !!queryOne("SELECT 1 FROM mcp_sessions WHERE id = ? AND expires_at > ?", id, now);
+    try {
+      return !!queryOne("SELECT 1 FROM mcp_sessions WHERE id = ? AND expires_at > ?", id, now);
+    } catch {
+      return false;
+    }
   }
+
 
   /**
    * Update session's agent name (after login). Also expires any *other*
@@ -144,12 +150,17 @@ export class SessionStore {
    * Runs periodically to keep database clean.
    */
   cleanup(): number {
+    if (!getDbIfInitialized()) return 0;
     const now = new Date().toISOString();
-    const deleted = queryRun("DELETE FROM mcp_sessions WHERE expires_at <= ?", now);
-    if (deleted > 0) {
-      log.debug("cleaned up expired sessions", { count: deleted });
+    try {
+      const deleted = queryRun("DELETE FROM mcp_sessions WHERE expires_at <= ?", now);
+      if (deleted > 0) {
+        log.debug("cleaned up expired sessions", { count: deleted });
+      }
+      return deleted;
+    } catch {
+      return 0;
     }
-    return deleted;
   }
 
   /**

@@ -57,6 +57,16 @@ export function getLearnedMetadata(): MetadataEntry[] {
 }
 
 /**
+ * Reset in-memory caches and force re-initialization from DB on next access.
+ * Primarily for test isolation.
+ */
+export function resetCaches(): void {
+  cache.clear();
+  typeCache.clear();
+  initialized = false;
+}
+
+/**
  * Record a newly discovered ID -> Name mapping.
  * Safely ignores duplicates or invalid data.
  */

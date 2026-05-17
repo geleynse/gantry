@@ -32,6 +32,8 @@ If `FLEET_DIR` is not set, Gantry checks for `../fleet-agents` relative to the s
 | `LOG_LEVEL` | `info` | Logging level: `debug`, `info`, `warn`, `error` |
 | `TRUST_PROXY` | `0` | Set to `1` when behind a reverse proxy so IP-based auth reads `X-Forwarded-For` |
 | `NODE_ENV` | — | Standard Node.js environment (`production`, `development`) |
+| `DEVTOOLS_URL` | `http://127.0.0.1:3456` | Base URL of the claude-devtools server for the Sessions tab. See [devtools-integration.md](devtools-integration.md). |
+| `DEVTOOLS_FLEET_PROJECT_ID` | `-home-spacemolt-fleet-agents` | Claude Code project ID under `~/.claude/projects/` where fleet sessions live |
 
 ### Config Profiles
 

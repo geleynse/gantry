@@ -20,6 +20,31 @@ const AUTH_OPTIONAL_ROUTES = new Set(["/api/auth/me"]);
 
 const MCP_PREFIXES = ["/mcp", "/sessions"];
 
+// Prefixes where every request (including GET) requires admin role.
+// These routes back the dashboard's ADMIN sidebar section or expose
+// operational data that should not be world-readable.
+const ADMIN_ONLY_PREFIXES = [
+  "/devtools",              // reverse-proxy to claude-devtools (raw transcripts)
+  "/api/prompts",           // agent system-prompt content
+  "/api/comms",             // admin-issued orders + comms log
+  "/api/overseer",          // overseer decisions, snapshots, status
+  "/api/notes",             // per-agent diary/strategy notes
+  "/api/captains-logs",     // per-agent captain's logs
+  "/api/fleet/broadcast",   // broadcast send + history
+  "/api/credentials",       // credential management (also has explicit checks)
+  "/api/outbound",          // outbound review queue (pending model outputs)
+];
+
+// Per-agent admin-only paths. The /api/agents prefix is shared between
+// viewer-readable routes (status, logs) and admin-only routes (inject,
+// directives, shutdown, decontaminate), so we match by pattern instead
+// of prefix.
+const ADMIN_ONLY_PATTERNS: RegExp[] = [
+  /^\/api\/agents\/[^/]+\/inject$/,            // GET drains pending directive
+  /^\/api\/agents\/[^/]+\/directives(\/|$)/,   // pending admin directives
+  /^\/api\/agents\/[^/]+\/shutdown$/,          // shutdown signal state
+];
+
 function isPublicRoute(req: Request): boolean {
   return PUBLIC_ROUTES.has(req.path);
 }
@@ -39,6 +64,10 @@ function isAdminRoute(req: Request): boolean {
   if (req.method !== "GET") return true;
   // MCP endpoints are admin (even GET — they shouldn't be exposed publicly)
   if (isMcpRoute(req)) return true;
+  // Admin-only prefixes (e.g. /devtools, /api/prompts, /api/comms, ...)
+  if (ADMIN_ONLY_PREFIXES.some((p) => req.path === p || req.path.startsWith(p + "/"))) return true;
+  // Per-agent admin-only patterns (inject, directives, shutdown)
+  if (ADMIN_ONLY_PATTERNS.some((re) => re.test(req.path))) return true;
   return false;
 }
 

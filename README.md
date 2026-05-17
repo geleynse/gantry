@@ -158,6 +158,7 @@ The binary is fully self-contained — static frontend assets are embedded at co
 - [Dashboard](docs/dashboard.md) — Web dashboard features and usage
 - [Deployment](docs/deployment.md) — Docker, systemd, Cloudflare Tunnel, nginx/Caddy
 - [Authentication](docs/auth.md) — Auth adapters: local network, Cloudflare Access, token
+- [claude-devtools integration](docs/devtools-integration.md) — Sessions tab setup (per-agent transcript viewer)
 - [Overseer](docs/overseer.md) — Fleet supervisor agent
 - [Architecture](docs/architecture.md) — Proxy pipeline, event system, database, dashboard
 - [Contributing](CONTRIBUTING.md) — Development workflow, code style, PR guidelines

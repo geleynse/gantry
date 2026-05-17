@@ -27,12 +27,13 @@ import { AgentControls as AgentControlsPanel } from "@/components/agent-controls
 import { PrayerPanel } from "@/components/prayer-panel";
 import { SurvivabilityPanel } from "@/components/survivability-panel";
 import { LifetimeStatsPanel } from "../lifetime-stats";
+import { AgentSessionsPanel } from "@/components/agent-sessions";
 
 // ---------------------------------------------------------------------------
 // Tab definitions
 // ---------------------------------------------------------------------------
 
-type TabId = "ship" | "modules" | "economy" | "activity" | "prayer" | "logs" | "prompt" | "map" | "thoughts" | "survivability" | "lifetime-stats" | "config" | "controls";
+type TabId = "ship" | "modules" | "economy" | "activity" | "prayer" | "logs" | "prompt" | "map" | "thoughts" | "survivability" | "lifetime-stats" | "config" | "controls" | "sessions";
 
 const TABS: { id: TabId; label: string; adminOnly?: boolean; requiresPrayer?: boolean }[] = [
   { id: "ship", label: "Ship & Loadout" },
@@ -46,6 +47,7 @@ const TABS: { id: TabId; label: string; adminOnly?: boolean; requiresPrayer?: bo
   { id: "map", label: "Live Map" },
   { id: "survivability", label: "Survivability" },
   { id: "lifetime-stats", label: "Lifetime Stats" },
+  { id: "sessions", label: "Sessions", adminOnly: true },
   { id: "controls", label: "Controls", adminOnly: true },
   { id: "config", label: "Config", adminOnly: true },
 ];
@@ -691,13 +693,30 @@ export function AgentDetailClient() {
 
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     if (typeof window === "undefined") return "ship";
-    const hash = window.location.hash.slice(1);
+    const hash = window.location.hash.slice(1).split("/")[0];
     return TABS.some(t => t.id === hash) ? (hash as TabId) : "ship";
   });
+
+  // Task A: time-window filter passed from Sessions panel → Logs tab
+  const [logFrom, setLogFrom] = useState<number | undefined>(undefined);
+  const [logTo, setLogTo] = useState<number | undefined>(undefined);
 
   function switchTab(id: TabId) {
     setActiveTab(id);
     window.history.replaceState(null, "", `#${id}`);
+  }
+
+  /** Navigate to Logs tab and apply a time-window filter (Task A).
+   *  Called by AgentSessionsPanel when the user clicks "View logs (turn window)". */
+  function handleViewLogs(from: number, to: number) {
+    setLogFrom(from);
+    setLogTo(to);
+    switchTab("logs");
+    // Also push ?from=&to= to the URL for bookmarkability / browser back
+    const sp = new URLSearchParams(window.location.search);
+    sp.set("from", String(from));
+    sp.set("to", String(to));
+    window.history.replaceState(null, "", `?${sp.toString()}#logs`);
   }
 
   const { data: fleetStatus } = useFleetStatus();
@@ -865,7 +884,8 @@ export function AgentDetailClient() {
         {activeTab === "logs" && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-auto md:h-[calc(100vh-350px)]">
             <div className="h-[50vh] md:h-full">
-              <LogStream agentName={name} />
+              {/* Task A: logFrom/logTo set by Sessions panel "View logs" link */}
+              <LogStream agentName={name} from={logFrom} to={logTo} />
             </div>
             <div className="h-[50vh] md:h-full">
               <DiaryViewer agentName={name} />
@@ -896,6 +916,9 @@ export function AgentDetailClient() {
             : <div className="py-16 text-center text-muted-foreground text-sm italic">
                 Lifetime stats not available — requires game v0.253+ and a status refresh.
               </div>
+        )}
+        {activeTab === "sessions" && isAdmin && (
+          <AgentSessionsPanel agentName={name} onViewLogs={handleViewLogs} />
         )}
         {activeTab === "controls" && isAdmin && (
           <div className="space-y-6">

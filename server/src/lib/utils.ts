@@ -15,11 +15,6 @@ export const AGENT_COLORS: Record<string, string> = {
   // Example: 'my-agent': '#88c0d0',
 };
 
-// AGENT_NAMES (formerly an empty array left over from the pre-multi-agent
-// refactor) was removed. Use `useAgentNames()` from `@/hooks/use-agent-names`
-// for the live roster, or `AGENTS`/`AGENT_NAMES` from `@/config/fleet` on
-// the server side.
-
 /**
  * Returns a color for the given agent name.
  * Uses the canonical color map for known agents; generates a deterministic
@@ -48,7 +43,7 @@ const ITEM_MAPPING: Record<string, string> = {
 };
 
 /** Translate item_id to human-readable cargo name (e.g., copper_ore → Copper Ore, steel_plate → Steel Plate) */
-export function getItemName(itemId: string | undefined, displayName?: string | null): string {
+export function getItemDisplayName(itemId: string | undefined, displayName?: string | null): string {
   // If a display name is provided, just fix roman numerals and return
   if (displayName) return fixRomanNumerals(displayName);
   if (!itemId) return 'Unknown';

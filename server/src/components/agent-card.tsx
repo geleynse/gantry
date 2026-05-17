@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { cn, getItemName, formatModuleName } from "@/lib/utils";
+import { cn, getItemDisplayName as getItemName, formatModuleName } from "@/lib/utils";
 import { formatCreditsCompact } from "@/lib/format";
 import { formatAbsolute, relativeTime } from "@/lib/time";
 import { HealthBar } from "./health-bar";

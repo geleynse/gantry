@@ -168,6 +168,56 @@ describe("isAdminRoute", () => {
   it("GET /sessions IS admin", () => {
     expect(isAdminRoute(makeReq({ method: "GET", path: "/sessions" }))).toBe(true);
   });
+  it("GET /devtools IS admin (reverse-proxy to raw session transcripts)", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/devtools" }))).toBe(true);
+  });
+  it("GET /devtools/assets/x.js IS admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/devtools/assets/x.js" }))).toBe(true);
+  });
+
+  // Regression: admin-section GETs must be admin-only (audit 2026-05-16)
+  it("GET /api/prompts/files IS admin (prompts are not world-readable)", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/prompts/files" }))).toBe(true);
+  });
+  it("GET /api/comms/log IS admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/comms/log" }))).toBe(true);
+  });
+  it("GET /api/overseer/decisions IS admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/overseer/decisions" }))).toBe(true);
+  });
+  it("GET /api/notes/sable-thorn/diary IS admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/notes/sable-thorn/diary" }))).toBe(true);
+  });
+  it("GET /api/captains-logs/sable-thorn IS admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/captains-logs/sable-thorn" }))).toBe(true);
+  });
+  it("GET /api/fleet/broadcast/history IS admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/fleet/broadcast/history" }))).toBe(true);
+  });
+  // Per-agent admin patterns
+  it("GET /api/agents/sable-thorn/inject IS admin (drains pending directive)", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/agents/sable-thorn/inject" }))).toBe(true);
+  });
+  it("GET /api/agents/sable-thorn/directives IS admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/agents/sable-thorn/directives" }))).toBe(true);
+  });
+  it("GET /api/agents/sable-thorn/shutdown IS admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/agents/sable-thorn/shutdown" }))).toBe(true);
+  });
+  // Viewer-readable sibling routes under /api/agents must remain non-admin
+  it("GET /api/agents (list) is NOT admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/agents" }))).toBe(false);
+  });
+  it("GET /api/agents/sable-thorn (status) is NOT admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/agents/sable-thorn" }))).toBe(false);
+  });
+  it("GET /api/agents/sable-thorn/logs is NOT admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/agents/sable-thorn/logs" }))).toBe(false);
+  });
+  // Prefix-collision guards
+  it("GET /api/promptsx (collision) is NOT admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/promptsx" }))).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

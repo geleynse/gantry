@@ -17,6 +17,7 @@ import { checkCloakAdvisory } from "./auto-cloak.js";
 import { generateInstabilityHint } from "./instability-hints.js";
 import { checkStorageLimits } from "../services/faction-monitor.js";
 import { getNoteUpdatedAt } from "../services/notes-db.js";
+import { getDbIfInitialized } from "../services/database.js";
 import { extractShipsFromResult, summarizeShipThreats } from "./threat-assessment.js";
 import { buildLoreHint } from "../services/poi-lore.js";
 
@@ -289,6 +290,7 @@ export function createDefaultInjections(): Injection[] {
         return count % 5 === 0;
       },
       gather: (_ctx, agent) => {
+        if (!getDbIfInitialized()) return null;
         try {
           const updatedAt = getNoteUpdatedAt(agent, "strategy");
           if (!updatedAt) {

@@ -16,7 +16,7 @@ mock.module("../../services/galaxy-poi-registry.js", () => ({
 }));
 
 // Mock global fetch
-const mockFetch = mock<() => Promise<Response>>(() => Promise.resolve(new Response()));
+const mockFetch = mock<() => Promise<Response>>(() => Promise.resolve(new Response(JSON.stringify({}), { status: 200 })));
 globalThis.fetch = mockFetch as unknown as typeof fetch;
 
 function createApp() {

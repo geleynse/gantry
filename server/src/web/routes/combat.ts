@@ -111,7 +111,7 @@ router.get('/systems', (req, res) => {
     total_damage: number;
   }>(`
     SELECT
-      COALESCE(system, '(unknown)') AS system,
+      COALESCE(NULLIF(system, ''), '(unknown)') AS system,
       COUNT(CASE WHEN event_type IN ('pirate_combat', 'pirate_warning') THEN 1 END) AS encounter_count,
       COUNT(DISTINCT CASE WHEN event_type = 'player_died' THEN
         (agent || '_' || strftime('%Y-%m-%dT%H:%M', created_at))
@@ -120,7 +120,7 @@ router.get('/systems', (req, res) => {
     FROM combat_events
     WHERE 1=1
       ${timeClause}
-    GROUP BY COALESCE(system, '(unknown)')
+    GROUP BY COALESCE(NULLIF(system, ''), '(unknown)')
     HAVING
       COUNT(CASE WHEN event_type IN ('pirate_combat', 'pirate_warning') THEN 1 END) > 0
       OR COUNT(CASE WHEN event_type = 'player_died' THEN 1 END) > 0

@@ -101,6 +101,7 @@ import type { GantryConfig } from "../config.js";
 import { getToolsForRolePreset } from "../config.js";
 import { createLogger } from "../lib/logger.js";
 import { SessionStore } from "./session-store.js";
+import { getDbIfInitialized } from "../services/database.js";
 import { SessionManager } from "./session-manager.js";
 import { EventBuffer } from "./event-buffer.js";
 import { BreakerRegistry } from "./circuit-breaker.js";
@@ -435,7 +436,7 @@ export async function createMcpServer(config: GantryConfig) {
   async function pollGameHealth(): Promise<void> {
     try {
       const resp = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(5000) });
-      if (!resp.ok) return;
+      if (!resp || !resp.ok || typeof resp.text !== "function") return;
       let data: { status: string; tick: number; version: string; estimated_next_tick?: string };
       try {
         const text = await resp.text();
@@ -483,6 +484,7 @@ export async function createMcpServer(config: GantryConfig) {
   pollGameHealth();
   const healthInterval = setInterval(pollGameHealth, HEALTH_INTERVAL_MS);
   healthInterval.unref();
+  mcpTimers.register("gameHealth", healthInterval);
 
   // Wire recovery probe: when unstable/down, poll game health every 30s so
   // a successful response can transition the status back toward healthy.
@@ -514,6 +516,7 @@ export async function createMcpServer(config: GantryConfig) {
   // Prune stale events every 5 minutes
   const overseerEventPruneInterval = setInterval(() => overseerEventLog.prune(), 5 * 60 * 1000);
   overseerEventPruneInterval.unref();
+  mcpTimers.register("overseerEventPrune", overseerEventPruneInterval);
 
   // Shared transit throttle — single instance for the entire fleet server lifetime.
   // Persists across agent turns and session restarts, keyed by agent name.
@@ -673,6 +676,7 @@ export async function createMcpServer(config: GantryConfig) {
     }
   }, FLEET_HEALTH_INTERVAL_MS);
   fleetHealthInterval.unref();
+  mcpTimers.register("fleetHealth", fleetHealthInterval);
   log.info("fleet health monitor started", { intervalMs: FLEET_HEALTH_INTERVAL_MS });
 
   // --- Fleet watchdog (webhook alerting) ---
@@ -691,27 +695,35 @@ export async function createMcpServer(config: GantryConfig) {
   // Was 60s; tightened after 2026-04-28 session-leak investigation showed
   // pre-login orphan transports waiting too long on the slower interval.
   const cleanupInterval = setInterval(() => {
-    const deleted = sessionStore.cleanup();
-    if (deleted > 0) {
-      log.debug("cleaned up expired sessions", { count: deleted });
-    }
+    // Database might not be initialized yet or already closed (in tests)
+    if (!getDbIfInitialized()) return;
 
-    // Reap transports whose DB session no longer exists or has expired.
-    // Without this, transports accumulate in memory even after the session TTL.
-    let reaped = 0;
-    for (const [sid, transport] of transports) {
-      if (!sessionStore.isValidSession(sid)) {
-        transports.delete(sid);
-        sessionAgentMap.delete(sid);
-        transport.close?.().catch(() => {});
-        reaped++;
+    try {
+      const deleted = sessionStore.cleanup();
+      if (deleted > 0) {
+        log.debug("cleaned up expired sessions", { count: deleted });
       }
-    }
-    if (reaped > 0) {
-      log.debug("reaped orphaned transports", { count: reaped, remaining: transports.size });
+
+      // Reap transports whose DB session no longer exists or has expired.
+      // Without this, transports accumulate in memory even after the session TTL.
+      let reaped = 0;
+      for (const [sid, transport] of transports) {
+        if (!sessionStore.isValidSession(sid)) {
+          transports.delete(sid);
+          sessionAgentMap.delete(sid);
+          transport.close?.().catch(() => {});
+          reaped++;
+        }
+      }
+      if (reaped > 0) {
+        log.debug("reaped orphaned transports", { count: reaped, remaining: transports.size });
+      }
+    } catch (err) {
+      log.debug("session cleanup tick failed", { error: err instanceof Error ? err.message : String(err) });
     }
   }, 15_000);
   cleanupInterval.unref();
+  mcpTimers.register("sessionCleanup", cleanupInterval);
 
   // Helper: create an MCP transport and wire it up
   function createTransport(logPrefix: string): StreamableHTTPServerTransport {

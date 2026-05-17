@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { cn, getItemName, formatModuleName } from "@/lib/utils";
+import { cn, getItemDisplayName as getItemName, formatModuleName } from "@/lib/utils";
 import { HealthBar } from "./health-bar";
 import { ShipImage } from "./ShipImage";
 import type { AgentGameState, ShipModule } from "@/hooks/use-game-state";

@@ -95,11 +95,15 @@ export function getDb(): Database {
 /**
  * Returns a cached prepared statement for the given SQL.
  * Statement is created if not already cached.
+ * Returns null if database is not initialized.
  */
-function getPreparedStatement(sql: string): Statement {
+function getPreparedStatement(sql: string): Statement | null {
+  const currentDb = db;
+  if (!currentDb) return null;
+
   let stmt = statementCache.get(sql);
   if (!stmt) {
-    stmt = getDb().prepare(sql);
+    stmt = currentDb.prepare(sql);
     statementCache.set(sql, stmt);
   }
   return stmt;
@@ -126,7 +130,12 @@ export function closeDb(): void {
  * Usage: `queryOne<{ id: number; name: string }>('SELECT ...', param1, param2)`
  */
 export function queryOne<T>(sql: string, ...params: SQLQueryBindings[]): T | null {
-  const result = getPreparedStatement(sql).get(...params);
+  const stmt = getPreparedStatement(sql);
+  if (!stmt) {
+    log.warn('queryOne: database not initialized');
+    return null;
+  }
+  const result = stmt.get(...params);
   return (result as T) ?? null;
 }
 
@@ -135,14 +144,24 @@ export function queryOne<T>(sql: string, ...params: SQLQueryBindings[]): T | nul
  * Usage: `queryAll<{ id: number; name: string }>('SELECT ...', param1, param2)`
  */
 export function queryAll<T>(sql: string, ...params: SQLQueryBindings[]): T[] {
-  return getPreparedStatement(sql).all(...params) as T[];
+  const stmt = getPreparedStatement(sql);
+  if (!stmt) {
+    log.warn('queryAll: database not initialized');
+    return [];
+  }
+  return stmt.all(...params) as T[];
 }
 
 /**
  * Execute an INSERT and return the lastInsertRowid.
  */
 export function queryInsert(sql: string, ...params: SQLQueryBindings[]): number {
-  const result = getPreparedStatement(sql).run(...params);
+  const stmt = getPreparedStatement(sql);
+  if (!stmt) {
+    log.warn('queryInsert: database not initialized');
+    return 0;
+  }
+  const result = stmt.run(...params);
   return Number(result.lastInsertRowid);
 }
 
@@ -150,7 +169,12 @@ export function queryInsert(sql: string, ...params: SQLQueryBindings[]): number 
  * Execute an INSERT/UPDATE/DELETE and return the changes count.
  */
 export function queryRun(sql: string, ...params: SQLQueryBindings[]): number {
-  const result = getPreparedStatement(sql).run(...params);
+  const stmt = getPreparedStatement(sql);
+  if (!stmt) {
+    log.warn('queryRun: database not initialized');
+    return 0;
+  }
+  const result = stmt.run(...params);
   return (result as { changes: number }).changes ?? 0;
 }
 

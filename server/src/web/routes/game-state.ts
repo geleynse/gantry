@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { createLogger } from '../../lib/logger.js';
-import { getItemName as getFallbackName } from '../../lib/utils.js';
+import { getItemDisplayName as getFallbackName } from '../../lib/utils.js';
 import { AgentGameStateSchema } from '../../shared/schemas.js';
 import type { MarketCache } from '../../proxy/market-cache.js';
 import { resolveName, getType, learnFromObjects } from '../../services/learned-metadata.js';
@@ -133,6 +133,7 @@ function normalizeModules(modules: unknown[], marketCache?: MarketCache): Module
       // when the learned-metadata registry hasn't seen this module instance yet.
       (class_id ? getFallbackName(class_id) : null) ||
       (item_id ? (marketCache?.getItemName(item_id) || getFallbackName(item_id)) : 'Unknown');
+
     const resolvedType = rawType || getType(item_id) || registryItem?.type;
     const inferredType = !resolvedType && resolvedName ? inferSlotType(resolvedName) : undefined;
     const finalType = resolvedType ?? inferredType;

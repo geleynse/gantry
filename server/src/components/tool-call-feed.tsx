@@ -1269,6 +1269,20 @@ export function ToolCallFeed({ agentName }: { agentName: string }) {
                   );
                 })()}
 
+                {/* Task B: link to matching session by timestamp — no session ID on records,
+                    so we navigate with ?sessionTime= and let AgentSessionsPanel find the match */}
+                {!isCollapsedGroup && (
+                  <a
+                    href={`?sessionTime=${new Date(record.timestamp).getTime()}#sessions`}
+                    onClick={(e) => e.stopPropagation()}
+                    title="View session containing this tool call"
+                    className="shrink-0 text-muted-foreground/40 hover:text-info transition-colors text-[11px] leading-none"
+                    aria-label="View session"
+                  >
+                    ↗
+                  </a>
+                )}
+
                 {/* Duration */}
                 {!isCollapsedGroup && record.status === "pending" ? (
                   <span className="text-info shrink-0 text-right w-16">

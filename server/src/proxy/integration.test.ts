@@ -123,15 +123,20 @@ describe("Gantry Integration", () => {
       return originalFetch(url, opts);
     }) as any;
 
-    const { router } = await createMcpServer(testConfig);
+    const { router, dispose } = await createMcpServer(testConfig);
     global.fetch = originalFetch;
 
     app = express();
     app.use(express.json());
     app.use("/", router);
+
+    (global as any).mcpDispose = dispose;
   });
 
-  afterAll(() => {
+  afterAll(async () => {
+    if ((global as any).mcpDispose) {
+      await (global as any).mcpDispose();
+    }
     invalidateSchemaCache();
     closeDb();
   });
