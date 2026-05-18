@@ -39,6 +39,15 @@ export function hasSignal(agent: string, type: string): boolean {
   return !!row;
 }
 
+/** Returns the message field for an unconsumed signal, or null if not present. */
+export function getSignalMessage(agent: string, type: string): string | null {
+  const row = queryOne<{ message: string }>(
+    `SELECT message FROM agent_signals WHERE agent = ? AND signal_type = ? AND consumed_at IS NULL LIMIT 1`,
+    agent, type
+  );
+  return row?.message ?? null;
+}
+
 export function clearSignal(agent: string, type: string): void {
   queryRun(
     `DELETE FROM agent_signals WHERE agent = ? AND signal_type = ?`,

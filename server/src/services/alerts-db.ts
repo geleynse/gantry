@@ -47,3 +47,19 @@ export function acknowledgeAll(agent?: string): number {
     agent ?? null, agent ?? null
   );
 }
+
+/**
+ * Returns true if an unacknowledged alert matching the given agent + category
+ * was created within the last `withinMs` milliseconds.
+ * Used to prevent duplicate alerts from being filed on every monitor pass.
+ */
+export function hasRecentAlert(agent: string, category: string, withinMs = 86_400_000): boolean {
+  const row = queryOne<{ id: number }>(
+    `SELECT id FROM agent_alerts
+     WHERE agent = ? AND category = ? AND acknowledged = 0
+       AND created_at >= datetime('now', ? || ' seconds')
+     LIMIT 1`,
+    agent, category, String(-Math.floor(withinMs / 1000))
+  );
+  return !!row;
+}

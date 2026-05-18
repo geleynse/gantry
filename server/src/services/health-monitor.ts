@@ -13,12 +13,13 @@
  */
 
 import { createLogger } from "../lib/logger.js";
-import { hasSignal } from "./signals-db.js";
+import { hasSignal, getSignalMessage } from "./signals-db.js";
 import { startAgent } from "./agent-manager.js";
 import { hasSession } from "./process-manager.js";
 import type { AgentConfig } from "../config.js";
 import { getFleetDisabledState } from "./fleet-control.js";
 import { isRestartSuppressed } from "./overseer-stop-cooldown.js";
+import { createAlert, hasRecentAlert } from "./alerts-db.js";
 
 const log = createLogger("health-monitor");
 
@@ -66,6 +67,7 @@ export interface HealthMonitor {
 
 export function createHealthMonitor(agents: AgentConfig[]): HealthMonitor {
   const agentNames = agents.map(a => a.name);
+  const agentsByName = new Map<string, AgentConfig>(agents.map(a => [a.name, a]));
   const states = new Map<string, AgentRestartState>();
 
   function getOrInitState(name: string): AgentRestartState {
@@ -127,6 +129,24 @@ export function createHealthMonitor(agents: AgentConfig[]): HealthMonitor {
     if (stoppedGracefully || shutdownPending) {
       // Agent stopped intentionally via the stop API — don't auto-restart.
       state.desiredState = "stopped";
+
+      // If the stop reason is a provider rate limit, file an operator alert so
+      // the agent doesn't silently stay down overnight.  Guard for idempotence:
+      // only insert if no unacknowledged quota_exhausted alert exists in the last 24h.
+      if (stoppedGracefully) {
+        const stopMessage = getSignalMessage(name, "stopped_gracefully");
+        if (stopMessage === "rate_limit" && !hasRecentAlert(name, "quota_exhausted")) {
+          const backend = agentsByName.get(name)?.backend ?? "unknown";
+          createAlert(
+            name,
+            "warning",
+            "quota_exhausted",
+            `Agent stopped: LLM provider rate limit hit. Restart manually once the quota window reopens (typically next hour or next day depending on provider). Backend: ${backend}.`,
+          );
+          log.warn("Filed quota_exhausted alert for agent", { agent: name, backend });
+        }
+      }
+
       return;
     }
 

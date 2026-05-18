@@ -4,6 +4,7 @@ import * as proc from "./process-manager.js";
 import * as signalsDb from "./signals-db.js";
 import * as agentManager from "./agent-manager.js";
 import * as cooldowns from "./overseer-stop-cooldown.js";
+import * as alertsDb from "./alerts-db.js";
 import type { AgentConfig } from "../config.js";
 
 const testAgents: AgentConfig[] = [
@@ -14,15 +15,21 @@ const testAgents: AgentConfig[] = [
 describe("createHealthMonitor", () => {
   let mockHasSession: ReturnType<typeof spyOn>;
   let mockHasSignal: ReturnType<typeof spyOn>;
+  let mockGetSignalMessage: ReturnType<typeof spyOn>;
   let mockStartAgent: ReturnType<typeof spyOn>;
   let mockIsRestartSuppressed: ReturnType<typeof spyOn>;
+  let mockCreateAlert: ReturnType<typeof spyOn>;
+  let mockHasRecentAlert: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     mock.restore();
     mockHasSession = spyOn(proc, "hasSession").mockResolvedValue(false);
     mockHasSignal = spyOn(signalsDb, "hasSignal").mockReturnValue(false);
+    mockGetSignalMessage = spyOn(signalsDb, "getSignalMessage").mockReturnValue(null);
     mockStartAgent = spyOn(agentManager, "startAgent").mockResolvedValue({ ok: true, message: "started" });
     mockIsRestartSuppressed = spyOn(cooldowns, "isRestartSuppressed").mockReturnValue({ suppressed: false });
+    mockCreateAlert = spyOn(alertsDb, "createAlert").mockReturnValue(1);
+    mockHasRecentAlert = spyOn(alertsDb, "hasRecentAlert").mockReturnValue(false);
   });
 
   describe("tick — agent is alive", () => {
@@ -102,6 +109,92 @@ describe("createHealthMonitor", () => {
       monitor.markRunning("drifter-gale");
       await monitor.tick();
       expect(mockStartAgent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("tick — quota_exhausted alert on rate_limit stop", () => {
+    it("files a quota_exhausted alert when stopped_gracefully message is rate_limit", async () => {
+      mockHasSession.mockResolvedValue(false);
+      mockHasSignal.mockImplementation((name: string, type: string) => type === "stopped_gracefully");
+      mockGetSignalMessage.mockReturnValue("rate_limit");
+      mockHasRecentAlert.mockReturnValue(false);
+      const monitor = createHealthMonitor(testAgents);
+      monitor.markRunning("drifter-gale");
+      await monitor.tick();
+      expect(mockCreateAlert).toHaveBeenCalledWith(
+        "drifter-gale",
+        "warning",
+        "quota_exhausted",
+        expect.stringContaining("rate limit"),
+      );
+    });
+
+    it("includes the agent backend in the alert message", async () => {
+      mockHasSession.mockResolvedValue(false);
+      mockHasSignal.mockImplementation((name: string, type: string) => type === "stopped_gracefully");
+      mockGetSignalMessage.mockReturnValue("rate_limit");
+      mockHasRecentAlert.mockReturnValue(false);
+      const monitor = createHealthMonitor(testAgents);
+      monitor.markRunning("drifter-gale");
+      await monitor.tick();
+      const [, , , message] = mockCreateAlert.mock.calls[0] as [string, string, string, string];
+      expect(message).toContain("claude");
+    });
+
+    it("does NOT file an alert when stopped_gracefully message is consecutive_failures", async () => {
+      mockHasSession.mockResolvedValue(false);
+      mockHasSignal.mockImplementation((name: string, type: string) => type === "stopped_gracefully");
+      mockGetSignalMessage.mockReturnValue("consecutive_failures");
+      const monitor = createHealthMonitor(testAgents);
+      monitor.markRunning("drifter-gale");
+      await monitor.tick();
+      expect(mockCreateAlert).not.toHaveBeenCalled();
+    });
+
+    it("does NOT file an alert when stopped_gracefully message is null", async () => {
+      mockHasSession.mockResolvedValue(false);
+      mockHasSignal.mockImplementation((name: string, type: string) => type === "stopped_gracefully");
+      mockGetSignalMessage.mockReturnValue(null);
+      const monitor = createHealthMonitor(testAgents);
+      monitor.markRunning("drifter-gale");
+      await monitor.tick();
+      expect(mockCreateAlert).not.toHaveBeenCalled();
+    });
+
+    it("does NOT file a second alert when one already exists within 24h (idempotence)", async () => {
+      mockHasSession.mockResolvedValue(false);
+      mockHasSignal.mockImplementation((name: string, type: string) => type === "stopped_gracefully");
+      mockGetSignalMessage.mockReturnValue("rate_limit");
+      mockHasRecentAlert.mockReturnValue(true); // already filed
+      const monitor = createHealthMonitor(testAgents);
+      monitor.markRunning("drifter-gale");
+      await monitor.tick();
+      expect(mockCreateAlert).not.toHaveBeenCalled();
+    });
+
+    it("running monitor twice only inserts one alert (idempotence via hasRecentAlert)", async () => {
+      mockHasSession.mockResolvedValue(false);
+      mockHasSignal.mockImplementation((name: string, type: string) => type === "stopped_gracefully");
+      mockGetSignalMessage.mockReturnValue("rate_limit");
+      // First pass: no recent alert → insert; second pass: alert now exists → skip
+      mockHasRecentAlert.mockReturnValueOnce(false).mockReturnValue(true);
+      const monitor = createHealthMonitor(testAgents);
+      monitor.markRunning("drifter-gale");
+      await monitor.tick();
+      await monitor.tick();
+      expect(mockCreateAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("still sets desiredState=stopped and skips restart when rate_limit signal is present", async () => {
+      mockHasSession.mockResolvedValue(false);
+      mockHasSignal.mockImplementation((name: string, type: string) => type === "stopped_gracefully");
+      mockGetSignalMessage.mockReturnValue("rate_limit");
+      mockHasRecentAlert.mockReturnValue(false);
+      const monitor = createHealthMonitor(testAgents);
+      monitor.markRunning("drifter-gale");
+      await monitor.tick();
+      expect(mockStartAgent).not.toHaveBeenCalled();
+      expect(monitor.getState("drifter-gale")?.desiredState).toBe("stopped");
     });
   });
 
