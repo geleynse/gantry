@@ -46,104 +46,112 @@ function writeCredentials(creds: RawCredentialsFile): void {
   atomicWriteFileSync(getCredentialsFilePath(env.FLEET_DIR), JSON.stringify(encrypted, null, 2));
 }
 
-const router = Router();
-
 /**
- * GET /api/credentials
- * Returns all agents and their credential status.
- * Passwords are NEVER included.
+ * Create a credentials router instance.
+ * Exported as a factory for testability; default export provides the singleton for route-config.
  */
-router.get("/", (req, res) => {
-  if (req.auth?.role !== "admin") {
-    res.status(403).json({ error: "Admin access required" });
-    return;
-  }
-  let credentials: Record<string, any> = {};
-  try {
-    credentials = readCredentials();
-  } catch (err) {
-    log.error(`Failed to parse credentials: ${err}`);
-  }
+export function createCredentialsRouter(): Router {
+  const router = Router();
 
-  // Exclude overseer agent — it connects via /mcp/overseer, not the game server,
-  // so it has no game credentials and should not appear as "missing".
-  const gameAgentNames = AGENTS
-    .filter((a) => a.mcpVersion !== 'overseer')
-    .map((a) => a.name);
-  const status = gameAgentNames.map(name => ({
-    name,
-    hasCredentials: !!credentials[name],
-    username: credentials[name]?.username || null,
-  }));
+  /**
+   * GET /api/credentials
+   * Returns all agents and their credential status.
+   * Passwords are NEVER included.
+   */
+  router.get("/", (req, res) => {
+    if (req.auth?.role !== "admin") {
+      res.status(403).json({ error: "Admin access required" });
+      return;
+    }
+    let credentials: Record<string, any> = {};
+    try {
+      credentials = readCredentials();
+    } catch (err) {
+      log.error(`Failed to parse credentials: ${err}`);
+    }
 
-  res.json(status);
-});
+    // Exclude overseer agent — it connects via /mcp/overseer, not the game server,
+    // so it has no game credentials and should not appear as "missing".
+    const gameAgentNames = AGENTS
+      .filter((a) => a.mcpVersion !== 'overseer')
+      .map((a) => a.name);
+    const status = gameAgentNames.map(name => ({
+      name,
+      hasCredentials: !!credentials[name],
+      username: credentials[name]?.username || null,
+    }));
 
-/**
- * POST /api/credentials/:agent/update
- * Updates or sets credentials for an agent.
- */
-router.post("/:agent/update", (req, res) => {
-  const { agent } = req.params;
-  if (!isValidAgentNameFormat(agent)) {
-    res.status(404).json({ error: `Unknown agent: "${agent}"` });
-    return;
-  }
-  const { username, password } = req.body;
+    res.json(status);
+  });
 
-  if (!username || !password) {
-    res.status(400).json({ error: "username and password are required" });
-    return;
-  }
+  /**
+   * POST /api/credentials/:agent/update
+   * Updates or sets credentials for an agent.
+   */
+  router.post("/:agent/update", (req, res) => {
+    const { agent } = req.params;
+    if (!isValidAgentNameFormat(agent)) {
+      res.status(404).json({ error: `Unknown agent: "${agent}"` });
+      return;
+    }
+    const { username, password } = req.body;
 
-  const credentials = readCredentials();
-  credentials[agent] = { username, password };
-  writeCredentials(credentials);
+    if (!username || !password) {
+      res.status(400).json({ error: "username and password are required" });
+      return;
+    }
 
-  logEnrollmentEvent(agent, "credential_updated", req.auth?.identity || "admin");
+    const credentials = readCredentials();
+    credentials[agent] = { username, password };
+    writeCredentials(credentials);
 
-  res.json({ success: true });
-});
+    logEnrollmentEvent(agent, "credential_updated", req.auth?.identity || "admin");
 
-/**
- * DELETE /api/credentials/:agent
- * Removes credentials for an agent.
- */
-router.delete("/:agent", (req, res) => {
-  const { agent } = req.params;
-  if (!isValidAgentNameFormat(agent)) {
-    res.status(404).json({ error: `Unknown agent: "${agent}"` });
-    return;
-  }
+    res.json({ success: true });
+  });
 
-  const credentials = readCredentials();
-  if (!credentials[agent]) {
-    res.status(404).json({ error: `No credentials found for agent "${agent}"` });
-    return;
-  }
+  /**
+   * DELETE /api/credentials/:agent
+   * Removes credentials for an agent.
+   */
+  router.delete("/:agent", (req, res) => {
+    const { agent } = req.params;
+    if (!isValidAgentNameFormat(agent)) {
+      res.status(404).json({ error: `Unknown agent: "${agent}"` });
+      return;
+    }
 
-  delete credentials[agent];
-  writeCredentials(credentials);
+    const credentials = readCredentials();
+    if (!credentials[agent]) {
+      res.status(404).json({ error: `No credentials found for agent "${agent}"` });
+      return;
+    }
 
-  logEnrollmentEvent(agent, "credential_removed", req.auth?.identity || "admin");
+    delete credentials[agent];
+    writeCredentials(credentials);
 
-  res.json({ success: true });
-});
+    logEnrollmentEvent(agent, "credential_removed", req.auth?.identity || "admin");
 
-/**
- * GET /api/credentials/audit
- * Returns recent enrollment and credential audit events.
- */
-router.get("/audit", (req, res) => {
-  if (req.auth?.role !== "admin") {
-    res.status(403).json({ error: "Admin access required" });
-    return;
-  }
-  const agentName = queryString(req, 'agent');
-  const limit = queryInt(req, 'limit') ?? 50;
-  
-  const events = getAuditLog(agentName, limit);
-  res.json(events);
-});
+    res.json({ success: true });
+  });
 
-export default router;
+  /**
+   * GET /api/credentials/audit
+   * Returns recent enrollment and credential audit events.
+   */
+  router.get("/audit", (req, res) => {
+    if (req.auth?.role !== "admin") {
+      res.status(403).json({ error: "Admin access required" });
+      return;
+    }
+    const agentName = queryString(req, 'agent');
+    const limit = queryInt(req, 'limit') ?? 50;
+
+    const events = getAuditLog(agentName, limit);
+    res.json(events);
+  });
+
+  return router;
+}
+
+export default createCredentialsRouter();

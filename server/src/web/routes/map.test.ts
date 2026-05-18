@@ -1,4 +1,4 @@
-import { mock, describe, it, expect, beforeEach } from "bun:test";
+import { mock, describe, it, expect, beforeEach, afterEach } from "bun:test";
 import request from "supertest";
 import express from "express";
 import { createMapRouter } from "./map.js";
@@ -17,7 +17,7 @@ mock.module("../../services/galaxy-poi-registry.js", () => ({
 
 // Mock global fetch
 const mockFetch = mock<() => Promise<Response>>(() => Promise.resolve(new Response(JSON.stringify({}), { status: 200 })));
-globalThis.fetch = mockFetch as unknown as typeof fetch;
+const originalFetch = globalThis.fetch;
 
 function createApp() {
   const app = express();
@@ -30,6 +30,11 @@ function createApp() {
 describe("Map routes", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
   });
 
   describe("GET /api/map", () => {
