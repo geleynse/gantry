@@ -11,6 +11,8 @@ const STATIC_AGENT_NAMES = [
   "rust-vane",
   "lumen-shoal",
   "cinder-wake",
+  "brass-meridian",
+  "hollow-pyre",
   "overseer",
 ];
 

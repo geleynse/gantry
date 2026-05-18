@@ -20,12 +20,14 @@ mock.module('next/link', () => ({
     href,
     children,
     className,
+    prefetch,
   }: {
     href: string;
     children: React.ReactNode;
     className?: string;
+    prefetch?: boolean;
   }) => (
-    <a href={href} className={className}>
+    <a href={href} className={className} data-prefetch={prefetch === false ? 'false' : 'true'}>
       {children}
     </a>
   ),
@@ -96,6 +98,29 @@ describe('Sidebar', () => {
       const links = screen.getAllByRole('link');
       const drifterLink = links.find((l) => l.textContent?.trim() === 'drifter-gale');
       expect(drifterLink).toHaveAttribute('href', '/agent/drifter-gale');
+    });
+
+    it('agent links have prefetch=false to avoid RSC 404s', async () => {
+      render(<Sidebar />);
+      await act(async () => {
+        for (const es of MockEventSource.instances.filter(e => e.url === '/api/status/stream')) {
+          es.simulateOpen();
+          es.simulateMessage('status', createMockFleetStatus());
+        }
+      });
+      const links = screen.getAllByRole('link');
+      const agentLinks = links.filter((l) => l.getAttribute('href')?.startsWith('/agent/'));
+      expect(agentLinks.length).toBeGreaterThan(0);
+      for (const link of agentLinks) {
+        expect(link).toHaveAttribute('data-prefetch', 'false');
+      }
+    });
+
+    it('section nav links (Dashboard, Fleet, etc.) still prefetch by default', () => {
+      render(<Sidebar />);
+      const links = screen.getAllByRole('link');
+      const dashboardLink = links.find((l) => l.textContent?.includes('Dashboard'));
+      expect(dashboardLink).toHaveAttribute('data-prefetch', 'true');
     });
   });
 

@@ -377,6 +377,7 @@ function SidebarContent({
                 <li key={name}>
                   <Link
                     href={`/agent/${name}`}
+                    prefetch={false}
                     onClick={onNavigate}
                     className={cn(
                       "flex items-center gap-2 pl-9 pr-2 py-1.5 text-sm transition-colors",
@@ -408,6 +409,7 @@ function SidebarContent({
                 <li key={name}>
                   <Link
                     href={`/agent/${name}`}
+                    prefetch={false}
                     title={name}
                     className={cn(
                       "flex items-center justify-center w-8 h-7 mx-auto text-xs transition-colors",
