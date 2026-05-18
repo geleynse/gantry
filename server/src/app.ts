@@ -11,6 +11,7 @@ import { generalPostLimiter, bulkStateLimiter } from "./web/middleware/rate-limi
 import { createLogger } from "./lib/logger.js";
 import type { HealthMonitor } from "./services/health-monitor.js";
 import { getDevtoolsBaseUrl } from "./lib/devtools.js";
+import { jsonErrorHandler } from "./web/middleware/error-handler.js";
 
 const log = createLogger("app");
 
@@ -439,6 +440,11 @@ export async function createApp(config: GantryConfig, options?: { bindHost?: str
       res.send(indexFile.data);
     });
   }
+
+  // --- JSON error handler (must be last) ---
+  // Catches any error thrown synchronously or passed via next(err) by route handlers.
+  // Returns { error: <message> } JSON instead of Express's default HTML stack trace.
+  app.use(jsonErrorHandler);
 
   return { app, sessions, sharedState, overseerAgent, dispose: disposeProxy };
 }

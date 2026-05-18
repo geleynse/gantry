@@ -4,6 +4,7 @@
  * without spinning up the full unified server.
  */
 import express, { type Express } from 'express';
+import { jsonErrorHandler } from './middleware/error-handler.js';
 import { createServerStatusRouter } from './routes/server-status.js';
 import { BreakerRegistry } from '../proxy/circuit-breaker.js';
 import { MetricsWindow } from '../proxy/instability-metrics.js';
@@ -96,5 +97,8 @@ app.use('/api/catalog', createCatalogRouter(emptyStatusCache));
 
 // Test-specific server status route (simplified deps)
 app.use('/api/server-status', createServerStatusRouter({ current: null }, new BreakerRegistry(), new MetricsWindow()));
+
+// JSON error handler — must be last
+app.use(jsonErrorHandler);
 
 export default app;
