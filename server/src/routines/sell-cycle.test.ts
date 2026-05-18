@@ -261,6 +261,74 @@ describe("sell_cycle routine", () => {
       expect(toolsCalled).not.toContain("multi_sell");
     });
 
+    it("re-docks and retries analyze_market on immediate not_docked error", async () => {
+      // Regression test for proxy-todos "sell_cycle handoff on `not_docked`":
+      // travelAndDock returns before the game server's dock state is reflected
+      // in analyze_market. The first call returns not_docked; after re-dock + tick,
+      // the second call should succeed.
+      const toolsCalled: string[] = [];
+      let analyzeMarketCalls = 0;
+      const ctx = mockContext(
+        async (tool) => {
+          toolsCalled.push(tool);
+          if (tool === "analyze_market") {
+            analyzeMarketCalls++;
+            if (analyzeMarketCalls === 1) return { error: { code: "not_docked", message: "You are not docked" } };
+            return { result: { demand: [{ item_id: "iron_ore", quantity: 100 }] } };
+          }
+          if (tool === "dock") return { result: { status: "docked" } };
+          if (tool === "get_cargo") return { result: { cargo: [{ item_id: "iron_ore", quantity: 20 }] } };
+          if (tool === "multi_sell") return { result: { items_sold: 1, credits_after: 12000 } };
+          return { result: {} };
+        },
+        { player: { current_poi: "sol_station", docked_at_base: "sol_station_base", credits: 10000 } },
+      );
+
+      const result = await sellCycleRoutine.run(ctx, { station: "sol_station" });
+      expect(result.status).toBe("completed");
+      // analyze_market called twice: first returns not_docked, second succeeds
+      expect(analyzeMarketCalls).toBe(2);
+      // dock was called again as the recovery step
+      expect(toolsCalled.filter(t => t === "dock").length).toBe(1);
+    });
+
+    it("hands off when re-dock fails after not_docked error", async () => {
+      const ctx = mockContext(
+        async (tool) => {
+          if (tool === "analyze_market") return { error: { code: "not_docked" } };
+          if (tool === "dock") return { error: { code: "dock_blocked", message: "Docking bay full" } };
+          return { result: {} };
+        },
+        { player: { current_poi: "sol_station", docked_at_base: "sol_station_base", credits: 10000 } },
+      );
+
+      const result = await sellCycleRoutine.run(ctx, { station: "sol_station" });
+      expect(result.status).toBe("handoff");
+      expect(result.handoffReason).toContain("re-dock");
+    });
+
+    it("continues when re-dock returns already_docked after not_docked error", async () => {
+      let analyzeMarketCalls = 0;
+      const ctx = mockContext(
+        async (tool) => {
+          if (tool === "analyze_market") {
+            analyzeMarketCalls++;
+            if (analyzeMarketCalls === 1) return { error: { code: "not_docked" } };
+            return { result: { demand: [{ item_id: "iron_ore" }] } };
+          }
+          if (tool === "dock") return { error: { code: "already_docked" } };
+          if (tool === "get_cargo") return { result: { cargo: [{ item_id: "iron_ore", quantity: 10 }] } };
+          if (tool === "multi_sell") return { result: { items_sold: 1, credits_after: 11000 } };
+          return { result: {} };
+        },
+        { player: { current_poi: "sol_station", docked_at_base: "sol_station_base", credits: 10000 } },
+      );
+
+      const result = await sellCycleRoutine.run(ctx, { station: "sol_station" });
+      expect(result.status).toBe("completed");
+      expect(analyzeMarketCalls).toBe(2);
+    });
+
     it("sells specific items when provided", async () => {
       let sellItems: unknown;
       const ctx = mockContext(

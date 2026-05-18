@@ -75,8 +75,29 @@ async function run(ctx: RoutineContext, params: SellCycleParams): Promise<Routin
   if (td.failed) return handoff(td.failed, { station: params.station }, phases);
 
   // --- Phase 4: Analyze market ---
+  // The dock call may return before the game server's dock state is visible
+  // to the market API. If analyze_market returns not_docked immediately after
+  // a successful dock, re-dock once and retry (proxy-todos: "sell_cycle handoff
+  // on `not_docked`": travelAndDock returned but cache wasn't refreshed before
+  // analyze_market fired).
   const marketPhase = phase("analyze_market");
-  const marketResp = await ctx.client.execute("analyze_market");
+  let marketResp = await ctx.client.execute("analyze_market");
+  if (marketResp.error && JSON.stringify(marketResp.error).includes("not_docked")) {
+    ctx.log("warn", "sell_cycle: analyze_market returned not_docked immediately after dock — re-docking once");
+    const redockPhase = phase("redock");
+    const redockResp = await ctx.client.execute("dock");
+    if (redockResp.error) {
+      const errStr = JSON.stringify(redockResp.error);
+      if (!errStr.includes("already_docked") && !errStr.includes("already docked")) {
+        phases.push(completePhase(redockPhase, { error: redockResp.error }));
+        phases.push(completePhase(marketPhase, { error: marketResp.error, skipped: "redock_failed" }));
+        return handoff(`Could not re-dock at ${params.station} after not_docked error`, { station: params.station }, phases);
+      }
+    }
+    phases.push(completePhase(redockPhase, redockResp.result ?? { already_docked: true }));
+    await ctx.client.waitForTick();
+    marketResp = await ctx.client.execute("analyze_market");
+  }
   if (marketResp.error) {
     phases.push(completePhase(marketPhase, { error: marketResp.error }));
     return handoff(
