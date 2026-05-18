@@ -4,8 +4,72 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useServerStatus, type ServerStatusData } from "@/hooks/use-server-status";
 
-function statusDotClass(status: ServerStatusData["status"] | null): string {
-  switch (status) {
+// ---------------------------------------------------------------------------
+// Pure display helper — testable without React
+// ---------------------------------------------------------------------------
+
+export type StatusSeverity = "up" | "degraded" | "down" | "unknown";
+
+export interface ServerStatusDisplay {
+  label: string;
+  severity: StatusSeverity;
+  /** Present when consecutive_failures > 0 */
+  tooltipDetail?: string;
+}
+
+/**
+ * Derives display label + severity from a server-status payload.
+ *
+ * Rules (circuit_breaker field takes precedence when present):
+ *   - cb.state === "closed" && status === "up"  → UP (green)
+ *   - cb.state === "half-open"                  → DEGRADED (yellow)
+ *   - cb.state === "open"                       → DOWN (red)
+ *   - cb missing (old server build)             → fall back to `status`
+ *   - payload is null                           → unknown
+ */
+export function getServerStatusDisplay(
+  payload: ServerStatusData | null | undefined
+): ServerStatusDisplay {
+  if (!payload) return { label: "—", severity: "unknown" };
+
+  const cb = payload.circuit_breaker;
+  const failures = cb?.consecutive_failures ?? 0;
+  const tooltipDetail =
+    failures > 0 ? `${failures} consecutive upstream failure${failures !== 1 ? "s" : ""}` : undefined;
+
+  // When circuit_breaker is present, use its state as the authoritative source
+  if (cb) {
+    if (cb.state === "open") {
+      return { label: "DOWN", severity: "down", tooltipDetail };
+    }
+    if (cb.state === "half-open") {
+      return { label: "DEGRADED", severity: "degraded", tooltipDetail };
+    }
+    // closed — fall through to status field for the normal UP/DEGRADED distinction
+    if (payload.status === "up") {
+      return { label: "UP", severity: "up", tooltipDetail };
+    }
+    if (payload.status === "degraded") {
+      return { label: "DEGRADED", severity: "degraded", tooltipDetail };
+    }
+    return { label: "DOWN", severity: "down", tooltipDetail };
+  }
+
+  // Fallback for older server builds that don't include circuit_breaker
+  switch (payload.status) {
+    case "up":
+      return { label: "UP", severity: "up" };
+    case "degraded":
+      return { label: "DEGRADED", severity: "degraded", tooltipDetail };
+    case "down":
+      return { label: "DOWN", severity: "down", tooltipDetail };
+    default:
+      return { label: "—", severity: "unknown" };
+  }
+}
+
+function dotClass(severity: StatusSeverity): string {
+  switch (severity) {
     case "up":
       return "bg-success";
     case "degraded":
@@ -17,18 +81,19 @@ function statusDotClass(status: ServerStatusData["status"] | null): string {
   }
 }
 
-function statusLabel(status: ServerStatusData["status"] | null): string {
-  switch (status) {
+function textClass(severity: StatusSeverity): string {
+  switch (severity) {
     case "up":
-      return "UP";
+      return "text-success";
     case "degraded":
-      return "DEGRADED";
+      return "text-warning";
     case "down":
-      return "DOWN";
+      return "text-error";
     default:
-      return "—";
+      return "text-muted-foreground";
   }
 }
+
 
 function formatAge(isoTimestamp: string | null): string {
   if (!isoTimestamp) return "—";
@@ -72,17 +137,24 @@ function useStableCbState(cbState: string | null): string | null {
 export function ServerStatusWidget() {
   const { data, connected } = useServerStatus();
 
-  const status = data?.status ?? null;
   const version = data?.version ?? null;
   const cbState = data?.circuit_breaker?.state ?? null;
   const lastCheck = data?.last_health_check ?? null;
 
   const stableCbState = useStableCbState(cbState);
 
-  const isDown = status === "down" || status === "degraded";
+  // Derive display label + severity from circuit_breaker state (falls back to
+  // status field when circuit_breaker is absent — old server builds).
+  const display = getServerStatusDisplay(data);
+  const { label, severity, tooltipDetail } = display;
+
+  const isNotUp = severity !== "up" && severity !== "unknown";
   const cooldownSec = data?.circuit_breaker?.cooldown_remaining_ms
     ? Math.ceil(data.circuit_breaker.cooldown_remaining_ms / 1000)
     : null;
+
+  // Build tooltip title — shown on hover of the dot
+  const dotTitle = [data?.notes, tooltipDetail].filter(Boolean).join(" — ") || "Server status unknown";
 
   return (
     <div className="flex items-center gap-1.5">
@@ -90,29 +162,26 @@ export function ServerStatusWidget() {
         Server
       </span>
 
-      {/* Status dot */}
+      {/* Status dot — color driven by circuit-breaker-aware severity */}
       <span
-        className={cn("inline-block w-2 h-2 rounded-full", statusDotClass(status))}
-        title={data?.notes ?? "Server status unknown"}
+        className={cn("inline-block w-2 h-2 rounded-full", dotClass(severity))}
+        title={dotTitle}
       />
 
-      {/* Status text — with hover tooltip when down/degraded */}
+      {/* Status text — with hover tooltip when not UP */}
       <span className="relative group/srvstatus">
         <span
           className={cn(
             "font-mono text-[11px] cursor-default",
-            status === "up" && "text-success",
-            status === "degraded" && "text-warning",
-            status === "down" && "text-error",
-            status === null && "text-muted-foreground",
-            isDown && "underline decoration-dotted"
+            textClass(severity),
+            isNotUp && "underline decoration-dotted"
           )}
         >
-          {statusLabel(status)}
+          {label}
         </span>
 
-        {/* Tooltip — only shown when down/degraded and we have detail */}
-        {isDown && data && (
+        {/* Tooltip — only shown when not UP and we have detail */}
+        {isNotUp && data && (
           <div className={cn(
             "absolute top-full left-0 mt-2 z-50 w-64 p-3 rounded-sm border shadow-xl",
             "bg-card border-border text-[11px] leading-relaxed",
@@ -123,9 +192,16 @@ export function ServerStatusWidget() {
             <div className="absolute -top-1.5 left-4 w-3 h-3 bg-card border-l border-t border-border rotate-45" />
 
             <div className="space-y-1.5">
-              <div className="font-semibold uppercase tracking-wider text-[10px] text-error mb-2">
-                Server {statusLabel(status)}
+              <div className={cn(
+                "font-semibold uppercase tracking-wider text-[10px] mb-2",
+                severity === "down" ? "text-error" : "text-warning"
+              )}>
+                Server {label}
               </div>
+
+              {tooltipDetail && (
+                <p className="text-warning/90 font-mono">{tooltipDetail}</p>
+              )}
 
               {data.notes && (
                 <p className="text-foreground/80 font-mono break-words">{data.notes}</p>
