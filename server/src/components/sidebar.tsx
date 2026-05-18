@@ -57,9 +57,15 @@ function useAlertCount(pollIntervalMs = 30_000): number {
     };
     fetchCount();
     const interval = setInterval(fetchCount, pollIntervalMs);
+    if (typeof window !== "undefined") {
+      window.addEventListener("alerts:changed", fetchCount);
+    }
     return () => {
       cancelled = true;
       clearInterval(interval);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("alerts:changed", fetchCount);
+      }
     };
   }, [pollIntervalMs]);
 

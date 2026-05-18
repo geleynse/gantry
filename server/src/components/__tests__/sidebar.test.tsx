@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { Sidebar } from '../sidebar';
 import { createMockFleetStatus } from '@/test/mocks/agents';
@@ -265,6 +265,47 @@ describe('Sidebar', () => {
         }
       });
       expect(screen.getByText('drifter-gale')).toBeInTheDocument();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Alert count badge — window event triggers refetch
+  // ---------------------------------------------------------------------------
+
+  describe('useAlertCount window event', () => {
+    let fetchSpy: ReturnType<typeof mock>;
+
+    beforeEach(() => {
+      fetchSpy = mock(async () =>
+        new Response(JSON.stringify({ count: 3 }), { status: 200 })
+      );
+      globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    });
+
+    afterEach(() => {
+      // Restore fetch to something that won't throw in other tests
+      globalThis.fetch = mock(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    });
+
+    it('calls fetch again when alerts:changed event fires', async () => {
+      render(<Sidebar />);
+
+      // Wait for the initial fetch on mount
+      await act(async () => {});
+      const callsAfterMount = fetchSpy.mock.calls.filter(
+        (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('/api/alerts/count')
+      ).length;
+      expect(callsAfterMount).toBeGreaterThanOrEqual(1);
+
+      // Dispatch the event and wait for the re-fetch
+      await act(async () => {
+        window.dispatchEvent(new Event('alerts:changed'));
+      });
+
+      const callsAfterEvent = fetchSpy.mock.calls.filter(
+        (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('/api/alerts/count')
+      ).length;
+      expect(callsAfterEvent).toBeGreaterThan(callsAfterMount);
     });
   });
 });

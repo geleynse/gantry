@@ -187,6 +187,7 @@ export default function AlertsPage() {
         a.id === id ? { ...a, acknowledged: 1, acknowledged_by: "operator", acknowledged_at: new Date().toISOString() } : a
       )
     );
+    window.dispatchEvent(new Event("alerts:changed"));
   };
 
   const handleAcknowledgeAll = async () => {
@@ -195,6 +196,7 @@ export default function AlertsPage() {
       const params = agentFilter !== "all" ? `?agent=${encodeURIComponent(agentFilter)}` : "";
       await apiFetch(`/alerts/acknowledge-all${params}`, { method: "POST" });
       await fetchAlerts();
+      window.dispatchEvent(new Event("alerts:changed"));
     } catch {
       // non-fatal
     } finally {
