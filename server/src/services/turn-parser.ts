@@ -180,6 +180,25 @@ function partialToGameState(partial: PartialGameState): GameState | null {
 
 const MAX_FIELD_LEN = 500;
 
+/**
+ * Normalize a tool name for analytics storage.
+ *
+ * Claude Code emits tool names with the MCP server prefix:
+ *   `mcp__gantry__login`, `mcp__gantry__spacemolt`, `mcp__gantry__sell`
+ * Codex/OpenAI agents emit bare names:
+ *   `login`, `spacemolt`, `sell`
+ *
+ * Strip the `mcp__gantry__` prefix so that analytics queries and
+ * ECONOMIC_TOOL_NAMES filters work uniformly regardless of agent backend.
+ * The matchName logic (action ?? name) uses the raw pendingTool.name so
+ * game-state extraction is unaffected by this normalization.
+ *
+ * Addresses: proxy-todos "Codex tool-name namespace inconsistency"
+ */
+export function normalizeToolName(raw: string): string {
+  return raw.replace(/^(mcp__gantry__)+/, '');
+}
+
 function truncate(s: string): string {
   // Extra null guard: Bun 1.x may pass undefined despite TypeScript types
   if (s == null || typeof s !== 'string') return '';
@@ -452,7 +471,7 @@ export function parseTurnFile(content: string): ParsedTurn {
 
             const toolCall: ToolCallData = {
               sequenceNumber: sequence++,
-              toolName: pendingTool.name,
+              toolName: normalizeToolName(pendingTool.name),
               argsJson: pendingTool.argsJson,
               resultSummary: truncate(contentStr),
               success: !block.is_error,

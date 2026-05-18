@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { parseTurnFile, extractCombatEvents } from './turn-parser.js';
+import { parseTurnFile, extractCombatEvents, normalizeToolName } from './turn-parser.js';
 
 // Build realistic JSONL test data.
 // In real Claude Code JSONL:
@@ -104,10 +104,10 @@ describe('turn-parser', () => {
       const parsed = parseTurnFile(fullJsonl);
       expect(parsed.toolCalls).toHaveLength(2);
       expect(parsed.toolCalls[0].sequenceNumber).toBe(0);
-      expect(parsed.toolCalls[0].toolName).toBe('mcp__gantry__get_status');
+      expect(parsed.toolCalls[0].toolName).toBe('get_status');
       expect(parsed.toolCalls[0].success).toBe(true);
       expect(parsed.toolCalls[1].sequenceNumber).toBe(1);
-      expect(parsed.toolCalls[1].toolName).toBe('mcp__gantry__mine');
+      expect(parsed.toolCalls[1].toolName).toBe('mine');
       expect(parsed.toolCalls[1].resultSummary).toBe('Mined 12 iron ore');
     });
 
@@ -200,7 +200,7 @@ describe('turn-parser', () => {
       ].join('\n');
       const parsed = parseTurnFile(mixed);
       expect(parsed.toolCalls).toHaveLength(1);
-      expect(parsed.toolCalls[0].toolName).toBe('mcp__gantry__mine');
+      expect(parsed.toolCalls[0].toolName).toBe('mine');
       expect(parsed.summary).not.toBeNull();
     });
 
@@ -351,8 +351,48 @@ describe('turn-parser', () => {
 
       const parsed = parseTurnFile(lines);
       expect(parsed.toolCalls).toHaveLength(1);
-      expect(parsed.toolCalls[0].toolName).toBe('mcp__gantry__mine');
+      expect(parsed.toolCalls[0].toolName).toBe('mine');
     });
+  });
+});
+
+describe('normalizeToolName', () => {
+  it('strips mcp__gantry__ prefix from Claude tool names', () => {
+    expect(normalizeToolName('mcp__gantry__mine')).toBe('mine');
+    expect(normalizeToolName('mcp__gantry__login')).toBe('login');
+    expect(normalizeToolName('mcp__gantry__spacemolt')).toBe('spacemolt');
+    expect(normalizeToolName('mcp__gantry__sell')).toBe('sell');
+  });
+
+  it('leaves bare codex tool names unchanged', () => {
+    expect(normalizeToolName('mine')).toBe('mine');
+    expect(normalizeToolName('login')).toBe('login');
+    expect(normalizeToolName('spacemolt')).toBe('spacemolt');
+    expect(normalizeToolName('spacemolt_market')).toBe('spacemolt_market');
+  });
+
+  it('collapses repeated mcp__gantry__ prefixes', () => {
+    expect(normalizeToolName('mcp__gantry__mcp__gantry__logout')).toBe('logout');
+  });
+
+  it('parses codex turn files with bare tool names identically to Claude prefixed names', () => {
+    const makeJsonl = (toolName: string) => [
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'tu001', name: toolName, input: { resource: 'iron' } }] },
+      }),
+      JSON.stringify({
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'tu001', content: 'Mined 5 iron' }] },
+      }),
+      JSON.stringify({ type: 'result', total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 50 }, num_turns: 1, duration_ms: 5000 }),
+    ].join('\n');
+
+    const claudeTurn = parseTurnFile(makeJsonl('mcp__gantry__mine'));
+    const codexTurn  = parseTurnFile(makeJsonl('mine'));
+
+    expect(claudeTurn.toolCalls[0].toolName).toBe('mine');
+    expect(codexTurn.toolCalls[0].toolName).toBe('mine');
   });
 });
 

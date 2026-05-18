@@ -81,7 +81,7 @@ describe('turn-ingestor', () => {
 
     const toolCalls = db.prepare('SELECT * FROM tool_calls WHERE turn_id = ?').all(turns[0].id as string) as Record<string, unknown>[];
     expect(toolCalls).toHaveLength(1);
-    expect(toolCalls[0].tool_name).toBe('mcp__gantry__mine');
+    expect(toolCalls[0].tool_name).toBe('mine');
     expect(toolCalls[0].result_summary).toBe('Mined 10 iron ore');
     expect(toolCalls[0].success).toBe(1);
   });
