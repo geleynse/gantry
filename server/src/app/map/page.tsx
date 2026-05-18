@@ -6,6 +6,7 @@ import type { MapData, MapSystem, AgentPositions } from "@/components/galaxy-map
 import { SystemView } from "@/components/system-view";
 import { apiFetch } from "@/lib/api";
 import { cn, AGENT_COLORS } from "@/lib/utils";
+import { useUpstreamFetch } from "@/hooks/use-upstream-fetch";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,9 +55,21 @@ export default function MapPage() {
   const [positions, setPositions] = useState<AgentPositions>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("galaxy");
-  const [mapError, setMapError] = useState<string | null>(null);
   const [mapHeight, setMapHeight] = useState(600);
   const [knownPois, setKnownPois] = useState<Record<string, string[]>>({});
+
+  // Fetch map data via upstream-aware hook (rate-limit detection + backoff)
+  const {
+    data: mapFetchData,
+    error: mapError,
+    retrying: mapRetrying,
+    retry: mapRetry,
+  } = useUpstreamFetch<MapData>("/map");
+
+  // Sync fetched map data into local state
+  useEffect(() => {
+    if (mapFetchData) setMapData(mapFetchData);
+  }, [mapFetchData]);
 
   // Calculate viewport-aware map height after mount
   useEffect(() => {
@@ -67,15 +80,6 @@ export default function MapPage() {
     updateHeight();
     window.addEventListener("resize", updateHeight);
     return () => window.removeEventListener("resize", updateHeight);
-  }, []);
-
-  // Fetch map data for side panel lookups
-  useEffect(() => {
-    apiFetch<MapData>("/map")
-      .then((d) => setMapData(d))
-      .catch((err) =>
-        setMapError(err instanceof Error ? err.message : "Failed to load map")
-      );
   }, []);
 
   // Poll agent positions for side panel
@@ -275,7 +279,17 @@ export default function MapPage() {
             </span>
           )}
           {mapError && (
-            <span className="text-xs text-error">{mapError}</span>
+            <span className="flex items-center gap-2 text-xs text-error">
+              <span>{mapError}</span>
+              {!mapRetrying && (
+                <button
+                  onClick={mapRetry}
+                  className="underline hover:no-underline text-error/80 hover:text-error transition-colors"
+                >
+                  Refresh
+                </button>
+              )}
+            </span>
           )}
         </div>
 
