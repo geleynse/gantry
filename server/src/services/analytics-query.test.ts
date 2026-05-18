@@ -11,6 +11,7 @@ import {
   getEfficiencyMetrics,
   getSessionPnl,
   getExploredSystems,
+  getPnlSummary,
 } from './analytics-query.js';
 
 function insertTurn(agent: string, turnNumber: number, startedAt: string, opts: {
@@ -51,6 +52,14 @@ function insertToolCall(turnId: number, seq: number, toolName: string, success: 
     INSERT INTO tool_calls (turn_id, sequence_number, tool_name, args_json, result_summary, duration_ms, success)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(turnId, seq, toolName, '{}', 'ok', 100, success ? 1 : 0);
+}
+
+function insertActionLog(agent: string, actionType: string, creditsDelta: number, createdAt: string, item?: string): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO agent_action_log (agent, action_type, credits_delta, item, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(agent, actionType, creditsDelta, item ?? null, createdAt);
 }
 
 function insertSnapshot(turnId: number, agent: string, opts: {
@@ -615,6 +624,80 @@ describe('analytics-query', () => {
 
       const systems = getExploredSystems();
       expect(systems).toEqual(['Sol']);
+    });
+  });
+
+  describe('getPnlSummary', () => {
+    it('returns empty result when no action log entries exist', () => {
+      const result = getPnlSummary({});
+      expect(result.agents).toEqual([]);
+      expect(result.topRevenue).toEqual([]);
+      expect(result.topCosts).toEqual([]);
+      expect(result.fleetTotals.earned).toBe(0);
+      expect(result.fleetTotals.spent).toBe(0);
+      expect(result.fleetTotals.net).toBe(0);
+    });
+
+    it('returns PnlResponse with agents, topRevenue, topCosts when hours filter is set — regression for UNION ALL param-count bug', () => {
+      const now = new Date();
+      const recent = new Date(now.getTime() - 30 * 60 * 1000).toISOString(); // 30 min ago
+      const old = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString(); // 48h ago
+
+      insertActionLog('drifter-gale', 'sell', 3000, recent, 'Iron Ore');
+      insertActionLog('drifter-gale', 'buy', -1000, recent, 'Steel');
+      insertActionLog('drifter-gale', 'sell', 500, old, 'Copper'); // outside window
+
+      // This call would throw "SQLite query expected 2 values, received 1" before the fix
+      const result = getPnlSummary({ hours: 24 });
+
+      expect(Array.isArray(result.agents)).toBe(true);
+      expect(Array.isArray(result.topRevenue)).toBe(true);
+      expect(Array.isArray(result.topCosts)).toBe(true);
+
+      const agent = result.agents.find(a => a.agent === 'drifter-gale');
+      expect(agent).toBeDefined();
+      expect(agent!.totalEarned).toBe(3000);
+      expect(agent!.totalSpent).toBe(1000);
+      expect(agent!.netPnl).toBe(2000);
+
+      // Old entry excluded by hours filter
+      expect(result.fleetTotals.net).toBe(2000);
+    });
+
+    it('handles both hours and agent filters active — 4 placeholders total spread twice', () => {
+      const now = new Date();
+      const recent = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
+
+      insertActionLog('foo', 'sell', 5000, recent, 'Plasma');
+      insertActionLog('bar', 'sell', 2000, recent, 'Gas');
+
+      // Both filter conditions active — WHERE clause has 2 params, UNION ALL doubles to 4
+      const result = getPnlSummary({ hours: 24, agent: 'foo' });
+
+      expect(result.agents).toHaveLength(1);
+      expect(result.agents[0].agent).toBe('foo');
+      expect(result.agents[0].totalEarned).toBe(5000);
+
+      // bar not included
+      expect(result.agents.find(a => a.agent === 'bar')).toBeUndefined();
+    });
+
+    it('returns correct topRevenue and topCosts', () => {
+      insertActionLog('rust-vane', 'sell', 8000, new Date().toISOString(), 'Gold');
+      insertActionLog('rust-vane', 'sell', 3000, new Date().toISOString(), 'Silver');
+      insertActionLog('rust-vane', 'buy', -2000, new Date().toISOString(), 'Fuel');
+
+      const result = getPnlSummary({});
+      expect(result.topRevenue.length).toBeGreaterThan(0);
+      expect(result.topCosts.length).toBeGreaterThan(0);
+
+      const gold = result.topRevenue.find(r => r.item === 'Gold');
+      expect(gold).toBeDefined();
+      expect(gold!.totalCredits).toBe(8000);
+
+      const fuel = result.topCosts.find(r => r.item === 'Fuel');
+      expect(fuel).toBeDefined();
+      expect(fuel!.totalCredits).toBe(2000);
     });
   });
 });

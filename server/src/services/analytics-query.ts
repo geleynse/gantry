@@ -609,7 +609,7 @@ export function getPnlSummary(filter: TimeFilter): PnlResponse {
       SUM(COALESCE(credits_delta, 0)) AS net_pnl,
       COUNT(*) AS action_count
     FROM agent_action_log ${where}
-  `).all(...params) as Array<{
+  `).all(...params, ...params) as Array<{
     agent: string; total_earned: number; total_spent: number; net_pnl: number; action_count: number;
   }>;
 
