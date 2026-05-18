@@ -1463,6 +1463,48 @@ export async function handlePassthrough(
       "Call withdraw_items(item_id) to move to cargo, then install_mod(id) to equip.";
   }
 
+  // Buy returned "Bought 0 ... for 0cr." — upstream silently no-op'd the purchase.
+  // Convert to an actionable error so agents don't spiral into bug-report mode.
+  if (v1ToolName === "buy" && typeof summarized === "object" && summarized !== null) {
+    const buyResult = summarized as Record<string, unknown>;
+    const resultStr = typeof buyResult.result === "string" ? buyResult.result : "";
+    if (/^Bought 0(\s|$).*for 0\s*cr/i.test(resultStr)) {
+      const cached = statusCache.get(agentName);
+      const cargo = (cached?.data as any)?.ship?.cargo as { used?: number; capacity?: number } | undefined;
+      const credits = (cached?.data as any)?.player?.credits as number | undefined;
+      const cargoFull = cargo?.used != null && cargo?.capacity != null && cargo.used >= cargo.capacity;
+      const lowCredits = credits != null && credits < 100;
+
+      const bullets: string[] = [];
+      if (cargoFull) {
+        bullets.push(`- Cargo full (${cargo!.used}/${cargo!.capacity}) → multi_sell, deposit_items, or jettison some items`);
+      }
+      bullets.push("- No sellers at this station for this item → travel_to a station with active listings (check analyze_market)");
+      if (lowCredits) {
+        bullets.push(`- Insufficient credits (${credits} cr) → earn more before retrying`);
+      }
+      bullets.push("- Quantity invalid (must be ≥ 1)");
+
+      const recovery = cargoFull
+        ? "1. Cargo full → multi_sell, deposit_items, or jettison some items\n2. Otherwise → call analyze_market to find a station with listings"
+        : "1. Call analyze_market to find a station with active seller listings\n2. Call view_market(item_id) here to confirm sellers exist before retrying";
+
+      const message =
+        `buy() returned 0 — the upstream did not complete the purchase. Likely causes:\n` +
+        bullets.join("\n") +
+        `\n\nTo recover:\n${recovery}`;
+
+      completeLog(pendingId, agentName, action,
+        { error: "buy_no_op", message },
+        elapsed);
+      return await withInjections(agentName, textResult({
+        status: "error",
+        error: "buy_no_op",
+        message,
+      }));
+    }
+  }
+
   // --- Auto-reserve on buy/sell ---
   // When an agent buys or sells, create a reservation so other agents see reduced availability.
   // Placed AFTER the pending buy check so pending:true buys don't create false reservations.

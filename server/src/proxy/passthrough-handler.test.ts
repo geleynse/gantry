@@ -443,6 +443,77 @@ describe("handlePassthrough", () => {
     expect(inner._stale_market_warning).toBeUndefined();
   });
 
+  it("buy: 'Bought 0 for 0cr' with cargo full → returns buy_no_op error mentioning cargo full", async () => {
+    const client = createMockClient({
+      buy: { result: { status: "completed", result: "Bought 0  for 0cr." } },
+    });
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("test-agent", {
+      data: {
+        player: { credits: 5000 },
+        ship: { cargo: { used: 50, capacity: 50 } },
+        _last_market_analysis_at: Date.now() - 60_000,
+      },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+
+    const result = await handlePassthrough(deps, client, "test-agent", "buy", "buy", { item_id: "iron_ore", quantity: 10 });
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(parsed.status).toBe("error");
+    expect(parsed.error).toBe("buy_no_op");
+    expect(String(parsed.message)).toContain("Cargo full");
+    expect(String(parsed.message)).toContain("50/50");
+  });
+
+  it("buy: 'Bought 0 for 0cr' with cargo not full → returns buy_no_op error with no-sellers + analyze_market hint", async () => {
+    const client = createMockClient({
+      buy: { result: { status: "completed", result: "Bought 0  for 0cr." } },
+    });
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("test-agent", {
+      data: {
+        player: { credits: 5000 },
+        ship: { cargo: { used: 10, capacity: 50 } },
+        _last_market_analysis_at: Date.now() - 60_000,
+      },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+
+    const result = await handlePassthrough(deps, client, "test-agent", "buy", "buy", { item_id: "iron_ore", quantity: 10 });
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(parsed.status).toBe("error");
+    expect(parsed.error).toBe("buy_no_op");
+    expect(String(parsed.message)).not.toContain("Cargo full");
+    expect(String(parsed.message)).toContain("No sellers at this station");
+    expect(String(parsed.message)).toContain("analyze_market");
+  });
+
+  it("buy: normal success 'Bought 50 widgets for 500cr' → passes through unchanged (no buy_no_op)", async () => {
+    const client = createMockClient({
+      buy: { result: { status: "completed", result: "Bought 50 widgets for 500cr." } },
+    });
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("test-agent", {
+      data: {
+        player: { credits: 5000 },
+        ship: { cargo: { used: 10, capacity: 50 } },
+        _last_market_analysis_at: Date.now() - 60_000,
+      },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+
+    const result = await handlePassthrough(deps, client, "test-agent", "buy", "buy", { item_id: "widgets", quantity: 50 });
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(parsed.status).toBe("completed");
+    expect(parsed.error).toBeUndefined();
+  });
+
   it("craft: adds hint when outputs are empty and no eventBuffers", async () => {
     const client = createMockClient({
       craft: { result: { command: "craft", message: "craft completed" } },
