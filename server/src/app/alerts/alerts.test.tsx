@@ -156,7 +156,7 @@ describe("Alerts Page — alerts:changed event dispatch", () => {
 
   it("dispatches alerts:changed after handleAcknowledgeAll pattern", async () => {
     // Simulate the pattern: POST succeeds, fetchAlerts resolves, then dispatch
-    const fakeApiFetch = mock(async () => ({}));
+    const fakeApiFetch = mock(async (_path: string, _opts?: { method: string }) => ({}));
     const fakeFetchAlerts = mock(async () => {});
 
     await fakeApiFetch("/alerts/acknowledge-all", { method: "POST" });
@@ -170,7 +170,7 @@ describe("Alerts Page — alerts:changed event dispatch", () => {
 
   it("does not dispatch alerts:changed when apiFetch throws", async () => {
     // Simulate the catch-path: error thrown, no dispatch
-    const throwingApiFetch = mock(async () => { throw new Error("network error"); });
+    const throwingApiFetch = mock(async (_path: string, _opts?: { method: string }) => { throw new Error("network error"); });
     const fakeFetchAlerts = mock(async () => {});
 
     let dispatched = false;
