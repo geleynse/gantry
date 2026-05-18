@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { useUpstreamFetch } from "./use-upstream-fetch";
 
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -44,6 +44,8 @@ export interface UseLeaderboardResult {
   fromCache: boolean;
   loading: boolean;
   error: string | null;
+  /** True when a rate-limit retry is pending */
+  retrying: boolean;
   refresh: () => void;
 }
 
@@ -54,36 +56,25 @@ export interface UseLeaderboardResult {
 export type LeaderboardTimeRange = "today" | "week" | "all";
 
 export function useLeaderboard(
-  pollIntervalMs = POLL_INTERVAL_MS,
+  _pollIntervalMs = POLL_INTERVAL_MS,
   timeRange: LeaderboardTimeRange = "all"
 ): UseLeaderboardResult {
-  const [data, setData] = useState<LeaderboardData | null>(null);
+  const params = timeRange !== "all" ? `?timeRange=${timeRange}` : "";
+  const url = `/leaderboard${params}`;
+
+  const { data: raw, error, retrying, loading, retry } = useUpstreamFetch<LeaderboardResponse>(url);
+
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [fromCache, setFromCache] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchData = useCallback(async () => {
-    try {
-      const params = timeRange !== "all" ? `?timeRange=${timeRange}` : "";
-      const result = await apiFetch<LeaderboardResponse>(`/leaderboard${params}`);
-      setData(result.data);
-      setFetchedAt(result.fetchedAt);
-      setFromCache(result.fromCache);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch leaderboard");
-    } finally {
-      setLoading(false);
-    }
-  }, [timeRange]);
 
   useEffect(() => {
-    setLoading(true);
-    fetchData();
-    const id = setInterval(fetchData, pollIntervalMs);
-    return () => clearInterval(id);
-  }, [fetchData, pollIntervalMs, timeRange]);
+    if (raw) {
+      setFetchedAt(raw.fetchedAt);
+      setFromCache(raw.fromCache);
+    }
+  }, [raw]);
 
-  return { data, fetchedAt, fromCache, loading, error, refresh: fetchData };
+  const data = useMemo(() => raw?.data ?? null, [raw]);
+
+  return { data, fetchedAt, fromCache, loading, error, retrying, refresh: retry };
 }

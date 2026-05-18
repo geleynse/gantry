@@ -291,7 +291,7 @@ export default function LeaderboardPage() {
   const [factionStat, setFactionStat] = useState("total_wealth");
   const [exchangeStat, setExchangeStat] = useState("items_listed");
   const [timeRange, setTimeRange] = useState<LeaderboardTimeRange>("all");
-  const { data, fetchedAt, loading, error, refresh } = useLeaderboard(undefined, timeRange);
+  const { data, fetchedAt, loading, error, retrying, refresh } = useLeaderboard(undefined, timeRange);
 
   const allTabs = PLAYER_TABS.flatMap((t) => t.columns);
   const statLabel = allTabs.find((c) => c.key === playerStat)?.label ?? playerStat;
@@ -344,10 +344,10 @@ export default function LeaderboardPage() {
           )}
           <button
             onClick={refresh}
-            disabled={loading}
+            disabled={loading || retrying}
             className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground border border-border hover:border-border/80 transition-colors disabled:opacity-50"
           >
-            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`w-3 h-3 ${loading || retrying ? "animate-spin" : ""}`} />
             Refresh
           </button>
         </div>
@@ -355,8 +355,17 @@ export default function LeaderboardPage() {
 
       {/* Error */}
       {error && (
-        <div className="bg-destructive/10 border border-destructive/30 text-destructive text-sm px-4 py-3">
-          {error}
+        <div className="flex items-center justify-between gap-3 bg-destructive/10 border border-destructive/30 text-destructive text-sm px-4 py-3">
+          <span>{error}</span>
+          {!retrying && (
+            <button
+              onClick={refresh}
+              className="flex items-center gap-1.5 text-xs text-destructive/80 hover:text-destructive border border-destructive/30 px-2 py-1 transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Refresh
+            </button>
+          )}
         </div>
       )}
 
