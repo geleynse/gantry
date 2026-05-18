@@ -9,3 +9,4 @@ See [AGENTS.md](AGENTS.md) for full codebase context (architecture, modules, bui
 - **Two tsconfigs**: `tsconfig.json` (server/esbuild), `tsconfig.next.json` (React/Next.js — excludes proxy/web/shared dirs).
 - **Auth default**: `loopback` (127.0.0.1 only). Token adapter uses `config.token` (not `config.secret`), accepts only `Authorization: Bearer`.
 - **Running locally**: `bun run dev` in `server/` for watch mode, or `bun run build && bun dist/index.js` for production.
+- **Local UI testing gotcha**: `bun run dev` watches `build.ts` (server-only) and does NOT rebuild the Next.js client. If you change a `.tsx` under `src/app/` or `src/components/` and need to verify it in a browser, run `bun run build` (full client+server) before `bun dist/index.js`. Without this, the served bundle is stale and your fix won't appear regardless of source edits.
