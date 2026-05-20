@@ -591,6 +591,44 @@ function checkShutdownGuard(agentName: string, toolName: string): string | null 
 }
 
 /**
+ * Agents at or below this credit balance may mine regardless of role-based
+ * deny rules. Mining raw ore is the only self-recovery path out of a bankrupt
+ * strand — no capital to trade, no fuel to explore. (Fleet review 2026-05-19:
+ * two haiku traders hit identical "bootstrap deadlock" traps — ~12cr, role
+ * blocked from mining, unrecoverable.)
+ */
+const BROKE_MINING_CREDIT_FLOOR = 500;
+
+/** Game actions that count as mining for the broke-agent override. */
+const MINING_ACTIONS = new Set(["mine", "batch_mine"]);
+
+/**
+ * True when `verb` is a mining action and the agent's last-known credit
+ * balance is below the broke floor — in which case role-based denials for
+ * that call should be skipped so the agent can mine its way back to solvency.
+ */
+function brokeMiningOverride(
+  ctx: PipelineContext,
+  agentName: string,
+  verb: string,
+): boolean {
+  if (!MINING_ACTIONS.has(verb)) return false;
+  const cached = ctx.statusCache?.get(agentName);
+  if (!cached) return false;
+  const data = cached.data as Record<string, unknown>;
+  const player = (data.player ?? data) as Record<string, unknown> | undefined;
+  const credits = Number(player?.credits);
+  if (!Number.isFinite(credits) || credits >= BROKE_MINING_CREDIT_FLOOR) return false;
+  log.info("mining denial overridden — agent below credit floor", {
+    agent: agentName,
+    verb,
+    credits,
+    floor: BROKE_MINING_CREDIT_FLOOR,
+  });
+  return true;
+}
+
+/**
  * Check guardrails for a v1 tool call.
  * Returns an error message string if blocked, or null if the call is allowed.
  *
@@ -650,16 +688,19 @@ export function checkGuardrailsV1(
 
   const tracker = getTracker(ctx, agentName);
 
+  // Broke agents may mine regardless of role denials — see brokeMiningOverride.
+  const brokeMiningOk = brokeMiningOverride(ctx, agentName, toolName);
+
   // Per-agent tool denial — global "*" bucket
   const globalDenied = ctx.config.agentDeniedTools["*"];
-  if (globalDenied && toolName in globalDenied) {
+  if (globalDenied && toolName in globalDenied && !brokeMiningOk) {
     const hint = globalDenied[toolName];
     log.info("blocked globally denied tool", { agent: agentName, tool: toolName });
     return `${toolName} is not available. Hint: ${hint}`;
   }
   // Per-agent tool denial — agent-specific bucket
   const agentDenied = ctx.config.agentDeniedTools[agentName];
-  if (agentDenied && toolName in agentDenied) {
+  if (agentDenied && toolName in agentDenied && !brokeMiningOk) {
     const hint = agentDenied[toolName];
     log.info("blocked agent-specific denied tool", { agent: agentName, tool: toolName });
     return `${toolName} is not available for you. Hint: ${hint}`;
@@ -794,9 +835,13 @@ export function checkGuardrailsV2(
   const tracker = getTracker(ctx, agentName);
   const actionKey = action ? `${toolName}:${action}` : toolName;
 
+  // Broke agents may mine regardless of role denials — see brokeMiningOverride.
+  // The game verb (action) is the meaningful name for v2 calls.
+  const brokeMiningOk = brokeMiningOverride(ctx, agentName, action ?? toolName);
+
   // Per-agent tool denial — check tool:action, v1 action name, and plain tool name
   const globalDenied = ctx.config.agentDeniedTools["*"];
-  if (globalDenied) {
+  if (globalDenied && !brokeMiningOk) {
     if (actionKey in globalDenied) {
       log.info("v2 blocked globally denied key", {
         agent: agentName,
@@ -817,7 +862,7 @@ export function checkGuardrailsV2(
     }
   }
   const agentDenied = ctx.config.agentDeniedTools[agentName];
-  if (agentDenied) {
+  if (agentDenied && !brokeMiningOk) {
     if (actionKey in agentDenied) {
       log.info("v2 blocked agent-specific key", { agent: agentName, actionKey });
       return `${actionKey} is not available for you. Hint: ${agentDenied[actionKey]}`;

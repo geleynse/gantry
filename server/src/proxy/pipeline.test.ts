@@ -1251,6 +1251,47 @@ describe("checkGuardrailsV2", () => {
     expect(result).toContain("Duplicate call blocked");
   });
 
+  it("overrides a role-based batch_mine denial when the agent is broke", () => {
+    ctx = makeCtx({
+      config: makeConfig({
+        agentDeniedTools: { alpha: { batch_mine: "you are a hauler, not a miner" } },
+      }),
+      statusCache: new Map([
+        ["alpha", { data: { player: { credits: 12 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    // Broke (12 cr < 500 floor) — mining must be allowed despite the role denial.
+    const result = checkGuardrailsV2(ctx, "alpha", "spacemolt", "batch_mine", undefined, TEST_SESSION_ID);
+    expect(result).toBeNull();
+  });
+
+  it("still enforces a role-based batch_mine denial when the agent is solvent", () => {
+    ctx = makeCtx({
+      config: makeConfig({
+        agentDeniedTools: { alpha: { batch_mine: "you are a hauler, not a miner" } },
+      }),
+      statusCache: new Map([
+        ["alpha", { data: { player: { credits: 50000 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    const result = checkGuardrailsV2(ctx, "alpha", "spacemolt", "batch_mine", undefined, TEST_SESSION_ID);
+    expect(result).toContain("not available for you");
+  });
+
+  it("does not extend the broke override to non-mining denied actions", () => {
+    ctx = makeCtx({
+      config: makeConfig({
+        agentDeniedTools: { alpha: { attack: "alpha does not fight", batch_mine: "hauler" } },
+      }),
+      statusCache: new Map([
+        ["alpha", { data: { player: { credits: 12 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    // Broke, but attack is not a mining action — denial still applies.
+    const result = checkGuardrailsV2(ctx, "alpha", "spacemolt", "attack", undefined, TEST_SESSION_ID);
+    expect(result).toContain("not available for you");
+  });
+
   it("allows duplicate tool name with different actions", () => {
     checkGuardrailsV2(ctx, "alpha", "spacemolt", "mine", undefined, TEST_SESSION_ID);
     // Different action — should not be a duplicate
