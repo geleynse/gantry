@@ -853,20 +853,21 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
           return textResult({ error: "Dangerous event detected (combat/pirate/police/scan) — cannot start routine. Handle the situation first." });
         }
 
-        // Pre-flight check: reject if the routine uses any denied tools for this agent
+        // Pre-flight check: reject if the routine uses any tool denied to this
+        // agent by a ROLE restriction. Only agent-specific denials count here —
+        // the global "*" denials (mine→batch_mine, get_wrecks→loot_wrecks,
+        // sell→multi_sell, create_sell_order→multi_sell) are agent-facing
+        // "use the compound tool" redirects. Routines call raw tools server-side
+        // via ctx.client where those redirects do not apply, so a global deny
+        // must not block the routine (it was permanently blocking salvage_loop,
+        // craft_and_sell, full_trade_run and supply_run for every agent).
         const routineTools = getRoutineTools(routineId);
         if (routineTools) {
-          const globalDenied = liveConfig.agentDeniedTools["*"] ?? {};
           const agentDenied = liveConfig.agentDeniedTools[agentName] ?? {};
-          const blockedTools: string[] = [];
-          for (const tool of routineTools) {
-            if (tool in globalDenied || tool in agentDenied) {
-              blockedTools.push(tool);
-            }
-          }
+          const blockedTools = routineTools.filter((tool) => tool in agentDenied);
           if (blockedTools.length > 0) {
-            log.warn(`[${agentName}] routine REJECTED: uses denied tools ${blockedTools.join(", ")} | trace: ${traceId}`);
-            return textResult({ error: `Routine ${routineId} uses tools that are denied for you: ${blockedTools.join(", ")}. Choose a different routine or ask for the restriction to be lifted.` });
+            log.warn(`[${agentName}] routine REJECTED: uses role-denied tools ${blockedTools.join(", ")} | trace: ${traceId}`);
+            return textResult({ error: `Routine ${routineId} uses tools that are denied for your role: ${blockedTools.join(", ")}. Choose a different routine or ask for the restriction to be lifted.` });
           }
         }
 
