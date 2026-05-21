@@ -389,7 +389,10 @@ describe('GET /api/combat/timeline', () => {
   });
 
   it('shows deaths and damage totals per agent per day', async () => {
-    const res = await request(app).get('/api/combat/timeline?hours=2000');
+    // Seed data (beforeAll) uses fixed 2026-02-26 timestamps. The window must
+    // always reach back to them — a smaller fixed `hours` drifts out of range
+    // as wall-clock time advances (the route applies no upper clamp).
+    const res = await request(app).get('/api/combat/timeline?hours=2000000');
     expect(res.status).toBe(200);
     const timeline = res.body.timeline as Array<{ agent: string; date: string; deaths: number; damage: number }>;
 
