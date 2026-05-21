@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
-import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, cleanup } from "@testing-library/react";
 import { FleetCapacity } from "../fleet-capacity";
 
 // Mock @/lib/utils to avoid tailwind/css deps
@@ -15,6 +15,14 @@ mock.module("@/lib/utils", () => ({
 }));
 
 const originalFetch = global.fetch;
+
+// FleetCapacity polls via setInterval(load, 30_000). Unmount after every test
+// so React runs the effect cleanup (clearInterval) — otherwise leaked roots
+// keep polling for the rest of the suite, firing load() against whatever
+// global.fetch mock later/unrelated test files have installed, and crash.
+afterEach(() => {
+  cleanup();
+});
 
 // ---------------------------------------------------------------------------
 // Test data
