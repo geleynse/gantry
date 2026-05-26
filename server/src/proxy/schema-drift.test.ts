@@ -132,6 +132,24 @@ const INTENTIONALLY_SKIPPED = new Set([
   "name_ship",                // new — rename a ship
   "repair_module",            // new — repair individual modules
   "captains_log_get",         // new — read specific captains log entry
+
+  // v0.300.0 — scrap_ship permanently deletes a docked hull. Denied
+  // in proxy/schema.ts; listed here so the drift test stays quiet.
+  "scrap_ship",
+
+  // v0.310.0 — get_empire_info: public no-login policy snapshot. Could
+  // surface to agents later; deferred decision (see project task).
+  "get_empire_info",
+
+  // v0.313.0 — faction diplomacy overhaul. faction_set_ally removed,
+  // replaced with propose/accept/remove. Plus v0.318.0 alias +
+  // withdraw_invite. None proxied — faction surface intentionally narrow.
+  "faction_propose_ally",
+  "faction_accept_ally",
+  "faction_remove_ally",
+  "faction_remove_enemy",
+  "faction_accept_invite",
+  "faction_withdraw_invite",
 ]);
 
 // ---- MCP fetch (same 3-step handshake as schema.ts) ----------------------

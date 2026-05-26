@@ -153,6 +153,10 @@ const DENIED_TOOLS = new Set([
   "deposit_credits",
   "withdraw_credits",
 
+  // Destructive — v0.300.0 added scrap_ship to permanently delete a docked
+  // ship. Cargo/modules dump to station storage. Agents must never run it.
+  "scrap_ship",
+
   // Factions — most blocked as too complex; allow membership tools so agents
   // can self-organize (leader invites, members join/leave/check invites).
   "create_faction",
