@@ -112,6 +112,34 @@ function buildStartSpec(agent: AgentConfig & { canaryMode?: boolean }): proc.Ses
   };
 }
 
+/**
+ * Security validation gate for agent subprocess spawning.
+ * Enforces key safety invariants before passing specifications to proc.newSession().
+ */
+export function validateSpawnSpec(spec: proc.SessionLaunchSpec): void {
+  // Check args for --dangerously-skip-permissions
+  if (spec.args.some(arg => arg.toLowerCase().includes('--dangerously-skip-permissions'))) {
+    throw new Error('Security Violation: --dangerously-skip-permissions is disallowed in spawn arguments');
+  }
+
+  // Check env for forbidden variables (case-insensitive keys)
+  if (spec.env) {
+    const envKeys = Object.keys(spec.env).map(k => k.toUpperCase());
+    if (envKeys.includes('ANTHROPIC_API_KEY')) {
+      throw new Error('Security Violation: ANTHROPIC_API_KEY is disallowed in spawn environment');
+    }
+    if (envKeys.includes('CLAUDE_CODE_OAUTH_TOKEN')) {
+      throw new Error('Security Violation: CLAUDE_CODE_OAUTH_TOKEN is disallowed in spawn environment');
+    }
+  }
+
+  // Check that --disallowedTools is present
+  if (!spec.args.includes('--disallowedTools')) {
+    throw new Error('Security Violation: --disallowedTools must be present in spawn arguments');
+  }
+}
+
+
 const SHUTDOWN_MESSAGE = 'SHUTDOWN REQUESTED: Write your captain\'s log, update your notes files, then logout immediately. Do NOT start any new game actions.';
 
 /**
@@ -161,6 +189,7 @@ export async function startAgent(name: string): Promise<{ ok: boolean; message: 
   log.debug('Generated start spec', { agent: name, executable: startSpec.executable, args: startSpec.args });
   
   try {
+    validateSpawnSpec(startSpec);
     await proc.newSession(name, startSpec);
     for (const hook of onStartedHooks) hook(name);
     log.info(`✓ Successfully triggered start for ${name}`);
@@ -205,6 +234,7 @@ export async function startAgentCanary(name: string): Promise<{ ok: boolean; mes
   log.debug('Generated canary start spec', { agent: name });
 
   try {
+    validateSpawnSpec(startSpec);
     await proc.newSession(name, startSpec);
     for (const hook of onStartedHooks) hook(name);
     log.info(`✓ Prayer canary started for ${name}`);
