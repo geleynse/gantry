@@ -343,6 +343,93 @@ describe("handlePassthrough", () => {
     expect(String(parsed.error)).toContain("dock");
   });
 
+  it("reload missing_ammo: attaches cargo + weapon diagnostic instead of generic error", async () => {
+    // Game bug: reload returns missing_ammo fleet-wide regardless of cargo.
+    // Proxy should intercept, attach a cargo summary, and stop agents retrying.
+    const client = createMockClient({
+      reload: { error: { code: "missing_ammo", message: "No ammo in cargo" } },
+    });
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("combat-agent", {
+      data: {
+        player: { current_system: "sol", docked_at_base: null },
+        ship: {
+          cargo_used: 5,
+          cargo_capacity: 100,
+          cargo: [
+            { item_id: "laser_ammo_t1", quantity: 20 },
+            { item_id: "iron_ore", quantity: 5 },
+          ],
+          weapons: [
+            { instance_id: "wpn_001", id: "laser_t1", ammo_loaded: 0, ammo_item_id: "laser_ammo_t1" },
+          ],
+        },
+        tick: 200,
+      },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+
+    const result = await handlePassthrough(deps, client, "combat-agent", "reload", "reload");
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    // Should return an error response (not success)
+    expect(parsed).toHaveProperty("error");
+    const errStr = String(parsed.error);
+    // Should identify it as the known game bug
+    expect(errStr).toContain("known fleet-wide game bug");
+    // Should include cargo ammo summary
+    expect(errStr).toContain("laser_ammo_t1");
+    // Should tell agents to stop retrying param shapes
+    expect(errStr).toContain("Stop retrying");
+  });
+
+  it("reload missing_ammo with empty cargo: reports no ammo candidates", async () => {
+    const client = createMockClient({
+      reload: { error: { code: "missing_ammo", message: "No ammo in cargo" } },
+    });
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    statusCache.set("no-ammo-agent", {
+      data: {
+        ship: {
+          cargo_used: 0,
+          cargo_capacity: 100,
+          cargo: [],
+          weapons: [],
+        },
+      },
+      fetchedAt: Date.now(),
+    });
+    const deps = createMockDeps({ statusCache });
+
+    const result = await handlePassthrough(deps, client, "no-ammo-agent", "reload", "reload");
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(parsed).toHaveProperty("error");
+    const errStr = String(parsed.error);
+    expect(errStr).toContain("missing_ammo");
+    expect(errStr).toContain("known fleet-wide game bug");
+    // ammo_candidates_in_cargo should be empty
+    expect(errStr).toContain("ammo_candidates_in_cargo=[]");
+  });
+
+  it("reload non-missing_ammo errors pass through normally", async () => {
+    const client = createMockClient({
+      reload: { error: { code: "not_in_combat", message: "You are not in combat" } },
+    });
+    const deps = createMockDeps();
+
+    const result = await handlePassthrough(deps, client, "test-agent", "reload", "reload");
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    // Should use normal error path (not diagnostic injection)
+    expect(parsed).toHaveProperty("error");
+    const errStr = String(parsed.error);
+    // Should NOT contain the fleet-wide bug message
+    expect(errStr).not.toContain("known fleet-wide game bug");
+    expect(errStr).toContain("not_in_combat");
+  });
+
   it("captains_log_list: calls decontaminateLog with result", async () => {
     const client = createMockClient({
       captains_log_list: { result: { entries: ["entry 1", "entry 2"] } },
