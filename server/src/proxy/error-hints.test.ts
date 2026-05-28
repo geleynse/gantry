@@ -177,3 +177,25 @@ describe("addErrorHint with context", () => {
     expect(result).toContain("dockable station");
   });
 });
+
+describe("addErrorHint — v0.332 no_life_support", () => {
+  it("adds hint for no_life_support error code", () => {
+    const msg = "[no_life_support] Life support is already at maximum capacity";
+    const result = addErrorHint(msg);
+    expect(result).toContain("Hint:");
+    expect(result).toContain("structurally maxed");
+  });
+
+  it("suggests building elsewhere for no_life_support", () => {
+    const msg = "[no_life_support] Cannot expand life support here";
+    const result = addErrorHint(msg);
+    expect(result).toContain("Build elsewhere");
+  });
+
+  it("is case insensitive for no_life_support", () => {
+    const msg = "[err] NO_LIFE_SUPPORT limit reached";
+    const result = addErrorHint(msg);
+    expect(result).toContain("Hint:");
+    expect(result).toContain("structurally maxed");
+  });
+});
