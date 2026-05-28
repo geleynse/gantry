@@ -318,6 +318,57 @@ export const TOOL_SCHEMAS: Record<string, { description: string; schema: z.ZodTy
       item_id: z.string().describe("Item ID to trace the crafting path for (e.g. 'ship_engine', 'steel_plate')"),
     }),
   },
+
+  // ---------------------------------------------------------------------------
+  // Drone surface — v0.278.0 bay-based system; v0.330.0 deploy {all:true};
+  // v0.331.0 set_drone_name; v0.331.2 XP persists across restarts.
+  // ---------------------------------------------------------------------------
+
+  deploy_drone: {
+    description: "Deploy a drone from your ship's drone bay. Pass drone_id to deploy a specific drone, or all:true to deploy every drone in the bay at once (v0.330.0+).",
+    schema: z.object({
+      drone_id: z.string().optional().describe("Drone ID to deploy. Omit when using all:true."),
+      all: z.boolean().optional().describe("Deploy all drones in the bay simultaneously (v0.330.0+)."),
+    }),
+  },
+  recall_drone: {
+    description: "Recall a deployed drone back to your ship's drone bay.",
+    schema: z.object({
+      drone_id: z.string().describe("Drone ID to recall."),
+    }),
+  },
+  load_drone: {
+    description: "Load a drone from station storage into your ship's drone bay. Must be docked.",
+    schema: z.object({
+      drone_id: z.string().describe("Drone ID to load into the bay."),
+    }),
+  },
+  unload_drone: {
+    description: "Unload a drone from your ship's drone bay to station storage. Must be docked.",
+    schema: z.object({
+      drone_id: z.string().describe("Drone ID to unload from the bay."),
+    }),
+  },
+  upload_drone_script: {
+    description: "Upload a DroneLang script to a drone in your bay. The drone executes the script autonomously when deployed.",
+    schema: z.object({
+      drone_id: z.string().describe("Drone ID to upload the script to."),
+      script: z.string().describe("DroneLang script source code."),
+    }),
+  },
+  get_drone: {
+    description: "Get details for a single drone (status, script, bay slot, deployment state).",
+    schema: z.object({
+      drone_id: z.string().describe("Drone ID."),
+    }),
+  },
+  set_drone_name: {
+    description: "Rename a drone. Drone names persist and accumulate XP across server restarts (v0.331.0+).",
+    schema: z.object({
+      drone_id: z.string().describe("Drone ID to rename."),
+      name: z.string().describe("New drone name."),
+    }),
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -345,6 +396,8 @@ export const NO_PARAM_DESCRIPTIONS: Record<string, string> = {
   help: "Get game help information.",
   forum_list: "List forum threads.",
   get_trades: "List your active trades.",
+  // Drone surface (v0.278.0+)
+  get_drones: "List all drones in your ship's drone bay (loaded and deployed).",
 };
 
 // ---------------------------------------------------------------------------

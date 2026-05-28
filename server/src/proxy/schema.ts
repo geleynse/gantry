@@ -106,18 +106,9 @@ const DENIED_TOOLS = new Set([
   // "self_destruct",
   // "jettison",
 
-  // Drones — game v0.278.0 shipped a bay-based drone system (load_drone /
-  // unload_drone / upload_drone_script / get_drones / get_drone, plus
-  // bay-based deploy_drone / recall_drone; the old order_drone command was
-  // removed). The fleet doesn't use drones, so block the whole surface to
-  // keep agents from wandering into it.
-  "deploy_drone",
-  "recall_drone",
-  "load_drone",
-  "unload_drone",
-  "upload_drone_script",
-  "get_drones",
-  "get_drone",
+  // Drones: deploy_drone, recall_drone, load_drone, unload_drone,
+  // upload_drone_script, get_drones, get_drone, set_drone_name are now
+  // proxied as passthrough tools (feat/gantry-drone-surface). Not denied.
 
 
   // Game's built-in notes — `read_note` / `write_note` stay denied because

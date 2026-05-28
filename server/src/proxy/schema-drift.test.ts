@@ -50,6 +50,11 @@ const V1_PROXIED_TOOLS = new Set([
   "get_notes",
   // V2 pass-through targets (resolved at dispatch time from V2_ACTION_TO_V1_NAME)
   "faction_list",
+  // Drone surface — v0.278.0 bay-based drones, v0.330.0 deploy {all:true},
+  // v0.331.0 set_drone_name, v0.331.2 confirmed XP persists across restarts.
+  "deploy_drone", "recall_drone",
+  "load_drone", "unload_drone", "upload_drone_script",
+  "get_drones", "get_drone", "set_drone_name",
 ]);
 
 // ---- Intentional skip list -----------------------------------------------
@@ -64,13 +69,6 @@ const INTENTIONALLY_SKIPPED = new Set([
 
   // Cosmetic — agents don't need these
   "set_colors", "set_anonymous", "set_status",
-
-  // Drones — game v0.278.0 added a bay-based drone system (load_drone,
-  // unload_drone, upload_drone_script, get_drones, get_drone, plus
-  // bay-based deploy_drone/recall_drone; order_drone was removed). The
-  // fleet doesn't use drones, so we don't proxy any of it.
-  "deploy_drone", "recall_drone",
-  "load_drone", "unload_drone", "upload_drone_script", "get_drones", "get_drone",
 
   // Game's built-in notes — `read_note`/`write_note` stay denied (they
   // overlap with proxy-side write_doc/read_doc internal memory).
@@ -325,5 +323,19 @@ describe("schema-drift — static consistency checks", () => {
 
   it("INTENTIONALLY_SKIPPED is non-empty", () => {
     expect(INTENTIONALLY_SKIPPED.size).toBeGreaterThan(10);
+  });
+
+  it("all 8 drone tools are in V1_PROXIED_TOOLS (not skipped)", () => {
+    // feat/gantry-drone-surface: drones are now proxied.
+    // Regression guard — if someone accidentally re-skips them this fails loudly.
+    const DRONE_TOOLS = [
+      "deploy_drone", "recall_drone",
+      "load_drone", "unload_drone", "upload_drone_script",
+      "get_drones", "get_drone", "set_drone_name",
+    ];
+    for (const t of DRONE_TOOLS) {
+      expect(V1_PROXIED_TOOLS.has(t)).toBe(true);
+      expect(INTENTIONALLY_SKIPPED.has(t)).toBe(false);
+    }
   });
 });

@@ -88,6 +88,11 @@ export const STATIC_GAME_TOOLS = [
   "forum_list", "forum_get_thread", "forum_create_thread", "forum_reply", "forum_upvote",
   "trade_offer", "trade_accept", "trade_decline", "trade_cancel", "get_trades",
   "get_skills", "help", "catalog", "get_guide",
+  // Drone surface — v0.278.0 bay-based drones, v0.330.0 deploy {all:true},
+  // v0.331.0 set_drone_name (XP persists across restarts per v0.331.2).
+  "deploy_drone", "recall_drone",
+  "load_drone", "unload_drone", "upload_drone_script",
+  "get_drones", "get_drone", "set_drone_name",
 ];
 
 interface GameHealth {
