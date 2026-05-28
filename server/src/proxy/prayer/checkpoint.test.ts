@@ -212,4 +212,28 @@ describe("checkpoint call-site wiring (runPrayerScript integration)", () => {
       expect(loadCheckpoint("cp-agent")).not.toBeNull();
     }
   });
+
+  test("resume from stale checkpoint does not immediately exceed wall-clock budget", async () => {
+    // Bug: checkpoint.startedAt retains the original run time. If the checkpoint is
+    // hours old, checkLimits() fires on the very first step because
+    // (Date.now() - staleStartedAt) >> maxWallClockMs.
+    // Fix: executePrayerProgram resets state.startedAt = Date.now() when initialState
+    // is provided.
+    const staleStartedAt = Date.now() - 7_200_000; // 2 hours ago — well past any budget
+    const staleCheckpoint = makeState({ startedAt: staleStartedAt, stepsExecuted: 10 });
+    saveCheckpoint("cp-agent", staleCheckpoint);
+
+    const loaded = loadCheckpoint("cp-agent") ?? undefined;
+    expect(loaded).toBeDefined();
+    expect(loaded!.startedAt).toBe(staleStartedAt); // confirm it IS stale on disk
+
+    // Run with a tight wall-clock budget (5s) and enough step room.
+    // Without the fix, this would fire wall_clock_exceeded immediately because 2h >> 5s.
+    const deps = { ...makeRunDeps({ initialState: loaded }), maxWallClockMs: 5_000, maxSteps: 100 };
+    const result = await runPrayerScript("halt;", deps);
+
+    // Should halt cleanly (the `halt;` command), NOT throw wall_clock_exceeded.
+    expect(result.status).toBe("halted");
+    expect(result.error?.code).not.toBe("wall_clock_exceeded");
+  });
 });
