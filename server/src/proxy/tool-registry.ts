@@ -67,7 +67,13 @@ export const TOOL_SCHEMAS: Record<string, { description: string; schema: z.ZodTy
   },
   jump: {
     description: "Jump to a connected system. Costs fuel. Must be undocked.",
-    schema: z.object({ system_id: z.string().describe("Target system ID") }),
+    schema: z.object({
+      system_id: z.string().optional().describe("Target system ID"),
+      bearing: z.number().optional().describe("Numeric bearing in degrees (v0.319+). Use instead of system_id when a direction-based jump is needed."),
+    }).refine(
+      (a) => a.system_id !== undefined || a.bearing !== undefined,
+      { message: "Either system_id or bearing is required" },
+    ),
   },
   craft: {
     description: "Craft an item using a recipe. Must be docked.",

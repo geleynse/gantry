@@ -135,7 +135,7 @@ const SUMMARIZERS: Record<string, Summarizer> = {
     const d = r as Record<string, unknown>;
     const route = (d.route as unknown[] | undefined) ?? [];
     const summarized = discoverPick("find_route", d, ["jumps", "route", "fuel_estimate", "fuel_per_jump", "current_fuel", "total_fuel"]);
-    summarized.route = route.map((s) => discoverPick("route_step", s as Record<string, unknown>, ["id", "name", "fuel_cost"]));
+    summarized.route = route.map((s) => discoverPick("route_step", s as Record<string, unknown>, ["id", "name", "fuel_cost", "via_wormhole", "entrance_poi"]));
     return summarized;
   },
   search_systems: (r) => {
