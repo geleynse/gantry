@@ -128,13 +128,14 @@ describe("DENIED_TOOLS", () => {
     expect(DENIED_TOOLS.has("travel")).toBe(false);
   });
 
-  it("blocks the v0.278.0 drone surface and not the removed order_drone", () => {
-    // Game v0.278.0 shipped a bay-based drone system; the fleet doesn't use it.
+  it("does not deny the v0.278.0+ drone surface (surfaced in feat/gantry-drone-surface)", () => {
+    // Drone tools are now proxied as passthrough tools — they must NOT be in DENIED_TOOLS.
+    // set_drone_name added in v0.331.0; deploy {all:true} in v0.330.0.
     for (const t of ["deploy_drone", "recall_drone", "load_drone", "unload_drone",
-                     "upload_drone_script", "get_drones", "get_drone"]) {
-      expect(DENIED_TOOLS.has(t)).toBe(true);
+                     "upload_drone_script", "get_drones", "get_drone", "set_drone_name"]) {
+      expect(DENIED_TOOLS.has(t)).toBe(false);
     }
-    // order_drone was removed in v0.278.0 — no longer carried in the deny list.
+    // order_drone was removed in v0.278.0 — no longer on the server.
     expect(DENIED_TOOLS.has("order_drone")).toBe(false);
   });
 

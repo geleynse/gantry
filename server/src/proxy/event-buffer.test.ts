@@ -280,3 +280,61 @@ describe("EventBuffer circular buffer", () => {
     expect(events[0].type).toBe("arrived");
   });
 });
+
+// ---------------------------------------------------------------------------
+// mining_yield drone_id preservation — v0.329.0 added drone_id to mining_yield
+// notification payloads. The EventBuffer stores payloads as opaque `unknown` and
+// returns them verbatim, so no stripping can occur. These tests confirm that.
+// ---------------------------------------------------------------------------
+
+describe("mining_yield drone_id preservation (v0.329.0+)", () => {
+  it("preserves drone_id in a mining_yield event payload", () => {
+    const buf = new EventBuffer();
+    buf.push({
+      type: "mining_yield",
+      payload: { ore_type: "iron_ore", quantity: 4, drone_id: "drone_a1b2" },
+      receivedAt: Date.now(),
+    });
+    const events = buf.drain();
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("mining_yield");
+    const p = events[0].payload as Record<string, unknown>;
+    expect(p.drone_id).toBe("drone_a1b2");
+    expect(p.ore_type).toBe("iron_ore");
+    expect(p.quantity).toBe(4);
+  });
+
+  it("preserves drone_id when mining_yield is mixed with other events", () => {
+    const buf = new EventBuffer();
+    buf.push({ type: "arrived", payload: { poi: "main_belt" }, receivedAt: 1 });
+    buf.push({
+      type: "mining_yield",
+      payload: { ore_type: "copper_ore", quantity: 2, drone_id: "drone_x9y0", automated: true },
+      receivedAt: 2,
+    });
+    buf.push({ type: "chat_message", payload: { text: "hello" }, receivedAt: 3 });
+
+    // Drain only mining_yield events
+    const miningEvents = buf.drain(["mining_yield"]);
+    expect(miningEvents).toHaveLength(1);
+    const p = miningEvents[0].payload as Record<string, unknown>;
+    expect(p.drone_id).toBe("drone_x9y0");
+    expect(p.automated).toBe(true);
+
+    // Other events remain
+    expect(buf.size).toBe(2);
+  });
+
+  it("mining_yield without drone_id is not modified", () => {
+    // Pre-v0.329.0 manual mine events have no drone_id — buffer must not inject one.
+    const buf = new EventBuffer();
+    buf.push({
+      type: "mining_yield",
+      payload: { ore_type: "silver_ore", quantity: 1 },
+      receivedAt: Date.now(),
+    });
+    const events = buf.drain();
+    const p = events[0].payload as Record<string, unknown>;
+    expect(p.drone_id).toBeUndefined();
+  });
+});
