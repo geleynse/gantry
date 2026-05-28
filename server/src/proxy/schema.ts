@@ -419,14 +419,14 @@ export async function resolveGameTools(
   if (cached?.v1 && isCacheEntryValid(cached.v1)) {
     const ageMs = Date.now() - cached.v1.fetchedAt;
     const ageMinutes = Math.round(ageMs / 60000);
-    log.info(`Using cached v1 schema (${cached.v1.serverTools.length} tools, fetched ${ageMinutes} min ago, TTL: 24h)`);
+    log.info(`Using cached v1 schema (${cached.v1.serverTools.length} tools, fetched ${ageMinutes} min ago, TTL: 1h)`);
     rawCommands = cached.v1.commands;
     serverTools = cached.v1.serverTools;
   } else {
     if (cached?.v1) {
       const ageMs = Date.now() - cached.v1.fetchedAt;
       const ageHours = Math.round(ageMs / 3600000);
-      log.info(`v1 cache stale (${ageHours} hours old, TTL: 24h), refreshing from server`);
+      log.info(`v1 cache stale (${ageHours} hours old, TTL: 1h), refreshing from server`);
     }
     const fetched = await fetchGameCommands(mcpUrl);
     rawCommands = fetched.commands;
@@ -438,7 +438,7 @@ export async function resolveGameTools(
       c.v1 = { commands: rawCommands, serverTools, fetchedAt: Date.now(), ttl: SCHEMA_TTL_MS };
       c.cachedAt = Date.now();
       writeSchemaCache(c);
-      log.info("Cached v1 schema to disk (24h TTL)");
+      log.info("Cached v1 schema to disk (1h TTL)");
     }
   }
 
@@ -684,14 +684,14 @@ export async function resolveGameToolsV2(
   if (cachedV2 && isCacheEntryValid(cachedV2)) {
     const ageMs = Date.now() - cachedV2.fetchedAt;
     const ageMinutes = Math.round(ageMs / 60000);
-    log.info(`Using cached v2 schema for preset=${preset} (${cachedV2.serverTools.length} tools, fetched ${ageMinutes} min ago, TTL: 24h)`);
+    log.info(`Using cached v2 schema for preset=${preset} (${cachedV2.serverTools.length} tools, fetched ${ageMinutes} min ago, TTL: 1h)`);
     commands = cachedV2.commands;
     serverTools = cachedV2.serverTools;
   } else {
     if (cachedV2) {
       const ageMs = Date.now() - cachedV2.fetchedAt;
       const ageHours = Math.round(ageMs / 3600000);
-      log.info(`v2 cache stale for preset=${preset} (${ageHours} hours old, TTL: 24h), refreshing from server`);
+      log.info(`v2 cache stale for preset=${preset} (${ageHours} hours old, TTL: 1h), refreshing from server`);
     }
     const fetched = await fetchGameCommandsV2(mcpUrl, preset);
     commands = fetched.commands;
@@ -703,7 +703,7 @@ export async function resolveGameToolsV2(
       c.v2[preset] = { commands, serverTools, fetchedAt: Date.now(), ttl: SCHEMA_TTL_MS };
       c.cachedAt = Date.now();
       writeSchemaCache(c);
-      log.info(`Cached v2 schema for preset=${preset} to disk (24h TTL)`);
+      log.info(`Cached v2 schema for preset=${preset} to disk (1h TTL)`);
     }
   }
 
