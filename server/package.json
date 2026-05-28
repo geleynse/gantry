@@ -1,6 +1,6 @@
 {
   "name": "gantry",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "description": "MCP proxy and live dashboard for Space Molt AI fleets",
   "type": "module",
   "repository": {
