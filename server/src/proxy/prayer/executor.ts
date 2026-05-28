@@ -28,15 +28,17 @@ export async function executePrayerProgram(program: AnalyzedProgram, deps: Execu
   const startedAt = Date.now();
   const beforeData = deps.statusCache.get(deps.agentName)?.data ?? {};
   const before = snapshotDiff(beforeData);
-  const state: ExecState = deps.initialState ?? {
-    stepsExecuted: 0,
-    startedAt,
-    transientRetriesUsed: 0,
-    log: [],
-    cargoBaseline: cargoByItem(beforeData),
-    haltRequested: false,
-    interrupt: null,
-  };
+  const state: ExecState = deps.initialState
+    ? { ...deps.initialState, startedAt }  // Reset wall-clock on resume so stale checkpoint age doesn't exhaust the budget immediately.
+    : {
+        stepsExecuted: 0,
+        startedAt,
+        transientRetriesUsed: 0,
+        log: [],
+        cargoBaseline: cargoByItem(beforeData),
+        haltRequested: false,
+        interrupt: null,
+      };
 
   try {
     await runBlock(program.statements, state, deps);

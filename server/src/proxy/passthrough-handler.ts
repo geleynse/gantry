@@ -1053,6 +1053,66 @@ export async function handlePassthrough(
     }
   }
 
+  // --- 3b. reload missing_ammo diagnostic injection ---
+  // The game's reload action is currently broken fleet-wide: it returns
+  // missing_ammo regardless of what's in cargo. Before handing the error
+  // to agents, we attach a get_cargo summary and the standing weapon's ammo
+  // state so they stop spinning through the 3-param-shape retry loop.
+  if (resp.error && v1ToolName === "reload") {
+    const reloadCode = String((resp.error as Record<string, unknown>).code ?? "");
+    if (reloadCode === "missing_ammo") {
+      const cached = statusCache.get(agentName);
+      const ship = cached?.data?.ship as Record<string, unknown> | undefined;
+      const cargo = ship?.cargo as Array<Record<string, unknown>> | undefined;
+      const cargoUsed = ship?.cargo_used as number | undefined;
+      const cargoCapacity = ship?.cargo_capacity as number | undefined;
+
+      // Pull weapon ammo state from cached modules or weapons
+      const isV2Client = typeof client.isV2 === "function" && client.isV2();
+      let weaponAmmoState: Record<string, unknown> | null = null;
+      if (isV2Client) {
+        const modules = ship?.modules as Array<Record<string, unknown>> | undefined;
+        const weaponMod = modules?.find((m) => String(m.slot ?? "").toLowerCase().includes("weapon"));
+        if (weaponMod) {
+          weaponAmmoState = {
+            weapon_id: weaponMod.id,
+            weapon_slot: weaponMod.slot,
+            ammo_loaded: weaponMod.ammo_loaded ?? weaponMod.ammo ?? weaponMod.charges ?? null,
+            ammo_item_id: weaponMod.ammo_item_id ?? weaponMod.ammo_type ?? null,
+          };
+        }
+      } else {
+        const weapons = ship?.weapons as Array<Record<string, unknown>> | undefined;
+        const firstWeapon = weapons?.[0];
+        if (firstWeapon) {
+          weaponAmmoState = {
+            weapon_instance_id: firstWeapon.instance_id ?? firstWeapon.id,
+            ammo_loaded: firstWeapon.ammo_loaded ?? firstWeapon.ammo ?? firstWeapon.charges ?? null,
+            ammo_item_id: firstWeapon.ammo_item_id ?? firstWeapon.ammo_type ?? null,
+          };
+        }
+      }
+
+      // Summarize cargo ammo candidates (items whose id or name contains "ammo" or "charge")
+      const ammoInCargo = cargo?.filter((c) => {
+        const id = String(c.item_id ?? c.id ?? "").toLowerCase();
+        const name = String(c.name ?? "").toLowerCase();
+        return id.includes("ammo") || id.includes("charge") || id.includes("shell") ||
+               name.includes("ammo") || name.includes("charge") || name.includes("shell");
+      }) ?? [];
+
+      const reloadErrorMsg = `[missing_ammo] reload returned missing_ammo (known fleet-wide game bug — not a param error). ` +
+        `Stop retrying with different param shapes. ` +
+        `Diagnosis: cargo_used=${cargoUsed ?? "?"}, cargo_capacity=${cargoCapacity ?? "?"}, ` +
+        `ammo_candidates_in_cargo=${JSON.stringify(ammoInCargo.map(c => ({ id: c.item_id ?? c.id, qty: c.quantity })))}` +
+        (weaponAmmoState ? `, weapon_state=${JSON.stringify(weaponAmmoState)}` : "") +
+        `. If ammo is present in cargo and weapon still misfires, this is a server-side bug — skip reload for now.`;
+
+      completeLog(pendingId, agentName, action, reloadErrorMsg, elapsed, { success: false, errorCode: "missing_ammo" });
+      return await withInjections(agentName, textResult({ error: reloadErrorMsg }));
+    }
+  }
+
   // --- 4. Error path ---
 
   if (resp.error) {
