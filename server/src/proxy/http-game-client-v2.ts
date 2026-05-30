@@ -172,6 +172,21 @@ export class HttpGameClientV2 implements GameTransport {
   /** Have we logged the raw get_status text yet? Plan §debug-logging — first call only. */
   private rawStatusLogged = false;
 
+  /**
+   * Single-flight lock: non-null while a renewSession() is in progress. Concurrent
+   * callers (e.g. the refreshStatus() get_status + get_location fan-out both hitting
+   * session_expired) await this same promise instead of each kicking off a fresh
+   * mcpInitialize(), which would clobber each other's game session. Cleared in a
+   * finally so a failed renewal never permanently wedges the lock.
+   */
+  private reauthPromise: Promise<boolean> | null = null;
+  /** Timer handle for proactive pre-expiry session refresh (cleared on logout/close). */
+  private sessionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Refresh this many ms before the game session's reported expiry. */
+  private static readonly REFRESH_LEAD_MS = 90_000;
+  /** Max consecutive reconnects before giving up and returning an error to the agent. */
+  private static readonly MAX_RECONNECTS = 5;
+
   // Event wiring
   onEvent: ((event: GameEvent) => void) | null = null;
   onStateUpdate: ((data: Record<string, unknown>) => void) | null = null;
@@ -297,7 +312,12 @@ export class HttpGameClientV2 implements GameTransport {
     this.gameSessionId = session.id;
     if (session.expires_at) {
       this.sessionExpiresAt = new Date(session.expires_at).getTime();
+    } else {
+      this.sessionExpiresAt = null;
     }
+    // Schedule proactive refresh ~90s before the game session expires so a busy
+    // agent never trips over a mid-turn expiry. Re-arms on every (re)auth.
+    this.scheduleSessionRefresh();
 
     // Step 2: MCP initialize on the v2 endpoint
     const initResp = await this.rawPost(this.mcpUrl, {
@@ -523,6 +543,7 @@ export class HttpGameClientV2 implements GameTransport {
     if (!this.authenticated) {
       return { error: { code: "not_authenticated", message: "No active session" } };
     }
+    this.clearSessionRefreshTimer();
     this.log("logging out");
     try {
       const resp = await this.mcpToolCall("spacemolt_auth", {
@@ -538,6 +559,7 @@ export class HttpGameClientV2 implements GameTransport {
       this.authenticated = false;
       this.gameSessionId = null;
       this.mcpSessionId = null;
+      this.sessionExpiresAt = null;
       return { error: { code: "logout_error", message: `Logout failed: ${err}` } };
     }
   }
@@ -622,6 +644,18 @@ export class HttpGameClientV2 implements GameTransport {
       }
 
       if (resp.error && isNotLoggedInError(resp.error) && this.credentials) {
+        // Circuit-breaker: after too many reconnects the game server is likely
+        // genuinely down. Stop hammering it and return a message that explicitly
+        // tells the agent NOT to thrash logout/login itself.
+        if (this.reconnectCount >= HttpGameClientV2.MAX_RECONNECTS) {
+          this.log(`session renewal limit reached (${this.reconnectCount}/${HttpGameClientV2.MAX_RECONNECTS}) — not retrying`);
+          return {
+            error: {
+              code: "session_renewal_exhausted",
+              message: "Session renewal limit reached. Do NOT call logout or login — wait 60 seconds, then retry your action.",
+            },
+          };
+        }
         this.log(`session expired (${resp.error.code}: ${resp.error.message}) — auto-re-login for ${this.label}`);
         log.info(`[proxy] auto-re-login for ${this.label} after "${resp.error.message}"`);
         const renewed = await this.renewSession();
@@ -640,7 +674,15 @@ export class HttpGameClientV2 implements GameTransport {
           }
           return retryResp;
         }
-        return resp;
+        // Renewal failed — return a synthesized error that suppresses the agent's
+        // own logout/login thrash loop (that loop burns whole turns). Do NOT leak
+        // the raw session_expired code, which Sonnet treats as "go re-login".
+        return {
+          error: {
+            code: "session_renewal_failed",
+            message: "Session renewal failed. Do NOT call logout or login — retry your action in 30 seconds.",
+          },
+        };
       }
 
       if (!opts?.skipMetrics && this.serverMetrics) {
@@ -662,6 +704,7 @@ export class HttpGameClientV2 implements GameTransport {
   }
 
   async close(): Promise<void> {
+    this.clearSessionRefreshTimer();
     this.authenticated = false;
     this.gameSessionId = null;
     this.mcpSessionId = null;
@@ -871,7 +914,29 @@ export class HttpGameClientV2 implements GameTransport {
     return m ? m[1] : null;
   }
 
+  /**
+   * Single-flight session renewal. If a renewal is already in progress, every
+   * other caller awaits that same promise rather than starting a second
+   * mcpInitialize() — concurrent renewals would each mint a fresh game session
+   * and orphan the others, which is the root cause of the mid-turn -32001 errors.
+   *
+   * The in-flight promise is cleared in a finally so a renewal that throws or
+   * returns false does not permanently wedge the lock — the next caller retries.
+   */
   private async renewSession(): Promise<boolean> {
+    if (this.reauthPromise) {
+      this.log("renewSession: awaiting in-progress renewal");
+      return this.reauthPromise;
+    }
+    this.reauthPromise = this._doRenewSession();
+    try {
+      return await this.reauthPromise;
+    } finally {
+      this.reauthPromise = null;
+    }
+  }
+
+  private async _doRenewSession(): Promise<boolean> {
     if (!this.credentials) return false;
     try {
       await this.mcpInitialize();
@@ -892,11 +957,47 @@ export class HttpGameClientV2 implements GameTransport {
         reconnectCount: this.reconnectCount,
       });
       this.log("MCP v2 session renewed successfully");
+      // mcpInitialize() already re-armed the proactive refresh timer off the new
+      // expires_at; nothing else to do here.
       return true;
     } catch {
       this.logError("MCP v2 session renewal failed");
       return false;
     }
+  }
+
+  /** Cancel any pending proactive refresh timer. Idempotent. */
+  private clearSessionRefreshTimer(): void {
+    if (this.sessionRefreshTimer) {
+      clearTimeout(this.sessionRefreshTimer);
+      this.sessionRefreshTimer = null;
+    }
+  }
+
+  /**
+   * Arm a one-shot timer to proactively renew the game session ~90s before its
+   * reported expiry. Called after every successful mcpInitialize() (login +
+   * renewal). No-ops if expiry is unknown, we have no credentials, or the refresh
+   * point is already in the past (the on-demand path in execute() handles that).
+   */
+  private scheduleSessionRefresh(): void {
+    this.clearSessionRefreshTimer();
+    if (!this.sessionExpiresAt || !this.credentials) return;
+    const msUntilExpiry = this.sessionExpiresAt - Date.now();
+    const msUntilRefresh = msUntilExpiry - HttpGameClientV2.REFRESH_LEAD_MS;
+    if (msUntilRefresh <= 0) return; // Already near/past expiry — let execute() renew on demand.
+    this.sessionRefreshTimer = setTimeout(() => {
+      this.sessionRefreshTimer = null;
+      if (!this.authenticated || !this.credentials) return;
+      this.log(`proactive session refresh (~${Math.round(msUntilExpiry / 1000)}s before expiry)`);
+      // Fire-and-forget; renewSession() never rejects (it returns false on failure),
+      // but guard anyway so a thrown error can't surface as an unhandled rejection.
+      this.renewSession().catch((err) => {
+        this.logError(`proactive session refresh threw: ${err}`);
+      });
+    }, msUntilRefresh);
+    // Don't keep the event loop alive solely for this timer.
+    (this.sessionRefreshTimer as { unref?: () => void }).unref?.();
   }
 }
 
