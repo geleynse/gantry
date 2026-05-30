@@ -36,7 +36,7 @@ const V1_PROXIED_TOOLS = new Set([
   "commission_status", "cancel_commission", "supply_commission", "browse_ships",
   "buy_listed_ship", "list_ship_for_sale", "cancel_ship_listing",
   "install_mod", "uninstall_mod",
-  "analyze_market", "get_base", "use_item", "send_gift", "claim",
+  "analyze_market", "get_base", "use_item", "send_gift", "claim", "petition",
   "get_insurance_quote", "buy_insurance", "claim_insurance", "reload", "set_home_base",
   "chat", "get_chat_history",
   "forum_list", "forum_get_thread", "forum_create_thread", "forum_reply", "forum_upvote",

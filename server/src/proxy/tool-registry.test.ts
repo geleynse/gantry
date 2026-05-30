@@ -176,6 +176,18 @@ describe("tool-registry", () => {
     it("contains commission_quote with ship_class", () => {
       expect(TOOL_SCHEMAS.commission_quote).toBeDefined();
     });
+
+    // petition schema — v0.287.0 empire diplomacy
+    it("petition schema requires empire_id and message", () => {
+      const entry = TOOL_SCHEMAS.petition;
+      expect(entry).toBeDefined();
+      expect(entry.description).toMatch(/petition/i);
+      const schema = entry.schema;
+      const valid = schema.safeParse({ empire_id: "emp_terran", message: "We seek trade relations." });
+      expect(valid.success).toBe(true);
+      const missing = schema.safeParse({});
+      expect(missing.success).toBe(false);
+    });
   });
 
   describe("NO_PARAM_DESCRIPTIONS", () => {

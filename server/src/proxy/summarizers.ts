@@ -210,6 +210,24 @@ const SUMMARIZERS: Record<string, Summarizer> = {
     summarized.replies = replies.map((reply) => discoverPick("forum_reply", reply as Record<string, unknown>, ["author", "author_empire", "author_faction_tag", "content", "upvotes", "created_at"]));
     return summarized;
   },
+  // Defensive summarizer: explicitly lists empire_official so a future SKIP_FIELDS
+  // addition can never silently strip this security-critical field.
+  // empire_official is SERVER-SET (cannot be forged by players) — it must always flow to agents.
+  get_chat_history: (r) => {
+    const d = r as Record<string, unknown>;
+    const messages = (d.messages as unknown[] | undefined) ?? (Array.isArray(d) ? d : []);
+    const summarized = discoverPick("get_chat_history", d, ["channel", "messages", "count"]);
+    summarized.messages = messages.map((m) => discoverPick(
+      "chat_message",
+      m as Record<string, unknown>,
+      [
+        "id", "sender", "sender_username", "content", "timestamp", "created_at",
+        "empire_official",   // SECURITY: server-set flag — cannot be forged by players
+        "channel", "target_id",
+      ]
+    ));
+    return summarized;
+  },
 };
 
 export function summarizeToolResult(toolName: string, result: unknown): unknown {
