@@ -148,6 +148,8 @@ import type { FleetHealthMonitor } from "../services/fleet-health-monitor.js";
 import { initTracker as initRateLimitTracker } from "../services/rate-limit-tracker.js";
 import { initializeNudgeSystem } from "./nudge-integration.js";
 import { createFleetWatchdog } from "../services/fleet-watchdog.js";
+import { createApiDriftMonitor } from "../services/api-drift-monitor.js";
+import { API_DRIFT_MONITOR_INTERVAL_MS, API_DRIFT_MONITOR_ENABLED, FLEET_DIR } from "../config/env.js";
 
 const log = createLogger("mcp-factory");
 
@@ -433,6 +435,9 @@ export async function createMcpServer(config: GantryConfig) {
   const HEALTH_URL = config.gameUrl.replace(/\/mcp$/, "/health");
   const HEALTH_INTERVAL_MS = 10_000; // Match game tick interval
 
+  // Forward reference for apiDriftMonitor — wired after monitor creation below.
+  const apiDriftMonitorRef: { current: import("../services/api-drift-monitor.js").ApiDriftMonitor | null } = { current: null };
+
   async function pollGameHealth(): Promise<void> {
     try {
       const resp = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(5000) });
@@ -457,6 +462,12 @@ export async function createMcpServer(config: GantryConfig) {
       if (prev && prev.version !== data.version) {
         log.warn("game server version changed", { from: prev.version, to: data.version });
         invalidateSchemaCache();
+        // Trigger immediate API drift check on version bump
+        apiDriftMonitorRef.current?.forceCheck().catch((err) =>
+          log.warn("api-drift force check failed on version change", {
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
         // Refresh galaxy graph — system IDs or connections may have changed
         galaxyGraphRef.current.forceRefresh().then((changed) => {
           if (changed) {
@@ -678,6 +689,42 @@ export async function createMcpServer(config: GantryConfig) {
   fleetHealthInterval.unref();
   mcpTimers.register("fleetHealth", fleetHealthInterval);
   log.info("fleet health monitor started", { intervalMs: FLEET_HEALTH_INTERVAL_MS });
+
+  // --- API drift monitor ---
+  // Polls game server tool schemas on a schedule (default 1h) and files alerts
+  // when tools are added, removed, or have param-level changes.
+  if (API_DRIFT_MONITOR_ENABLED) {
+    const apiDriftMonitor = createApiDriftMonitor({
+      mcpUrl: config.gameUrl,
+      getGameVersion: () => gameHealthRef.current?.version ?? null,
+      fleetDir: FLEET_DIR,
+    });
+
+    // Wire the forward reference so pollGameHealth can call forceCheck on version bump
+    apiDriftMonitorRef.current = apiDriftMonitor;
+
+    // Initial check after startup (non-blocking)
+    apiDriftMonitor.tick().catch((err) =>
+      log.warn("api-drift initial check failed", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    );
+
+    const driftInterval = setInterval(async () => {
+      try {
+        await apiDriftMonitor.tick();
+      } catch (err) {
+        log.warn("api-drift monitor tick failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }, API_DRIFT_MONITOR_INTERVAL_MS);
+    driftInterval.unref();
+    mcpTimers.register("apiDriftMonitor", driftInterval);
+    log.info("api-drift monitor started", { intervalMs: API_DRIFT_MONITOR_INTERVAL_MS });
+  } else {
+    log.info("api-drift monitor disabled (API_DRIFT_MONITOR_ENABLED=0)");
+  }
 
   // --- Fleet watchdog (webhook alerting) ---
   const fleetWatchdog = createFleetWatchdog({
