@@ -40,6 +40,25 @@ function pushSessionResponse() {
   });
 }
 
+/**
+ * Push a /api/v1/session response whose `expires_at` is `msFromNow`
+ * milliseconds in the future, for testing proactive refresh timing.
+ */
+function pushSessionResponseExpiringIn(msFromNow: number) {
+  fetchResponses.push({
+    status: 200,
+    body: JSON.stringify({
+      result: { message: "Session created." },
+      session: {
+        id: "game-sess-1",
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + msFromNow).toISOString(),
+      },
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 /** Push the 3 responses needed for MCP init: session + initialize + initialized */
 function pushInitSequence(mcpSessionId = "mcp-sess-aaaa") {
   pushSessionResponse();
@@ -53,6 +72,44 @@ function pushInitSequence(mcpSessionId = "mcp-sess-aaaa") {
     body: "",
     headers: { "Content-Type": "application/json" },
   });
+}
+
+/**
+ * Like pushInitSequence but the session expires `msFromNow` ms from now.
+ * Used by proactive-refresh tests.
+ */
+function pushInitSequenceExpiringIn(msFromNow: number, mcpSessionId = "mcp-sess-aaaa") {
+  pushSessionResponseExpiringIn(msFromNow);
+  fetchResponses.push({
+    status: 200,
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: { capabilities: {} } }),
+    headers: { "Content-Type": "application/json", "Mcp-Session-Id": mcpSessionId },
+  });
+  fetchResponses.push({
+    status: 200,
+    body: "",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** Push init (with near-term expiry) + login-tool response. */
+function pushLoginSequenceExpiringIn(
+  msFromNow: number,
+  greetingText = "Welcome back, Drifter Gale! Session ID: 2f09d1e3e76b2bef88bd037470c09e4a",
+  mcpSessionId = "2f09d1e3e76b2bef88bd037470c09e4a",
+) {
+  pushInitSequenceExpiringIn(msFromNow, mcpSessionId);
+  pushMcpToolResult(greetingText);
+}
+
+/** Push a tool-call error response (JSON-RPC level isError with structured code). */
+function pushMcpToolError(code: string, message: string) {
+  pushMcpToolResult(JSON.stringify({ code, message }), true);
+}
+
+/** Small helper to await N event-loop turns / real timers. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Push init + a login-tool response with the supplied greeting text. */
@@ -558,5 +615,181 @@ describe("HttpGameClientV2", () => {
       SessionCreateSpacing.minSpacingMs = savedMin;
       SessionCreateSpacing.jitterMs = savedJitter;
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // Session renewal: single-flight lock, proactive refresh, suppressed errors
+  // -------------------------------------------------------------------------
+
+  it("concurrent session expiry: a second renewSession awaits the first (exactly ONE re-auth)", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    // login() did 4 fetches (session, init, initialized, login tool).
+    const callsAfterLogin = fetchMock.mock.calls.length;
+
+    // Two concurrent execute() calls both get session_expired. Then ONE renewal
+    // sequence (init=3 fetches + login tool) should run, after which both retries
+    // succeed. We queue the responses in the order the mock will consume them:
+    //   call A -> session_expired
+    //   call B -> session_expired
+    //   renewal -> init(3) + login(1)
+    //   retry A -> ok
+    //   retry B -> ok
+    // If the lock is broken, a SECOND renewal sequence would fire and exhaust the
+    // queue early ("No mock response queued") OR consume extra init calls.
+    pushMcpToolError("session_expired", "Session expired");
+    pushMcpToolError("session_expired", "Session expired");
+    pushInitSequence("mcp-sess-renew"); // single renewal init (3 fetches)
+    pushMcpToolResult("Welcome back! Session ID: renewedsession00"); // renewal login tool
+    pushMcpToolResult(JSON.stringify({ ok: "A" })); // retry of call A
+    pushMcpToolResult(JSON.stringify({ ok: "B" })); // retry of call B
+
+    const [a, b] = await Promise.all([
+      client.execute("spacemolt", { action: "get_status" }, { skipMetrics: true }),
+      client.execute("spacemolt", { action: "get_location" }, { skipMetrics: true }),
+    ]);
+
+    expect(a.error).toBeUndefined();
+    expect(b.error).toBeUndefined();
+
+    // Exactly ONE renewal init ran. Count session-create POSTs to /api/v1/session
+    // that happened after login.
+    const sessionCreatePosts = fetchMock.mock.calls
+      .slice(callsAfterLogin)
+      .filter((c) => String(c[0]).endsWith("/api/v1/session"));
+    expect(sessionCreatePosts.length).toBe(1);
+
+    // reconnectCount incremented exactly once (single renewal).
+    expect(client.getConnectionHealth().totalReconnects).toBe(1);
+  });
+
+  it("failed renewal clears the single-flight lock so a later call can retry", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+
+    // First execute: session_expired, then a renewal that FAILS (session create
+    // returns malformed body → mcpInitialize throws → renewSession returns false).
+    pushMcpToolError("session_expired", "Session expired");
+    fetchResponses.push({
+      status: 500,
+      body: "not json at all",
+      headers: { "Content-Type": "text/plain" },
+    });
+    const first = await client.execute("spacemolt", { action: "get_status" }, { skipMetrics: true });
+    expect(first.error?.code).toBe("session_renewal_failed");
+
+    // The lock must be cleared. A SECOND attempt should be able to renew cleanly.
+    pushMcpToolError("session_expired", "Session expired");
+    pushInitSequence("mcp-sess-recover");
+    pushMcpToolResult("Welcome back! Session ID: recovered0000000");
+    pushMcpToolResult(JSON.stringify({ ok: true }));
+    const second = await client.execute("spacemolt", { action: "get_status" }, { skipMetrics: true });
+    expect(second.error).toBeUndefined();
+  });
+
+  it("scheduleSessionRefresh: proactively renews shortly before expiry", async () => {
+    // Expiry is 90_000 + ~120ms out, so the refresh fires ~120ms from now.
+    pushLoginSequenceExpiringIn(90_000 + 120);
+    await client.login("bot", "pw");
+    expect(client.getConnectionHealth().totalReconnects).toBe(0);
+
+    // Queue the proactive renewal sequence (init + login tool). No expiry trigger
+    // needed for the retry — proactive refresh just renews, it doesn't retry a tool.
+    pushInitSequence("mcp-sess-proactive");
+    pushMcpToolResult("Welcome back! Session ID: proactive0000000");
+
+    // Wait past the refresh point.
+    await delay(220);
+
+    // Proactive refresh should have fired exactly once.
+    expect(client.getConnectionHealth().totalReconnects).toBe(1);
+  });
+
+  it("scheduleSessionRefresh: does NOT fire when expiry is far out", async () => {
+    // Session expires 30min out → refresh point is ~28.5min away, so nothing
+    // should fire within the short test window.
+    pushLoginSequenceExpiringIn(30 * 60_000);
+    await client.login("bot", "pw");
+
+    await delay(120);
+    expect(client.getConnectionHealth().totalReconnects).toBe(0);
+
+    // ...but a timer IS armed for the far-future refresh.
+    const timer = (client as unknown as { sessionRefreshTimer: unknown }).sessionRefreshTimer;
+    expect(timer).not.toBeNull();
+  });
+
+  it("execute: returns session_renewal_exhausted after MAX_RECONNECTS reached (no further re-auth)", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    const callsAfterLogin = fetchMock.mock.calls.length;
+
+    // Force the circuit-breaker: pretend we've already reconnected 5 times.
+    (client as unknown as { reconnectCount: number }).reconnectCount = 5;
+
+    pushMcpToolError("session_expired", "Session expired");
+    const resp = await client.execute("spacemolt", { action: "get_status" }, { skipMetrics: true });
+    expect(resp.error?.code).toBe("session_renewal_exhausted");
+    expect(resp.error?.message).toMatch(/Do NOT call logout or login/);
+
+    // No renewal init happened — only the single failing tool call.
+    const sessionCreatePosts = fetchMock.mock.calls
+      .slice(callsAfterLogin)
+      .filter((c) => String(c[0]).endsWith("/api/v1/session"));
+    expect(sessionCreatePosts.length).toBe(0);
+  });
+
+  it("execute: returns session_renewal_failed (not session_expired) when renewal fails", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+
+    pushMcpToolError("session_expired", "Session expired");
+    // Renewal attempt: session creation returns non-JSON → mcpInitialize throws.
+    fetchResponses.push({
+      status: 500,
+      body: "upstream exploded",
+      headers: { "Content-Type": "text/plain" },
+    });
+
+    const resp = await client.execute("spacemolt", { action: "get_status" }, { skipMetrics: true });
+    expect(resp.error?.code).toBe("session_renewal_failed");
+    expect(resp.error?.code).not.toBe("session_expired");
+    expect(resp.error?.message).toMatch(/Do NOT call logout or login/);
+  });
+
+  it("renewSession: re-arms the proactive refresh timer after a successful renewal", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+
+    // Trigger a reactive renewal whose new session expires comfortably in the
+    // future (REFRESH_LEAD_MS + 5min), so scheduleSessionRefresh arms a live timer.
+    pushMcpToolError("session_expired", "Session expired");
+    pushInitSequenceExpiringIn(90_000 + 5 * 60_000, "mcp-sess-rearm");
+    pushMcpToolResult("Welcome back! Session ID: rearmed000000000");
+    pushMcpToolResult(JSON.stringify({ ok: true }));
+
+    const resp = await client.execute("spacemolt", { action: "get_status" }, { skipMetrics: true });
+    expect(resp.error).toBeUndefined();
+
+    // The refresh timer is non-null after a successful renewal (far-out expiry).
+    const timer = (client as unknown as { sessionRefreshTimer: unknown }).sessionRefreshTimer;
+    expect(timer).not.toBeNull();
+  });
+
+  it("close: clears the proactive refresh timer (no fetches after close)", async () => {
+    // Near-term expiry so a timer is armed.
+    pushLoginSequenceExpiringIn(90_000 + 120);
+    await client.login("bot", "pw");
+
+    const callsAtClose = fetchMock.mock.calls.length;
+    await client.close();
+
+    // Timer must be cleared.
+    const timer = (client as unknown as { sessionRefreshTimer: unknown }).sessionRefreshTimer;
+    expect(timer).toBeNull();
+
+    // Wait past the would-be refresh point; no new fetches should occur.
+    await delay(220);
+    expect(fetchMock.mock.calls.length).toBe(callsAtClose);
   });
 });
