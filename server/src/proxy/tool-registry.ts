@@ -320,6 +320,20 @@ export const TOOL_SCHEMAS: Record<string, { description: string; schema: z.ZodTy
   },
 
   // ---------------------------------------------------------------------------
+  // Empire diplomacy — v0.287.0 petition, v0.290.0 send_gift-to-empire
+  // ---------------------------------------------------------------------------
+
+  petition: {
+    description: "Send a petition message to an empire government (rate-limited: 1/hour/empire). " +
+      "Must be in an empire-controlled system. Use for trade agreements, citizenship requests, or diplomacy. " +
+      "NOTE: empire param names unconfirmed from live API — using plan-specified names (empire_id, message).",
+    schema: z.object({
+      empire_id: z.string().describe("Empire ID to petition (e.g. 'terran', 'syndicate')"),
+      message: z.string().max(1000).describe("Petition message (max 1000 chars)"),
+    }),
+  },
+
+  // ---------------------------------------------------------------------------
   // Drone surface — v0.278.0 bay-based system; v0.330.0 deploy {all:true};
   // v0.331.0 set_drone_name; v0.331.2 XP persists across restarts.
   // ---------------------------------------------------------------------------

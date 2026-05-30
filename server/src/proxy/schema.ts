@@ -580,6 +580,9 @@ export const V2_TO_V1_PARAM_MAP: Record<string, Record<string, string>> = {
   estimate_purchase: { id: "item_id" },
   use_item: { id: "item_id" },
   send_gift: { id: "target_id", text: "item_id" },
+  // v0.287.0 — empire petition. Param names from plan (unconfirmed against live API).
+  // empire_id → empire_id, message → message (may be a no-op remap; included for future-proofing).
+  petition: { id: "empire_id", text: "message" },
   faction_upgrade: { id: "facility_id", text: "facility_type" },
   // spacemolt_ship tool
   buy_ship: { id: "ship_class" },
