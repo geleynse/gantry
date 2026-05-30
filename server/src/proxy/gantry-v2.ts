@@ -188,19 +188,11 @@ export function withPrayerScriptSchema(toolName: string, serverTool?: ServerTool
   const properties = { ...(inputSchema.properties ?? {}) };
   const required = [...(inputSchema.required ?? [])];
 
-  const action = properties.action as { enum?: string[]; type?: string; description?: string } | undefined;
-  if (action?.enum) {
-    // Proxy-only actions on the `spacemolt` consolidated tool. `pray` /
-    // `get_routine_status` are handled directly in the dispatcher;
-    // `get_craft_profitability` / `craft_path_to` are compound tools
-    // (buildCompoundActions) that v2 agents couldn't reach because they
-    // weren't in the upstream action enum, so client-side Zod rejected them.
-    const proxyActions = ["pray", "get_routine_status", "get_craft_profitability", "craft_path_to"];
-    const missingActions = proxyActions.filter((name) => !action.enum!.includes(name));
-    if (missingActions.length > 0) {
-      properties.action = { ...action, enum: [...action.enum, ...missingActions] };
-    }
-  }
+  // Note: the live `spacemolt` tool has no enum on `action` (bare type:"string");
+  // client-side Zod accepts any string, so proxy actions (pray, get_routine_status,
+  // get_craft_profitability, craft_path_to) validate without enum injection here.
+  // The script/max_steps/timeout_ticks/async params below are still added to
+  // provide schema hints for prayer-based calls.
 
   properties.script = {
     type: "string",

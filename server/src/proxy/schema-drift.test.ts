@@ -46,8 +46,11 @@ const V1_PROXIED_TOOLS = new Set([
   // tagged INTEL-/BELT-REPORT- notes via spacemolt_social(action="create_note"),
   // and survey-monetization reads them back via spacemolt_social(action="get_notes")
   // to populate the `sold` field. See services/survey-monetization.ts.
+  // delete_note (game v0.284.0) — decided: allow, surfaced to survey agents (2026-05-30).
+  // Complements create_note/get_notes (reclaims cargo slot after a note sells).
   "create_note",
   "get_notes",
+  "delete_note",
   // V2 pass-through targets (resolved at dispatch time from V2_ACTION_TO_V1_NAME)
   "faction_list",
   // Drone surface — v0.278.0 bay-based drones, v0.330.0 deploy {all:true},

@@ -127,12 +127,15 @@ describe("createGantryServerV2", () => {
   });
 
   it("advertises PrayerLang params on spacemolt action dispatch", () => {
+    // Live spacemolt tool has action as bare type:"string" (no enum) — proxy
+    // actions (pray, get_routine_status, etc.) validate via z.string() permissively.
+    // withPrayerScriptSchema still injects script/max_steps/timeout_ticks/async hints.
     const serverTool: ServerTool = {
       name: "spacemolt",
       inputSchema: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["get_status", "mine"] },
+          action: { type: "string" },
           id: { type: "string" },
         },
         required: ["action"],
@@ -140,14 +143,12 @@ describe("createGantryServerV2", () => {
     };
 
     const patched = withPrayerScriptSchema("spacemolt", serverTool)!;
-    const action = patched.inputSchema?.properties?.action as { enum?: string[] };
-    expect(action.enum).toContain("pray");
-    expect(action.enum).toContain("get_routine_status");
     expect(patched.inputSchema?.properties).toHaveProperty("script");
     expect(patched.inputSchema?.properties).toHaveProperty("max_steps");
     expect(patched.inputSchema?.properties).toHaveProperty("timeout_ticks");
     expect(patched.inputSchema?.properties).toHaveProperty("async");
 
+    // z.string() on action accepts any proxy action value
     const parsed = serverSchemaToZod(patched).safeParse({
       action: "pray",
       script: "halt;",
@@ -155,61 +156,10 @@ describe("createGantryServerV2", () => {
       timeout_ticks: 1,
     });
     expect(parsed.success).toBe(true);
-  });
 
-  // -------------------------------------------------------------------------
-  // Crafting compound tools grafted onto the spacemolt action enum — these
-  // were registered as compound actions (buildCompoundActions) but unreachable
-  // for v2 agents because the upstream `action` enum didn't list them, so
-  // client-side Zod rejected the call. Mirror of the craft_chains injection.
-  // -------------------------------------------------------------------------
-
-  it("withPrayerScriptSchema injects get_craft_profitability and craft_path_to into spacemolt action enum", () => {
-    const serverTool: ServerTool = {
-      name: "spacemolt",
-      inputSchema: {
-        type: "object",
-        properties: {
-          action: { type: "string", enum: ["get_status", "mine", "craft"] },
-          id: { type: "string" },
-          text: { type: "string" },
-        },
-        required: ["action"],
-      },
-    };
-
-    const patched = withPrayerScriptSchema("spacemolt", serverTool)!;
-    const action = patched.inputSchema?.properties?.action as { enum?: string[] };
-    expect(action.enum).toContain("get_craft_profitability");
-    expect(action.enum).toContain("craft_path_to");
-    // Existing + other proxy actions preserved
-    expect(action.enum).toContain("craft");
-    expect(action.enum).toContain("pray");
-    expect(action.enum).toContain("get_routine_status");
-
-    // Round-trip through Zod: agent call with action=craft_path_to must validate
-    const parsed = serverSchemaToZod(patched).safeParse({
-      action: "craft_path_to",
-      id: "ship_engine",
-    });
-    expect(parsed.success).toBe(true);
-  });
-
-  it("withPrayerScriptSchema is idempotent on spacemolt action enum (no duplicate proxy actions)", () => {
-    const serverTool: ServerTool = {
-      name: "spacemolt",
-      inputSchema: {
-        type: "object",
-        properties: {
-          action: { type: "string", enum: ["mine", "pray", "get_routine_status", "get_craft_profitability", "craft_path_to"] },
-        },
-        required: ["action"],
-      },
-    };
-    const patched = withPrayerScriptSchema("spacemolt", serverTool)!;
-    const action = patched.inputSchema?.properties?.action as { enum?: string[] };
-    for (const name of ["pray", "get_routine_status", "get_craft_profitability", "craft_path_to"]) {
-      expect(action.enum!.filter((v) => v === name).length).toBe(1);
+    // Proxy actions accepted without needing an explicit enum entry
+    for (const proxyAction of ["pray", "get_routine_status", "get_craft_profitability", "craft_path_to"]) {
+      expect(serverSchemaToZod(patched).safeParse({ action: proxyAction }).success).toBe(true);
     }
   });
 
