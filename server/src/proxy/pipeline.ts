@@ -571,6 +571,78 @@ export function validateCaptainsLogFormat(entry: string): { valid: true } | { va
 }
 
 // ---------------------------------------------------------------------------
+// Cargo saturation hard block
+// ---------------------------------------------------------------------------
+
+/**
+ * Actions that CANNOT resolve a cargo-full state.
+ * When cargo is >= CARGO_SATURATION_THRESHOLD, these are blocked.
+ *
+ * NOTE: jump, travel, jump_route, find_route are NOT blocked — the agent must
+ * be able to navigate to a station to sell. Blocking nav would create a deadlock.
+ */
+export const CARGO_BLOCKING_ACTIONS = new Set([
+  "mine",
+  "batch_mine",
+  "survey_system",
+]);
+
+/** Hard block threshold: 95% cargo capacity or above. */
+export const CARGO_SATURATION_THRESHOLD = 0.95;
+
+/**
+ * Check whether this action should be blocked due to cargo saturation.
+ *
+ * Returns an error string (block) or null (allow through).
+ *
+ * Fail-open rules (returns null — action is ALWAYS allowed):
+ *  - statusCache has no entry for this agent (login in progress)
+ *  - cargo_capacity is 0 or undefined (data not yet populated)
+ *  - The action is not in CARGO_BLOCKING_ACTIONS (nav, sell, dock, etc.)
+ *  - Guard is disabled globally (config.cargoSaturationGuard === false)
+ *  - Guard is disabled per-agent (agentConfig.cargoSaturationGuardEnabled === false)
+ */
+export function checkCargoSaturationBlock(
+  ctx: PipelineContext,
+  agentName: string,
+  verb: string,
+): string | null {
+  // Global opt-out (default: enabled)
+  if (ctx.config.cargoSaturationGuard === false) return null;
+
+  // Per-agent opt-out
+  const agentConfig = ctx.config.agents.find((a) => a.name === agentName);
+  if (agentConfig?.cargoSaturationGuardEnabled === false) return null;
+
+  // Only block actions that can't resolve cargo saturation
+  if (!CARGO_BLOCKING_ACTIONS.has(verb)) return null;
+
+  // Fail open: no cache entry (agent not yet logged in or first turn)
+  const cached = ctx.statusCache?.get(agentName);
+  if (!cached) return null;
+
+  const data = cached.data;
+  const player = (data.player ?? data) as Record<string, unknown>;
+  const ship = (data.ship ?? player.ship ?? {}) as Record<string, unknown>;
+  const cargoUsed = typeof ship.cargo_used === "number" ? ship.cargo_used : undefined;
+  const cargoCapacity = typeof ship.cargo_capacity === "number" ? ship.cargo_capacity : undefined;
+
+  // Fail open: missing or zero capacity (data not populated yet)
+  if (cargoUsed === undefined || cargoCapacity === undefined || cargoCapacity === 0) return null;
+
+  const ratio = cargoUsed / cargoCapacity;
+  if (ratio < CARGO_SATURATION_THRESHOLD) return null;
+
+  const pct = Math.round(ratio * 100);
+  return (
+    `CARGO_SATURATION_BLOCK: Cargo is at ${cargoUsed}/${cargoCapacity} (${pct}%). ` +
+    `You cannot ${verb} until you sell or deposit cargo. ` +
+    `Jump and travel are still available — navigate to a market station, ` +
+    `then use sell, multi_sell, or deposit to clear space before mining.`
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Guardrails
 // ---------------------------------------------------------------------------
 
@@ -720,6 +792,13 @@ export function checkGuardrailsV1(
     if (itemId !== "crystal_ore") {
       log.debug("non-crystal deposit", { agent: agentName, itemId });
     }
+  }
+
+  // Cargo saturation hard block — prevent mine/survey actions when cargo >= 95%
+  const cargoBlock = checkCargoSaturationBlock(ctx, agentName, toolName);
+  if (cargoBlock) {
+    log.info("v1 blocked by cargo saturation", { agent: agentName, tool: toolName });
+    return cargoBlock;
   }
 
   // Per-session call limits (config-driven)
@@ -889,6 +968,16 @@ export function checkGuardrailsV2(
         actionKey,
       });
       return `Action "${action}" is not available on ${toolName}.`;
+    }
+  }
+
+  // Cargo saturation hard block — prevent mine/survey actions when cargo >= 95%
+  // Uses the game action verb (not the MCP wrapper tool name) for matching.
+  {
+    const cargoBlock = checkCargoSaturationBlock(ctx, agentName, action ?? toolName);
+    if (cargoBlock) {
+      log.info("v2 blocked by cargo saturation", { agent: agentName, action, toolName });
+      return cargoBlock;
     }
   }
 

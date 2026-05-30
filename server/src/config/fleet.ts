@@ -167,6 +167,7 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
     mcpPresets: fleetConfig.mcpPresets,
     forumUrl: fleetConfig.forumUrl,
     validateCredentialsOnStartup: fleetConfig.validateCredentialsOnStartup,
+    cargoSaturationGuard: fleetConfig.cargoSaturationGuard,
   };
 }
 

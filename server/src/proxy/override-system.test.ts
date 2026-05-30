@@ -384,20 +384,55 @@ describe("built-in rules", () => {
     expect(result.some((d) => d.includes("Hull critically low"))).toBe(false);
   });
 
-  it("cargo-full fires when cargo at capacity", () => {
+  it("cargo-full fires when cargo at capacity (100%)", () => {
     const registry = new OverrideRegistry(BUILT_IN_RULES);
     const data = makeStatusData({ ship: { fuel: 100, max_fuel: 100, hull: 100, max_hull: 100, cargo_used: 20, cargo_capacity: 20 } });
     const ctx = makeCtx({ alpha: data });
     const result = registry.evaluate(ctx, "alpha");
-    expect(result.some((d) => d.includes("Cargo hold is full"))).toBe(true);
+    expect(result.some((d) => d.includes("URGENT") && d.includes("Cargo hold"))).toBe(true);
   });
 
-  it("cargo-full does not fire when cargo has space", () => {
+  it("cargo-full fires at 90% capacity (tightened threshold)", () => {
+    const registry = new OverrideRegistry(BUILT_IN_RULES);
+    // 18/20 = 90% — should fire
+    const data = makeStatusData({ ship: { fuel: 100, max_fuel: 100, hull: 100, max_hull: 100, cargo_used: 18, cargo_capacity: 20 } });
+    const ctx = makeCtx({ alpha: data });
+    const result = registry.evaluate(ctx, "alpha");
+    expect(result.some((d) => d.includes("URGENT") && d.includes("Cargo hold"))).toBe(true);
+  });
+
+  it("cargo-full does not fire below 90% capacity", () => {
+    const registry = new OverrideRegistry(BUILT_IN_RULES);
+    // 17/20 = 85% — should NOT fire
+    const data = makeStatusData({ ship: { fuel: 100, max_fuel: 100, hull: 100, max_hull: 100, cargo_used: 17, cargo_capacity: 20 } });
+    const ctx = makeCtx({ alpha: data });
+    const result = registry.evaluate(ctx, "alpha");
+    expect(result.some((d) => d.includes("URGENT") && d.includes("Cargo hold"))).toBe(false);
+  });
+
+  it("cargo-full does not fire when cargo has space (below 90%)", () => {
     const registry = new OverrideRegistry(BUILT_IN_RULES);
     const data = makeStatusData({ ship: { fuel: 100, max_fuel: 100, hull: 100, max_hull: 100, cargo_used: 10, cargo_capacity: 20 } });
     const ctx = makeCtx({ alpha: data });
     const result = registry.evaluate(ctx, "alpha");
-    expect(result.some((d) => d.includes("Cargo hold is full"))).toBe(false);
+    expect(result.some((d) => d.includes("URGENT") && d.includes("Cargo hold"))).toBe(false);
+  });
+
+  it("cargo-full cooldown is 60 seconds (not 180)", () => {
+    const cargoFullRule = BUILT_IN_RULES.find((r) => r.name === "cargo-full");
+    expect(cargoFullRule).toBeDefined();
+    expect(cargoFullRule!.cooldownMs).toBe(60_000);
+  });
+
+  it("cargo-full directive wording contains URGENT and not NOTICE", () => {
+    const registry = new OverrideRegistry(BUILT_IN_RULES);
+    const data = makeStatusData({ ship: { fuel: 100, max_fuel: 100, hull: 100, max_hull: 100, cargo_used: 20, cargo_capacity: 20 } });
+    const ctx = makeCtx({ alpha: data });
+    const result = registry.evaluate(ctx, "alpha");
+    const directive = result.find((d) => d.includes("Cargo hold"));
+    expect(directive).toBeDefined();
+    expect(directive).toContain("URGENT");
+    expect(directive).not.toContain("NOTICE");
   });
 
   it("stuck-in-transit fires when no current system", () => {

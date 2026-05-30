@@ -97,4 +97,9 @@ export interface GantryConfig {
    * Default: true. Set to false to skip (useful in offline/mock mode).
    */
   validateCredentialsOnStartup?: boolean;
+  /**
+   * Enable cargo saturation hard block globally. Default: true.
+   * Per-agent opt-out via agent config cargoSaturationGuardEnabled.
+   */
+  cargoSaturationGuard?: boolean;
 }

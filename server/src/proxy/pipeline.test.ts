@@ -19,6 +19,9 @@ import {
   countSentenceBoundaries,
   checkGuardrailsV1,
   checkGuardrailsV2,
+  checkCargoSaturationBlock,
+  CARGO_BLOCKING_ACTIONS,
+  CARGO_SATURATION_THRESHOLD,
   withInjections,
   isProxySessionActive,
   type PipelineContext,
@@ -2235,5 +2238,326 @@ describe("checkGuardrailsV2 — offline proxy blocking", () => {
     // Bravo can still execute tools (online)
     const braveMine = checkGuardrailsV2(ctx, "bravo", "spacemolt", "mine", {}, "session-bravo");
     if (braveMine) expect(braveMine).not.toContain("expired");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkCargoSaturationBlock
+// ---------------------------------------------------------------------------
+
+describe("checkCargoSaturationBlock", () => {
+  function makeCargoCtx(
+    cargoUsed: number | undefined,
+    cargoCapacity: number | undefined,
+    agentName = "alpha",
+    configOverrides: Partial<GantryConfig> = {},
+  ): PipelineContext {
+    const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
+    if (cargoUsed !== undefined || cargoCapacity !== undefined) {
+      statusCache.set(agentName, {
+        data: {
+          ship: {
+            cargo_used: cargoUsed,
+            cargo_capacity: cargoCapacity,
+          },
+        },
+        fetchedAt: Date.now(),
+      });
+    }
+    return makeCtx({ statusCache, config: makeConfig(configOverrides) });
+  }
+
+  it("returns null when no statusCache entry (fail open — agent not yet logged in)", () => {
+    const ctx = makeCtx(); // no statusCache
+    expect(checkCargoSaturationBlock(ctx, "alpha", "mine")).toBeNull();
+  });
+
+  it("returns null when cargo_capacity is 0 (data not yet populated)", () => {
+    const ctx = makeCargoCtx(0, 0);
+    expect(checkCargoSaturationBlock(ctx, "alpha", "mine")).toBeNull();
+  });
+
+  it("returns null when cargoUsed / cargoCapacity < 0.95", () => {
+    // 18/20 = 0.90 — below threshold
+    const ctx = makeCargoCtx(18, 20);
+    expect(checkCargoSaturationBlock(ctx, "alpha", "mine")).toBeNull();
+  });
+
+  it("returns null at exactly 0.94 ratio", () => {
+    // 94/100 = 0.94
+    const ctx = makeCargoCtx(94, 100);
+    expect(checkCargoSaturationBlock(ctx, "alpha", "mine")).toBeNull();
+  });
+
+  it("returns error string at exactly 0.95 ratio", () => {
+    // 19/20 = 0.95
+    const ctx = makeCargoCtx(19, 20);
+    const result = checkCargoSaturationBlock(ctx, "alpha", "mine");
+    expect(result).not.toBeNull();
+    expect(result).toContain("CARGO_SATURATION_BLOCK");
+  });
+
+  it("returns error string at 1.0 ratio (full)", () => {
+    // 20/20 = 1.0
+    const ctx = makeCargoCtx(20, 20);
+    const result = checkCargoSaturationBlock(ctx, "alpha", "mine");
+    expect(result).not.toBeNull();
+    expect(result).toContain("CARGO_SATURATION_BLOCK");
+  });
+
+  it("error string contains cargoUsed, cargoCapacity, and percentage", () => {
+    const ctx = makeCargoCtx(19, 20);
+    const result = checkCargoSaturationBlock(ctx, "alpha", "mine")!;
+    expect(result).toContain("19");
+    expect(result).toContain("20");
+    expect(result).toContain("95%");
+  });
+
+  it("error string contains jump hint (navigation still allowed)", () => {
+    const ctx = makeCargoCtx(20, 20);
+    const result = checkCargoSaturationBlock(ctx, "alpha", "mine")!;
+    expect(result.toLowerCase()).toContain("jump");
+  });
+
+  it("error string contains sell resolution hint", () => {
+    const ctx = makeCargoCtx(20, 20);
+    const result = checkCargoSaturationBlock(ctx, "alpha", "mine")!;
+    expect(result.toLowerCase()).toContain("sell");
+  });
+
+  it("returns null for 'sell' action even at 100% cargo", () => {
+    const ctx = makeCargoCtx(20, 20);
+    expect(checkCargoSaturationBlock(ctx, "alpha", "sell")).toBeNull();
+  });
+
+  it("returns null for 'multi_sell' action at 100% cargo", () => {
+    const ctx = makeCargoCtx(20, 20);
+    expect(checkCargoSaturationBlock(ctx, "alpha", "multi_sell")).toBeNull();
+  });
+
+  it("returns null for 'jump' action at 100% cargo", () => {
+    const ctx = makeCargoCtx(20, 20);
+    expect(checkCargoSaturationBlock(ctx, "alpha", "jump")).toBeNull();
+  });
+
+  it("returns null for 'travel' action at 100% cargo", () => {
+    const ctx = makeCargoCtx(20, 20);
+    expect(checkCargoSaturationBlock(ctx, "alpha", "travel")).toBeNull();
+  });
+
+  it("returns null for 'dock' action at 100% cargo", () => {
+    const ctx = makeCargoCtx(20, 20);
+    expect(checkCargoSaturationBlock(ctx, "alpha", "dock")).toBeNull();
+  });
+
+  it("returns null for 'undock' action at 100% cargo", () => {
+    const ctx = makeCargoCtx(20, 20);
+    expect(checkCargoSaturationBlock(ctx, "alpha", "undock")).toBeNull();
+  });
+
+  it("returns null for 'logout' action at 100% cargo", () => {
+    const ctx = makeCargoCtx(20, 20);
+    expect(checkCargoSaturationBlock(ctx, "alpha", "logout")).toBeNull();
+  });
+
+  it("returns null for 'jump_route' action at 100% cargo", () => {
+    const ctx = makeCargoCtx(20, 20);
+    expect(checkCargoSaturationBlock(ctx, "alpha", "jump_route")).toBeNull();
+  });
+
+  it("blocks 'mine' at 95% cargo", () => {
+    const ctx = makeCargoCtx(19, 20); // 95%
+    const result = checkCargoSaturationBlock(ctx, "alpha", "mine");
+    expect(result).not.toBeNull();
+    expect(result).toContain("mine");
+  });
+
+  it("blocks 'batch_mine' at 95% cargo", () => {
+    const ctx = makeCargoCtx(19, 20);
+    const result = checkCargoSaturationBlock(ctx, "alpha", "batch_mine");
+    expect(result).not.toBeNull();
+    expect(result).toContain("batch_mine");
+  });
+
+  it("blocks 'survey_system' at 95% cargo", () => {
+    const ctx = makeCargoCtx(19, 20);
+    const result = checkCargoSaturationBlock(ctx, "alpha", "survey_system");
+    expect(result).not.toBeNull();
+    expect(result).toContain("survey_system");
+  });
+
+  it("returns null when global cargoSaturationGuard is false", () => {
+    const ctx = makeCargoCtx(20, 20, "alpha", { cargoSaturationGuard: false });
+    expect(checkCargoSaturationBlock(ctx, "alpha", "mine")).toBeNull();
+  });
+
+  it("returns null when per-agent cargoSaturationGuardEnabled is false", () => {
+    const ctx = makeCtx({
+      config: makeConfig({
+        agents: [{ name: "alpha", cargoSaturationGuardEnabled: false }],
+      }),
+      statusCache: new Map([
+        ["alpha", { data: { ship: { cargo_used: 20, cargo_capacity: 20 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    expect(checkCargoSaturationBlock(ctx, "alpha", "mine")).toBeNull();
+  });
+
+  it("per-agent opt-out works even when global guard is true (default)", () => {
+    const ctx = makeCtx({
+      config: makeConfig({
+        agents: [{ name: "alpha", cargoSaturationGuardEnabled: false }],
+      }),
+      statusCache: new Map([
+        ["alpha", { data: { ship: { cargo_used: 20, cargo_capacity: 20 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    // Per-agent opt-out takes effect regardless of global default
+    expect(checkCargoSaturationBlock(ctx, "alpha", "mine")).toBeNull();
+  });
+
+  it("fail-open when cargo_used is defined but cargo_capacity is missing", () => {
+    const ctx = makeCtx({
+      statusCache: new Map([
+        ["alpha", { data: { ship: { cargo_used: 20 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    // Missing capacity — fail open
+    expect(checkCargoSaturationBlock(ctx, "alpha", "mine")).toBeNull();
+  });
+
+  it("blocks when both fields are present and at threshold", () => {
+    const ctx = makeCtx({
+      statusCache: new Map([
+        ["alpha", { data: { ship: { cargo_used: 95, cargo_capacity: 100 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    const result = checkCargoSaturationBlock(ctx, "alpha", "mine");
+    expect(result).not.toBeNull();
+    expect(result).toContain("CARGO_SATURATION_BLOCK");
+  });
+
+  it("CARGO_BLOCKING_ACTIONS contains mine, batch_mine, survey_system", () => {
+    expect(CARGO_BLOCKING_ACTIONS.has("mine")).toBe(true);
+    expect(CARGO_BLOCKING_ACTIONS.has("batch_mine")).toBe(true);
+    expect(CARGO_BLOCKING_ACTIONS.has("survey_system")).toBe(true);
+  });
+
+  it("CARGO_BLOCKING_ACTIONS does NOT contain navigation or sell actions", () => {
+    expect(CARGO_BLOCKING_ACTIONS.has("jump")).toBe(false);
+    expect(CARGO_BLOCKING_ACTIONS.has("travel")).toBe(false);
+    expect(CARGO_BLOCKING_ACTIONS.has("jump_route")).toBe(false);
+    expect(CARGO_BLOCKING_ACTIONS.has("sell")).toBe(false);
+    expect(CARGO_BLOCKING_ACTIONS.has("dock")).toBe(false);
+  });
+
+  it("CARGO_SATURATION_THRESHOLD is 0.95", () => {
+    expect(CARGO_SATURATION_THRESHOLD).toBe(0.95);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkGuardrailsV2 — cargo saturation integration tests
+// ---------------------------------------------------------------------------
+
+describe("checkGuardrailsV2 — cargo saturation block", () => {
+  const TEST_SESSION_ID = "test-session-cargo";
+
+  beforeEach(() => {
+    createDatabase(":memory:");
+  });
+
+  afterEach(() => {
+    closeDb();
+  });
+
+  it("blocks 'mine' when cargo is at 95%", () => {
+    const ctx = makeCtx({
+      statusCache: new Map([
+        ["alpha", { data: { ship: { cargo_used: 19, cargo_capacity: 20 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    const result = checkGuardrailsV2(ctx, "alpha", "spacemolt", "mine", {}, TEST_SESSION_ID);
+    expect(result).not.toBeNull();
+    expect(result).toContain("CARGO_SATURATION_BLOCK");
+  });
+
+  it("allows 'mine' when cargo is at 94% (below threshold)", () => {
+    const ctx = makeCtx({
+      statusCache: new Map([
+        ["alpha", { data: { ship: { cargo_used: 94, cargo_capacity: 100 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    const result = checkGuardrailsV2(ctx, "alpha", "spacemolt", "mine", {}, TEST_SESSION_ID);
+    expect(result).toBeNull();
+  });
+
+  it("allows 'sell' regardless of cargo level (100%)", () => {
+    const ctx = makeCtx({
+      statusCache: new Map([
+        ["alpha", { data: { ship: { cargo_used: 20, cargo_capacity: 20 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    const result = checkGuardrailsV2(ctx, "alpha", "spacemolt", "sell", {}, TEST_SESSION_ID);
+    expect(result).toBeNull();
+  });
+
+  it("cargo saturation block message is returned as string (not null)", () => {
+    const ctx = makeCtx({
+      statusCache: new Map([
+        ["alpha", { data: { ship: { cargo_used: 20, cargo_capacity: 20 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    const result = checkGuardrailsV2(ctx, "alpha", "spacemolt", "mine", {}, TEST_SESSION_ID);
+    expect(typeof result).toBe("string");
+    expect(result!.length).toBeGreaterThan(0);
+  });
+
+  it("brokeMiningOverride does NOT bypass cargo saturation block", () => {
+    // Broke agent (12 cr < 500 floor) — broke override skips role-denials
+    // but cargo saturation is a separate, orthogonal check
+    const ctx = makeCtx({
+      statusCache: new Map([
+        ["alpha", {
+          data: {
+            player: { credits: 12 },
+            ship: { cargo_used: 20, cargo_capacity: 20 },
+          },
+          fetchedAt: Date.now()
+        }],
+      ]),
+      // Also add a role-denial to confirm broke override is active for that
+      config: makeConfig({
+        agentDeniedTools: { alpha: { batch_mine: "hauler role" } },
+      }),
+    });
+    // The broke override bypasses the role denial for batch_mine, but
+    // cargo saturation is checked AFTER the deny-list, so it still fires.
+    const result = checkGuardrailsV2(ctx, "alpha", "spacemolt", "batch_mine", {}, TEST_SESSION_ID);
+    expect(result).not.toBeNull();
+    expect(result).toContain("CARGO_SATURATION_BLOCK");
+  });
+
+  it("nav actions (jump, travel) are allowed even at 100% cargo", () => {
+    const ctx = makeCtx({
+      statusCache: new Map([
+        ["alpha", { data: { ship: { cargo_used: 20, cargo_capacity: 20 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    const jumpResult = checkGuardrailsV2(ctx, "alpha", "spacemolt", "jump", {}, TEST_SESSION_ID);
+    expect(jumpResult).toBeNull();
+    const travelResult = checkGuardrailsV2(ctx, "alpha", "spacemolt", "travel", {}, TEST_SESSION_ID);
+    expect(travelResult).toBeNull();
+  });
+
+  it("config flag disables the block globally", () => {
+    const ctx = makeCtx({
+      config: makeConfig({ cargoSaturationGuard: false }),
+      statusCache: new Map([
+        ["alpha", { data: { ship: { cargo_used: 20, cargo_capacity: 20 } }, fetchedAt: Date.now() }],
+      ]),
+    });
+    const result = checkGuardrailsV2(ctx, "alpha", "spacemolt", "mine", {}, TEST_SESSION_ID);
+    expect(result).toBeNull();
   });
 });

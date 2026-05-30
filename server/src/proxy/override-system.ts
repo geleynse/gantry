@@ -118,13 +118,20 @@ export const BUILT_IN_RULES: OverrideRule[] = [
   {
     name: "cargo-full",
     priority: 20,
-    cooldownMs: 180_000, // 3 min
+    cooldownMs: 60_000, // 1 min — fire more frequently so agents get repeated soft warnings before the hard block
     condition: (ctx, agent) => {
       const state = extractAgentState(ctx.statusCache, agent);
       if (state.cargoUsed === undefined || state.cargoCapacity === undefined || state.cargoCapacity === 0) return false;
-      return state.cargoUsed >= state.cargoCapacity;
+      // Fire at 90% capacity — gives a soft warning before the 95% hard block
+      return (state.cargoUsed / state.cargoCapacity) >= 0.90;
     },
-    directive: "NOTICE: Cargo hold is full. Sell, deposit, or jettison items before attempting to mine or buy more.",
+    directive: (ctx, agent) => {
+      const state = extractAgentState(ctx.statusCache, agent);
+      const pct = state.cargoCapacity && state.cargoCapacity > 0
+        ? Math.round(((state.cargoUsed ?? 0) / state.cargoCapacity) * 100)
+        : 0;
+      return `URGENT: Cargo hold is at ${pct}% capacity (${state.cargoUsed}/${state.cargoCapacity}). Sell or deposit cargo before mining — at 95% you will be blocked from mining entirely.`;
+    },
   },
   {
     name: "low-credits",
