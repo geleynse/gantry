@@ -107,6 +107,8 @@ import { EventBuffer } from "./event-buffer.js";
 import { BreakerRegistry } from "./circuit-breaker.js";
 import { MetricsWindow } from "./instability-metrics.js";
 import { MarketCache } from "./market-cache.js";
+import { EmpireInfoCache } from "./empire-info-cache.js";
+import { TaxMonitor } from "./tax-monitor.js";
 import { ArbitrageAnalyzer } from "./arbitrage-analyzer.js";
 import { SellLog } from "./sell-log.js";
 import { MarketReservationCache } from "./market-reservations.js";
@@ -196,6 +198,7 @@ export const OUR_SCHEMA_PARAMS: Record<string, string[]> = {
   trade_cancel: ["trade_id"],
   commission_ship: ["ship_class", "provide_materials"],
   commission_quote: ["ship_class"],
+  // Note: get_tax_estimate has no params — omitted from OUR_SCHEMA_PARAMS (only tracks tools with params)
 };
 
 // Exportable type for testing the orphan-pruning helper.
@@ -356,6 +359,9 @@ export async function createMcpServer(config: GantryConfig) {
 
   // --- Public API caches (no auth required) ---
   const marketCache = new MarketCache();
+  const empireInfoCache = new EmpireInfoCache(config.gameUrl);
+  const taxMonitor = new TaxMonitor();
+  empireInfoCache.setOnRefresh((empires) => taxMonitor.check(empires));
   const arbitrageAnalyzer = new ArbitrageAnalyzer();
   type GalaxyGraphRef = { current: GalaxyGraph };
   const galaxyGraphRef: GalaxyGraphRef = { current: new GalaxyGraph() };
@@ -373,6 +379,14 @@ export async function createMcpServer(config: GantryConfig) {
       restoredCaches.marketFetchedAt ?? Date.now(),
     );
     log.info("restored market cache", { itemCount: restoredCaches.marketData.items?.length ?? 0 });
+  }
+
+  if (restoredCaches.empireInfoData && restoredCaches.empireInfoData.length > 0) {
+    empireInfoCache.restore(
+      restoredCaches.empireInfoData as import("./empire-info-cache.js").EmpireInfo[],
+      restoredCaches.empireInfoFetchedAt ?? Date.now(),
+    );
+    log.info("restored empire info cache", { empireCount: restoredCaches.empireInfoData.length });
   }
 
   if (restoredCaches.galaxyGraphSystems) {
@@ -412,6 +426,7 @@ export async function createMcpServer(config: GantryConfig) {
   // Start periodic refresh (will use restored data initially, then refreshed data)
   const mcpTimers = new LifecycleManager();
   mcpTimers.register("marketCache", marketCache.start());
+  mcpTimers.register("empireInfoCache", empireInfoCache.start());
   mcpTimers.register("galaxyGraph", galaxyGraphRef.current.start());
 
   // Restore sessions from previous run (tries SQL, falls back to file)
@@ -468,6 +483,12 @@ export async function createMcpServer(config: GantryConfig) {
             error: err instanceof Error ? err.message : String(err),
           })
         );
+        // Refresh empire info cache — policy fields may have changed with new version
+        empireInfoCache.forceRefresh().catch((err) => {
+          log.warn("empire info cache refresh failed after game version change", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
         // Refresh galaxy graph — system IDs or connections may have changed
         galaxyGraphRef.current.forceRefresh().then((changed) => {
           if (changed) {
@@ -602,7 +623,7 @@ export async function createMcpServer(config: GantryConfig) {
   // Shared state passed to every server instance (v1 and v2)
   const sharedInstanceState = {
     sessions: { active: sessions, store: sessionStore, agentMap: sessionAgentMap, closeStaleTransportsForAgent },
-    cache: { status: statusCache, battle: battleCache, market: marketCache, events: eventBuffers },
+    cache: { status: statusCache, battle: battleCache, market: marketCache, events: eventBuffers, empireInfo: empireInfoCache },
     proxy: { gameTools, serverDescriptions, gameHealthRef, callTrackers, breakerRegistry, serverMetrics, transitThrottle, transitStuckDetector, navLoopDetector, overrideRegistry },
     fleet: { galaxyGraphRef, sellLog, arbitrageAnalyzer, coordinator: null as FleetCoordinator | null, marketReservations, analyzeMarketCache, overseerEventLog },
   };
@@ -1137,9 +1158,10 @@ export async function createMcpServer(config: GantryConfig) {
     // marketCache.stop() and galaxyGraph.stop() additionally abort pending requests.
     mcpTimers.stopAll();
     marketCache.stop();
+    empireInfoCache.stop();
     galaxyGraphRef.current.stop();
     marketReservations.dispose();
-    log.debug("disposed: stopped market cache and galaxy graph refresh");
+    log.debug("disposed: stopped market cache, empire info cache, and galaxy graph refresh");
 
     // Close all MCP transports in parallel with a per-transport timeout.
     // Sequential closes were the primary cause of 54s+ shutdown times on stale sessions.

@@ -93,6 +93,8 @@ export const STATIC_GAME_TOOLS = [
   "deploy_drone", "recall_drone",
   "load_drone", "unload_drone", "upload_drone_script",
   "get_drones", "get_drone", "set_drone_name",
+  // Tax economy — v0.305+ income tax estimate with bracket breakdown
+  "get_tax_estimate",
 ];
 
 interface GameHealth {
@@ -124,6 +126,7 @@ export interface SharedState {
     battle: Map<string, BattleState | null>;
     market: MarketCache;
     events: Map<string, EventBuffer>;
+    empireInfo?: import("./empire-info-cache.js").EmpireInfoCache;
   };
   proxy: {
     gameTools: string[];
@@ -342,7 +345,9 @@ export function createGantryServer(config: GantryConfig, shared?: SharedState) {
 
   // --- Public API tools (no game server call, served from cached public data) ---
   registerPublicTools({
-    mcpServer, registeredTools, marketCache, arbitrageAnalyzer, galaxyGraph, getAgentForSession,
+    mcpServer, registeredTools, marketCache, arbitrageAnalyzer, galaxyGraph,
+    empireInfoCache: shared?.cache.empireInfo,
+    getAgentForSession,
   });
 
 

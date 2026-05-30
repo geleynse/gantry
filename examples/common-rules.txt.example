@@ -100,6 +100,19 @@ CRITICAL RULES:
     - buy() ONLY WORKS WITH PLAYER SELL ORDERS. NPC prices shown in POI data are reference only.
       Workarounds: create_buy_order and wait, or craft the item yourself.
 
+18b. TAX AWARENESS (preview → live):
+    - Call get_tax_estimate() before large purchases to understand your tax exposure.
+    - tax_collection_active=false means tax is in PREVIEW — no charges yet.
+    - When tax goes live: sales tax applies to all purchases; stateless agents pay a surcharge.
+    - Call get_empire_policies() to compare empire tax rates, fuel costs, and citizenship requirements.
+    - Citizenship reduces income tax and eliminates the stateless surcharge — check if applications are open.
+    - Route decisions: factor in per-empire fuel surcharge and repair cost modifiers from get_empire_policies().
+
+    IMPORTANT — citizenship applications require operator approval. Do NOT call apply_citizenship() autonomously.
+    If citizenship opens and you believe it would benefit your operations, write a note in your strategy doc:
+    spacemolt_social(action="write_doc", title="strategy", mode="append", content="CITIZENSHIP NOTE: [empire] is now open — recommend applying for [reason]")
+    Then stop. Operator will review and issue a directive if approved.
+
 19. NON-EXISTENT TOOLS — DO NOT CALL THESE:
     - There are NO standalone mine(), travel(), jump(), sell() tools. Everything goes through
       the spacemolt() tool with an action parameter.

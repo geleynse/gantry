@@ -7,6 +7,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MarketCache } from "./market-cache.js";
 import type { ArbitrageAnalyzer } from "./arbitrage-analyzer.js";
 import type { GalaxyGraph } from "./pathfinder.js";
+import type { EmpireInfoCache } from "./empire-info-cache.js";
 import { getRecipe, getRecipesByOutput } from "../services/recipe-registry.js";
 import { getPriceTrends } from "../services/market-history.js";
 import { findPoisByService } from "../services/galaxy-poi-registry.js";
@@ -19,6 +20,7 @@ export interface PublicToolDeps {
   marketCache: MarketCache;
   arbitrageAnalyzer: ArbitrageAnalyzer;
   galaxyGraph: GalaxyGraph;
+  empireInfoCache?: EmpireInfoCache;
   getAgentForSession: (sessionId?: string) => string | undefined;
 }
 
@@ -85,7 +87,7 @@ export function handleGetRecipe(marketCache: MarketCache, itemId: string): Recor
 }
 
 export function registerPublicTools(deps: PublicToolDeps): void {
-  const { mcpServer, registeredTools, marketCache, arbitrageAnalyzer, galaxyGraph, getAgentForSession } = deps;
+  const { mcpServer, registeredTools, marketCache, arbitrageAnalyzer, galaxyGraph, empireInfoCache, getAgentForSession } = deps;
 
   /** Wrap a public tool handler with the standard login check. */
   function requireLogin<P extends object>(
@@ -145,6 +147,19 @@ export function registerPublicTools(deps: PublicToolDeps): void {
     return textResult({ service_type, poi_count: pois.length, pois });
   }));
   registeredTools.push("find_service");
+
+  mcpServer.registerTool("get_empire_policies", {
+    description: "Get cached empire policy snapshots: tax rates, citizenship status, fuel/repair costs, contraband. FREE — no game action cost. Updates hourly.",
+    inputSchema: {
+      empire_id: z.string().optional().describe("Filter to a specific empire ID (omit for all empires)"),
+    },
+  }, requireLogin(({ empire_id }) => {
+    if (!empireInfoCache) return textResult({ error: "empire info cache not available" });
+    const { data, stale, age_seconds } = empireInfoCache.get(empire_id);
+    if (!data) return textResult({ error: "empire info not yet loaded — try again shortly" });
+    return textResult({ empires: data, _cache: { age_seconds, stale } });
+  }));
+  registeredTools.push("get_empire_policies");
 
   mcpServer.registerTool("get_arbitrage", {
     description: "Get top cross-empire arbitrage opportunities. FREE — no game action cost. Shows items where buying in one empire and selling in another is profitable.",

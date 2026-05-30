@@ -398,6 +398,8 @@ export const NO_PARAM_DESCRIPTIONS: Record<string, string> = {
   get_trades: "List your active trades.",
   // Drone surface (v0.278.0+)
   get_drones: "List all drones in your ship's drone bay (loaded and deployed).",
+  // Tax economy (v0.305+)
+  get_tax_estimate: "Get your current tax estimate: income tax due, taxable income by source (mission/market/salvage/ship_sale/rescue), bracket schedule. Returns tax_collection_active flag — when false, tax is preview-only.",
 };
 
 // ---------------------------------------------------------------------------
