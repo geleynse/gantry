@@ -43,6 +43,12 @@ export const AgentConfigSchema = z.object({
    * Set to false to disable compaction entirely (agent runs with full context only).
    */
   compactionEnabled: z.boolean().optional(),
+  /**
+   * When false, bypass the cargo saturation hard block for this agent.
+   * Useful for combat agents that can jettison cargo or have special cargo mechanics.
+   * Default: true (inherits global cargoSaturationGuard setting).
+   */
+  cargoSaturationGuardEnabled: z.boolean().optional(),
 });
 
 
@@ -166,4 +172,10 @@ export const FleetConfigSchema = z.object({
    * Default: true. Set to false to skip (useful in offline/mock mode).
    */
   validateCredentialsOnStartup: z.boolean().optional(),
+  /**
+   * Enable cargo saturation hard block. When true (default), agents at >= 95% cargo
+   * capacity are blocked from mining/exploration actions until they sell or deposit.
+   * Per-agent override via cargoSaturationGuardEnabled on the agent config.
+   */
+  cargoSaturationGuard: z.boolean().optional(),
 });

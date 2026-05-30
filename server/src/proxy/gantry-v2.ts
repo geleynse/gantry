@@ -574,7 +574,13 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
             const refreshed = getConfig();
             const globalDenied = refreshed.agentDeniedTools["*"] ?? {};
             const agentDenied = refreshed.agentDeniedTools[agentName] ?? {};
-            return globalDenied[backingTool] ?? agentDenied[backingTool] ?? null;
+            // Check operator-configured deny lists first
+            const denyReason = globalDenied[backingTool] ?? agentDenied[backingTool] ?? null;
+            if (denyReason !== null) return denyReason;
+            // Check cargo saturation hard block for mining/exploration actions
+            const cargoBlock = pipelineModule.checkCargoSaturationBlock(pipelineCtx, agentName, backingTool);
+            if (cargoBlock) return cargoBlock;
+            return null;
           },
           logSubTool: (subToolName, subArgs, subResult, durationMs) => {
             logToolCall(agentName, subToolName, subArgs, subResult, durationMs, {
