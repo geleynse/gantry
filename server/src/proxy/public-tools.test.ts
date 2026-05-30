@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { registerPublicTools, handleGetGlobalMarket, handleFindLocalRoute, type PublicToolDeps } from "./public-tools.js";
+import type { EmpireInfo } from "./empire-info-cache.js";
 
 function createMockMcpServer() {
   const tools = new Map<string, { opts: any; handler: Function }>();
@@ -138,6 +139,103 @@ describe("handleGetGlobalMarket", () => {
     const result = handleGetGlobalMarket(cache, "iron_ore");
     expect(capturedFilter).toBe("iron_ore");
     expect(result.item_count).toBe(1);
+  });
+});
+
+const MOCK_EMPIRE_DATA: EmpireInfo[] = [
+  {
+    id: "solarian", name: "Solarian",
+    tax_rate_income: 0.1, tax_rate_sales: 0.05,
+    tax_collection_active: false, citizenship_open: false,
+    citizenship_requirements: "500 rep", fuel_surcharge: 0.02,
+    repair_cost_modifier: 1.0, customs_fine_rate: 0.1,
+    bounty_multiplier: 1.0, starting_credits: 1000, contraband: [],
+  },
+  {
+    id: "voidborn", name: "Voidborn",
+    tax_rate_income: 0.15, tax_rate_sales: 0.08,
+    tax_collection_active: false, citizenship_open: true,
+    citizenship_requirements: "none", fuel_surcharge: 0.0,
+    repair_cost_modifier: 1.2, customs_fine_rate: 0.0,
+    bounty_multiplier: 0.5, starting_credits: 500, contraband: [],
+  },
+];
+
+function createMockEmpireInfoCache(data?: EmpireInfo[] | null) {
+  return {
+    get: (empire_id?: string) => {
+      if (!data) return { data: null, stale: false, age_seconds: -1 };
+      const filtered = empire_id ? data.filter((e) => e.id === empire_id) : data;
+      return { data: filtered, stale: false, age_seconds: 30 };
+    },
+  };
+}
+
+describe("get_empire_policies", () => {
+  it("returns error when cache is empty", async () => {
+    const deps = makeDeps({ empireInfoCache: createMockEmpireInfoCache(null) as any });
+    registerPublicTools(deps);
+    const handler = deps.mockServer.tools.get("get_empire_policies")!.handler;
+    const result = await handler({ empire_id: undefined }, { sessionId: "s1" });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error).toContain("not yet loaded");
+  });
+
+  it("returns all empires when no empire_id filter", async () => {
+    const deps = makeDeps({ empireInfoCache: createMockEmpireInfoCache(MOCK_EMPIRE_DATA) as any });
+    registerPublicTools(deps);
+    const handler = deps.mockServer.tools.get("get_empire_policies")!.handler;
+    const result = await handler({ empire_id: undefined }, { sessionId: "s1" });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.empires).toHaveLength(2);
+    expect(parsed._cache).toBeDefined();
+    expect(parsed._cache.age_seconds).toBe(30);
+  });
+
+  it("filters by empire_id", async () => {
+    const deps = makeDeps({ empireInfoCache: createMockEmpireInfoCache(MOCK_EMPIRE_DATA) as any });
+    registerPublicTools(deps);
+    const handler = deps.mockServer.tools.get("get_empire_policies")!.handler;
+    const result = await handler({ empire_id: "solarian" }, { sessionId: "s1" });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.empires).toHaveLength(1);
+    expect(parsed.empires[0].id).toBe("solarian");
+  });
+
+  it("includes _cache metadata with stale flag", async () => {
+    const staleCache = {
+      get: () => ({ data: MOCK_EMPIRE_DATA, stale: true, age_seconds: 3700 }),
+    };
+    const deps = makeDeps({ empireInfoCache: staleCache as any });
+    registerPublicTools(deps);
+    const handler = deps.mockServer.tools.get("get_empire_policies")!.handler;
+    const result = await handler({}, { sessionId: "s1" });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed._cache.stale).toBe(true);
+    expect(parsed._cache.age_seconds).toBe(3700);
+  });
+
+  it("returns error when not logged in", async () => {
+    const deps = makeDeps({
+      empireInfoCache: createMockEmpireInfoCache(MOCK_EMPIRE_DATA) as any,
+      getAgentForSession: () => undefined,
+    });
+    registerPublicTools(deps);
+    const handler = deps.mockServer.tools.get("get_empire_policies")!.handler;
+    const result = await handler({}, { sessionId: "s1" });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error).toContain("not logged in");
+  });
+
+  it("returns error when empireInfoCache not provided", async () => {
+    const deps = makeDeps({ empireInfoCache: undefined });
+    registerPublicTools(deps);
+    const handler = deps.mockServer.tools.get("get_empire_policies")?.handler;
+    // Tool should be registered
+    expect(handler).toBeDefined();
+    const result = await handler!({}, { sessionId: "s1" });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error).toContain("empire info cache not available");
   });
 });
 

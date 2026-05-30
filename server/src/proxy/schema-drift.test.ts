@@ -55,6 +55,8 @@ const V1_PROXIED_TOOLS = new Set([
   "deploy_drone", "recall_drone",
   "load_drone", "unload_drone", "upload_drone_script",
   "get_drones", "get_drone", "set_drone_name",
+  // Tax economy — v0.305+ income tax estimate with bracket breakdown
+  "get_tax_estimate",
 ]);
 
 // ---- Intentional skip list -----------------------------------------------
@@ -135,8 +137,12 @@ const INTENTIONALLY_SKIPPED = new Set([
   // in proxy/schema.ts; listed here so the drift test stays quiet.
   "scrap_ship",
 
-  // v0.310.0 — get_empire_info: public no-login policy snapshot. Could
-  // surface to agents later; deferred decision (see project task).
+  // v0.291 citizenship preset — not proxied until empires open applications and
+  // operator-approval workflow is in place. See docs/research/tax-citizenship-bundle-plan-2026-05-30.md.
+  "spacemolt_citizenship",
+
+  // v0.310.0 — get_empire_info: public no-login policy snapshot. Gantry wraps
+  // it as get_empire_policies (cached, no game API cost). Agents use that instead.
   "get_empire_info",
 
   // v0.313.0 — faction diplomacy overhaul. faction_set_ally removed,
@@ -337,5 +343,23 @@ describe("schema-drift — static consistency checks", () => {
       expect(V1_PROXIED_TOOLS.has(t)).toBe(true);
       expect(INTENTIONALLY_SKIPPED.has(t)).toBe(false);
     }
+  });
+
+  it("get_tax_estimate is in V1_PROXIED_TOOLS (tax economy surface)", () => {
+    // feat/gantry-tax-citizenship: get_tax_estimate surfaced to agents.
+    expect(V1_PROXIED_TOOLS.has("get_tax_estimate")).toBe(true);
+    expect(INTENTIONALLY_SKIPPED.has("get_tax_estimate")).toBe(false);
+  });
+
+  it("spacemolt_citizenship is in INTENTIONALLY_SKIPPED (operator-approval required)", () => {
+    // feat/gantry-tax-citizenship: citizenship preset not proxied until operator-approval workflow exists.
+    expect(INTENTIONALLY_SKIPPED.has("spacemolt_citizenship")).toBe(true);
+    expect(V1_PROXIED_TOOLS.has("spacemolt_citizenship")).toBe(false);
+  });
+
+  it("get_empire_info is in INTENTIONALLY_SKIPPED (Gantry wraps as get_empire_policies)", () => {
+    // Agents use get_empire_policies (cached, free) instead of raw get_empire_info.
+    expect(INTENTIONALLY_SKIPPED.has("get_empire_info")).toBe(true);
+    expect(V1_PROXIED_TOOLS.has("get_empire_info")).toBe(false);
   });
 });

@@ -56,6 +56,17 @@ export function persistMarketCache(
   );
 }
 
+export function persistEmpireInfoCache(
+  empires: Array<Record<string, unknown>>,
+  fetchedAt: number,
+): void {
+  dbRun(
+    "INSERT OR REPLACE INTO proxy_empire_info_cache (id, data_json, fetched_at, updated_at) VALUES (1, ?, ?, datetime('now'))",
+    [JSON.stringify(empires), fetchedAt],
+    "empire info cache persist failed (non-fatal)",
+  );
+}
+
 export function persistGalaxyGraph(
   systems: unknown[],
   edges: Array<{ from: string; to: string }>,
@@ -74,6 +85,8 @@ export interface RestoredCaches {
   galaxyGraphSystems?: unknown[];
   galaxyGraphEdges?: Array<{ from: string; to: string }>;
   galaxyGraphFetchedAt?: number;
+  empireInfoData?: Array<Record<string, unknown>> | null;
+  empireInfoFetchedAt?: number;
 }
 
 export async function restorePublicCaches(): Promise<RestoredCaches> {
@@ -102,6 +115,18 @@ export async function restorePublicCaches(): Promise<RestoredCaches> {
           result.galaxyGraphEdges = JSON.parse(row.edges_json);
           result.galaxyGraphFetchedAt = row.fetched_at;
           log.debug("restored galaxy graph from SQL");
+        } catch { /* skip malformed JSON */ }
+      }
+    } catch { /* table may not exist yet */ }
+
+    // Restore empire info cache
+    try {
+      const row = db.prepare('SELECT data_json, fetched_at FROM proxy_empire_info_cache WHERE id = 1').get() as { data_json: string; fetched_at: number } | undefined;
+      if (row) {
+        try {
+          result.empireInfoData = JSON.parse(row.data_json);
+          result.empireInfoFetchedAt = row.fetched_at;
+          log.debug("restored empire info cache from SQL");
         } catch { /* skip malformed JSON */ }
       }
     } catch { /* table may not exist yet */ }
