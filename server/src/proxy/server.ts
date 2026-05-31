@@ -95,6 +95,9 @@ export const STATIC_GAME_TOOLS = [
   "get_drones", "get_drone", "set_drone_name",
   // Tax economy — v0.305+ income tax estimate with bracket breakdown
   "get_tax_estimate",
+  // Read-only informational tools
+  "get_system_agents",  // list agents/players in the current system
+  "view_insurance",     // view current insurance policy details
 ];
 
 interface GameHealth {

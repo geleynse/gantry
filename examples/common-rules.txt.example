@@ -141,3 +141,11 @@ CRITICAL RULES:
     send_gift(target_id=<empire_id>, ...) is accepted — credits go to treasury, materials to quartermaster.
     Must be docked at that empire's station. This auto-generates a verified petition.
     Use for relationship-building before citizenship opens.
+
+24. PIRATE STRONGHOLD PRICING (v0.324):
+    Heavily-stocked items sell cheap at pirate stations — artificially low prices from supply glut.
+    If you have pirate access, exploit the price difference: buy scarce goods elsewhere, sell at pirate stations, and buy discounted pirate-surplus goods for resale in empire space.
+
+25. LOOTED WEAPON MODS (v0.314.2):
+    void_laser and quantum_entanglement_shield can now be installed via install_mod().
+    If you loot either from a wreck, install it immediately — both outperform standard gear.

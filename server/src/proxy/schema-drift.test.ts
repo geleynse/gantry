@@ -60,6 +60,9 @@ const V1_PROXIED_TOOLS = new Set([
   "get_drones", "get_drone", "set_drone_name",
   // Tax economy — v0.305+ income tax estimate with bracket breakdown
   "get_tax_estimate",
+  // Read-only informational tools — safe passthrough, no side effects
+  "get_system_agents",  // list of agents/players in the current system
+  "view_insurance",     // view current insurance policy details
 ]);
 
 // ---- Intentional skip list -----------------------------------------------
@@ -143,6 +146,8 @@ const INTENTIONALLY_SKIPPED = new Set([
   // v0.291 citizenship preset — not proxied until empires open applications and
   // operator-approval workflow is in place. See docs/research/tax-citizenship-bundle-plan-2026-05-30.md.
   "spacemolt_citizenship",
+  // Same feature, renamed/aliased on the game server — also intentionally skipped.
+  "citizenship",
 
   // v0.310.0 — get_empire_info: public no-login policy snapshot. Gantry wraps
   // it as get_empire_policies (cached, no game API cost). Agents use that instead.
@@ -157,6 +162,10 @@ const INTENTIONALLY_SKIPPED = new Set([
   "faction_remove_enemy",
   "faction_accept_invite",
   "faction_withdraw_invite",
+
+  // Destructive / irreversible — deliberately not proxied
+  "refit_ship",          // irreversible: resets hull, dumps all modules + cargo to storage
+  "captains_log_delete", // destructive: deletes log entry by index; indices renumber after deletion
 ]);
 
 // ---- MCP fetch (same 3-step handshake as schema.ts) ----------------------

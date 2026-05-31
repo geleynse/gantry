@@ -584,6 +584,9 @@ export const V2_TO_V1_PARAM_MAP: Record<string, Record<string, string>> = {
   // empire_id → empire_id, message → message (may be a no-op remap; included for future-proofing).
   petition: { id: "empire_id", text: "message" },
   faction_upgrade: { id: "facility_id", text: "facility_type" },
+  // v0.327 Recycling Processor — not yet in live game action enum (verified absent 2026-05-30),
+  // pre-declared so v2 passthrough routes it the moment the game publishes it.
+  configure_recycler: { id: "facility_id", text: "recipe_id" },
   // spacemolt_ship tool
   buy_ship: { id: "ship_class" },
   switch_ship: { id: "ship_id" },
