@@ -27,6 +27,9 @@ export const STATE_CHANGING_TOOLS = new Set([
   "get_insurance_quote", "buy_insurance", "claim_insurance", "reload",
   "trade_offer", "trade_accept", "trade_decline", "trade_cancel",
   "repair_module", "jettison", "distress_signal",
+  // v0.327 Recycling Processor — not yet in live game action enum (verified absent 2026-05-30),
+  // pre-declared so passthrough routes it the moment the game publishes it.
+  "configure_recycler",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -51,8 +54,11 @@ export const MUTATION_COMMANDS = new Set([
   "buy_insurance", "claim_insurance",
   // Inventory
   "deposit_items", "withdraw_items", "jettison",
-  // Building
+  // Building / Facility
   "faction_build", "faction_upgrade", "personal_build",
+  // v0.327 Recycling Processor — not yet in live game action enum (verified absent 2026-05-30),
+  // pre-declared so passthrough routes it the moment the game publishes it.
+  "configure_recycler",
 ]);
 
 // ---------------------------------------------------------------------------
