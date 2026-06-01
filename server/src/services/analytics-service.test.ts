@@ -75,13 +75,13 @@ output
 
   it('counts quota hits correctly', async () => {
     const logContent = `[2026-02-14T10:00:00.000Z] [turn 1] Starting turn
-rate limit error
+Error detected (rate_limit): backing off
 [2026-02-14T10:01:30.000Z] [turn 2] Starting turn
-CLI rate limit hit
+You've hit the rate limit for this period
 [2026-02-14T10:03:00.000Z] [turn 3] Starting turn
 Server overload detected
 [2026-02-14T10:04:30.000Z] [turn 4] Starting turn
-backing off`;
+Error detected (rate_limit): retrying`;
     readFullLogSpy.mockResolvedValue(logContent);
 
     const result = await getAnalytics('drifter-gale');
@@ -92,7 +92,7 @@ backing off`;
     const logContent = `[2026-02-14T10:00:00.000Z] [turn 1] Starting turn
 normal output
 [2026-02-14T10:01:30.000Z] [turn 2] Starting turn
-rate limit error
+Error detected (rate_limit): backing off
 [2026-02-14T10:03:00.000Z] [turn 3] Starting turn
 normal output
 [2026-02-14T10:04:30.000Z] [turn 4] Starting turn
@@ -143,6 +143,53 @@ output
     const result = await getAnalytics('drifter-gale');
     expect(result.uptimeFormatted).toBeUndefined();
     expect(result.turnsPerHour).toBeUndefined();
+  });
+
+  it('counts bare [turn N] lines without "Starting turn" (real runner format)', async () => {
+    // The live runner emits "[turn N]" with no "Starting turn" suffix.
+    // The old parser only matched "Starting turn"/"Starting [" → reported 0.
+    const logContent = `[2026-06-01T18:00:00.000Z] [turn 1]
+in transit. checking logs.
+[2026-06-01T18:01:30.000Z] [turn 2]
+docking at main_belt.
+[2026-06-01T18:03:00.000Z] [turn 3]
+checking market.`;
+    readFullLogSpy.mockResolvedValue(logContent);
+
+    const result = await getAnalytics('drifter-gale');
+    expect(result.totalTurns).toBe(3);
+  });
+
+  it('does not count agent narrative mentioning "rate limit" as a quota hit', async () => {
+    // The overseer's job is to narrate about other agents' quota/rate-limit
+    // state. The naive pattern matched that narrative and inflated the count.
+    const logContent = `[2026-06-01T18:00:00.000Z] [turn 1]
+cinder-wake is backing off after a rate limit, will retry
+[2026-06-01T18:01:30.000Z] [turn 2]
+no rate limit issues observed this turn`;
+    readFullLogSpy.mockResolvedValue(logContent);
+
+    const result = await getAnalytics('drifter-gale');
+    expect(result.quotaHits).toBe(0);
+    expect(result.totalTurns).toBe(2);
+    expect(result.successRate).toBe(100);
+  });
+
+  it('counts real runner rate-limit errors as quota hits', async () => {
+    const logContent = `[2026-06-01T18:00:00.000Z] [turn 1]
+Error detected (rate_limit): backing off 8s
+[2026-06-01T18:01:30.000Z] [turn 2]
+You've hit your usage limit for this period
+[2026-06-01T18:03:00.000Z] [turn 3]
+Server overload, retrying
+[2026-06-01T18:04:30.000Z] [turn 4]
+normal turn output`;
+    readFullLogSpy.mockResolvedValue(logContent);
+
+    const result = await getAnalytics('drifter-gale');
+    expect(result.totalTurns).toBe(4);
+    expect(result.quotaHits).toBe(3);
+    expect(result.successRate).toBe(25); // (4-3)/4 = 25%
   });
 
   it('includes usage cost in analytics', async () => {

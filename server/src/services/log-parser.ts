@@ -12,6 +12,25 @@ export interface ParsedLog {
   lastGameOutput: string[];
 }
 
+/**
+ * True if a log line marks the start of a turn. Matches all runner formats:
+ *   console log: "[…] [turn 1] Starting turn"
+ *   main .log:   "[…] [turn 1]"            (current live format)
+ *   legacy:      "[…] Starting [claude/…]"
+ * Shared so analytics + status parse identically (drift here caused the
+ * analytics "0 turns" bug — see analytics-service.ts).
+ */
+export function isTurnLine(line: string): boolean {
+  return line.includes('Starting turn') || line.includes('Starting [') || /\[turn \d+\]/.test(line);
+}
+
+/**
+ * Matches ONLY runner-emitted rate-limit/overload errors — never the agents'
+ * own narrative, which often mentions "rate limit" when reporting on fleet
+ * state (the overseer especially). Use this, not a naive /rate limit/ match.
+ */
+export const QUOTA_ERROR_PATTERN = /Error detected \(rate_limit\)|You've hit (your|the)[^.]+limit|Server overload/i;
+
 export async function parseAgentLog(agentName: string, maxLines = 200): Promise<ParsedLog | null> {
   const logPath = join(FLEET_DIR, 'logs', `${agentName}.log`);
 
@@ -29,7 +48,7 @@ export async function parseAgentLog(agentName: string, maxLines = 200): Promise<
   // Matches both formats:
   //   console log: "[2026-03-22T22:02:31Z] [turn 1] Starting turn"
   //   main .log:   "[2026-03-22T22:02:31Z] [turn 1]"
-  const turnLines = lines.filter(l => l.includes('Starting turn') || l.includes('Starting [') || /\[turn \d+\]/.test(l));
+  const turnLines = lines.filter(isTurnLine);
   const turnCount = turnLines.length;
 
   // Last turn timestamp
@@ -52,12 +71,11 @@ export async function parseAgentLog(agentName: string, maxLines = 200): Promise<
   // mentions "rate limit" when reporting on fleet state, which would inflate
   // the counter if matched naively.
   const recentLines = lines.slice(-50);
-  const quotaPattern = /Error detected \(rate_limit\)|You've hit (your|the)[^.]+limit|Server overload/i;
   const authPattern = /Error detected \(auth\)|You're not logged in|invalid API key|unauthorized/i;
   let quotaHits = 0;
   let authHits = 0;
   for (const l of recentLines) {
-    if (quotaPattern.test(l)) quotaHits++;
+    if (QUOTA_ERROR_PATTERN.test(l)) quotaHits++;
     if (authPattern.test(l)) authHits++;
   }
 

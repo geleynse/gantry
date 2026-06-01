@@ -1,6 +1,6 @@
 import type { Analytics } from '../shared/types.js';
 import { AGENTS, getAgentLabel } from '../config.js';
-import { readFullLog } from './log-parser.js';
+import { readFullLog, isTurnLine, QUOTA_ERROR_PATTERN } from './log-parser.js';
 import { getAgentUsageSummary } from './usage-parser.js';
 
 export async function getAnalytics(agentName: string): Promise<Analytics> {
@@ -23,11 +23,10 @@ export async function getAnalytics(agentName: string): Promise<Analytics> {
 
   const lines = log.split('\n');
 
-  const turnLines = lines.filter(l => l.includes('Starting turn') || l.includes('Starting ['));
+  const turnLines = lines.filter(isTurnLine);
   const totalTurns = turnLines.length;
 
-  const quotaPattern = /rate limit|CLI rate limit|Server overload|backing off/i;
-  const quotaHits = lines.filter(l => quotaPattern.test(l)).length;
+  const quotaHits = lines.filter(l => QUOTA_ERROR_PATTERN.test(l)).length;
 
   const successRate = totalTurns > 0
     ? Math.max(0, Math.round(((totalTurns - quotaHits) / totalTurns) * 100))
