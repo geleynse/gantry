@@ -44,3 +44,8 @@ tsconfig.tsbuildinfo
 # Keep example files and docs
 !examples/
 !docs/
+
+# Dev screenshots & tool scratch dirs (not source)
+*.png
+.playwright-mcp/
+.claude/

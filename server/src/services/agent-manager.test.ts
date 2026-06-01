@@ -28,7 +28,7 @@ const testConfig: GantryConfig = {
 import * as proc from './process-manager.js';
 import * as signalsDb from './signals-db.js';
 import { clearCredentialHealthForTesting, recordCredentialAuthFailure } from './credential-health.js';
-import { startAgent, stopAgent, forceStopAgent, softStopAgent, softRestartAgent, startAll } from './agent-manager.js';
+import { startAgent, stopAgent, forceStopAgent, softStopAgent, softRestartAgent, startAll, validateSpawnSpec } from './agent-manager.js';
 
 describe('agent-manager', () => {
   let mockedHasSession: ReturnType<typeof spyOn>;
@@ -308,6 +308,61 @@ describe('agent-manager', () => {
       // Mixed pair → base delay (20ms). Must NOT exceed heavy-pair delay (40ms) by much.
       expect(elapsed).toBeGreaterThanOrEqual(18);
       expect(elapsed).toBeLessThan(40);
+    });
+  });
+
+  describe('validateSpawnSpec', () => {
+    it('accepts valid spec', () => {
+      const spec = {
+        executable: 'gantry-runner',
+        args: ['--agent', 'drifter-gale', '--disallowedTools', 'Bash'],
+        cwd: '/path',
+        env: {
+          HOME: '/home/spacemolt',
+          USER: 'spacemolt',
+        },
+      };
+      expect(() => validateSpawnSpec(spec)).not.toThrow();
+    });
+
+    it('rejects --dangerously-skip-permissions', () => {
+      const spec = {
+        executable: 'gantry-runner',
+        args: ['--agent', 'drifter-gale', '--disallowedTools', 'Bash', '--dangerously-skip-permissions'],
+        cwd: '/path',
+      };
+      expect(() => validateSpawnSpec(spec)).toThrowError(/--dangerously-skip-permissions/);
+    });
+
+    it('rejects forbidden environment variables', () => {
+      const spec1 = {
+        executable: 'gantry-runner',
+        args: ['--agent', 'drifter-gale', '--disallowedTools', 'Bash'],
+        cwd: '/path',
+        env: {
+          ANTHROPIC_API_KEY: 'test-key',
+        },
+      };
+      expect(() => validateSpawnSpec(spec1)).toThrowError(/ANTHROPIC_API_KEY/);
+
+      const spec2 = {
+        executable: 'gantry-runner',
+        args: ['--agent', 'drifter-gale', '--disallowedTools', 'Bash'],
+        cwd: '/path',
+        env: {
+          CLAUDE_CODE_OAUTH_TOKEN: 'test-token',
+        },
+      };
+      expect(() => validateSpawnSpec(spec2)).toThrowError(/CLAUDE_CODE_OAUTH_TOKEN/);
+    });
+
+    it('rejects missing --disallowedTools', () => {
+      const spec = {
+        executable: 'gantry-runner',
+        args: ['--agent', 'drifter-gale'],
+        cwd: '/path',
+      };
+      expect(() => validateSpawnSpec(spec)).toThrowError(/--disallowedTools/);
     });
   });
 });
