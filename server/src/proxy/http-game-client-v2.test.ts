@@ -437,6 +437,19 @@ describe("HttpGameClientV2", () => {
     expect(body.params.arguments.password).toBe("pw");
   });
 
+  it("login does NOT send session_id in the request body (game server rejects it)", async () => {
+    // The game server's login endpoint accepts only username + password.
+    // Sending session_id triggers: "Unknown parameter(s): session_id." which
+    // breaks re-auth fleet-wide on session expiry. Login establishes the
+    // session from the greeting — it must not echo a session_id back.
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    const loginCall = fetchMock.mock.calls[3];
+    const body = JSON.parse((loginCall[1] as RequestInit).body as string);
+    expect(body.params.arguments.action).toBe("login");
+    expect(body.params.arguments.session_id).toBeUndefined();
+  });
+
   // -------------------------------------------------------------------------
   // execute()
   // -------------------------------------------------------------------------
