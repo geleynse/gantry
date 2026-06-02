@@ -76,7 +76,7 @@ const SUMMARIZERS: Record<string, Summarizer> = {
   get_status: (r) => {
     const d = (r && typeof r === "object") ? r as Record<string, unknown> : {};
     const ship = d.ship && typeof d.ship === "object" ? d.ship as Record<string, unknown> : undefined;
-    const summarized = discoverPick("get_status", d, ["username", "credits", "current_system", "current_poi", "docked_at_base", "skills", "stats", "discovered_systems", "status_message", "ship"]);
+    const summarized = discoverPick("get_status", d, ["username", "credits", "current_system", "current_poi", "docked_at_base", "skills", "stats", "discovered_systems", "status_message", "ship", "standings"]);
     if (ship) {
       summarized.ship = {
         ...discoverPick("ship", ship, ["name", "class_id", "hull", "max_hull", "shield", "max_shield", "fuel", "max_fuel", "cargo_used", "cargo_capacity", "stats", "position", "modules"]),

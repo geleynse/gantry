@@ -6,6 +6,8 @@ import {
   FleetGameStateSchema,
   StatusCacheEntrySchema,
   validateStatusCacheEntry,
+  EmpireStandingSchema,
+  StandingsSchema,
 } from './schemas.js';
 
 // ---------------------------------------------------------------------------
@@ -255,5 +257,78 @@ describe('validateStatusCacheEntry', () => {
   it('returns failure for null', () => {
     const result = validateStatusCacheEntry(null);
     expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EmpireStandingSchema / StandingsSchema (v0.280+ shape)
+// ---------------------------------------------------------------------------
+
+describe('EmpireStandingSchema', () => {
+  it('accepts the v0.280 reputation/baseline/bounty shape', () => {
+    const result = EmpireStandingSchema.safeParse({ reputation: 20, baseline: 20, bounty: 0 });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts negative reputation (pirates default is -30)', () => {
+    const result = EmpireStandingSchema.safeParse({ reputation: -30, baseline: -30, bounty: 0 });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts all fields optional (empty object)', () => {
+    const result = EmpireStandingSchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts bounty > 0', () => {
+    const result = EmpireStandingSchema.safeParse({ reputation: -25, baseline: -20, bounty: 5000 });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('StandingsSchema', () => {
+  it('accepts a map of empire → standing', () => {
+    const standings = {
+      solarian: { reputation: 20, baseline: 20, bounty: 0 },
+      pirates: { reputation: -30, baseline: -30, bounty: 0 },
+    };
+    const result = StandingsSchema.safeParse(standings);
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts empty map', () => {
+    const result = StandingsSchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('AgentGameStateSchema with standings', () => {
+  const base = {
+    credits: 50000,
+    current_system: 'sol',
+    current_poi: 'sol_station',
+    docked_at_base: null,
+    ship: null,
+    skills: {},
+  };
+
+  it('accepts game state with v0.280 standings', () => {
+    const result = AgentGameStateSchema.safeParse({
+      ...base,
+      standings: {
+        solarian: { reputation: 20, baseline: 20, bounty: 0 },
+        pirates: { reputation: -30, baseline: -30, bounty: 0 },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.standings?.solarian?.reputation).toBe(20);
+      expect(result.data.standings?.pirates?.reputation).toBe(-30);
+    }
+  });
+
+  it('accepts game state without standings (standings is optional)', () => {
+    const result = AgentGameStateSchema.safeParse(base);
+    expect(result.success).toBe(true);
   });
 });

@@ -7,41 +7,24 @@ import type { Standings, EmpireStanding } from "@/hooks/use-game-state";
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Reputation dimensions to display (in order). */
-const REP_DIMS: Array<keyof EmpireStanding> = [
-  "Fame",
-  "Criminal",
-  "CriminalEncounters",
-  "Love",
-  "Hate",
-  "Fear",
-  "Need",
-];
-
-function hasAnyNonZero(standing: EmpireStanding): boolean {
-  return REP_DIMS.some((dim) => {
-    const v = standing[dim];
-    return typeof v === "number" && v !== 0;
-  });
+/** True when any standing field has a notable (non-zero) value to display. */
+function hasNotableStanding(standing: EmpireStanding): boolean {
+  return (
+    (typeof standing.reputation === "number" && standing.reputation !== 0) ||
+    (typeof standing.bounty === "number" && standing.bounty !== 0)
+  );
 }
 
-/** Colour class for a single standing value. */
-function standingClass(dim: keyof EmpireStanding, value: number): string {
-  if (dim === "Criminal" && value > 50) return "text-red-400 font-semibold";
-  if (dim === "CriminalEncounters" && value > 50) return "text-red-400/80";
-  if (dim === "Love" && value > 50) return "text-green-400 font-semibold";
-  if (dim === "Fame" && value > 50) return "text-emerald-400";
-  if (dim === "Hate" && value > 50) return "text-orange-400";
-  if (dim === "Fear" && value > 50) return "text-yellow-400";
+/**
+ * Colour class for the reputation value.
+ * Police attack on sight at reputation ≤ −20 (v0.280 mechanic).
+ * Bounty > 0 means docking triggers 24 h detention if unpaid.
+ */
+function reputationClass(reputation: number): string {
+  if (reputation <= -20) return "text-red-400 font-semibold";
+  if (reputation < 0) return "text-orange-400";
+  if (reputation >= 25) return "text-green-400";
   return "text-foreground/80";
-}
-
-/** Compact label — shorten verbose dim names for pill display. */
-function shortDimLabel(dim: keyof EmpireStanding): string {
-  const labels: Partial<Record<keyof EmpireStanding, string>> = {
-    CriminalEncounters: "Enc",
-  };
-  return labels[dim] ?? String(dim);
 }
 
 // ---------------------------------------------------------------------------
@@ -52,32 +35,23 @@ interface StandingsPanelProps {
   standings?: Standings | null;
 }
 
-export function StandingsPanel({ standings }: StandingsPanelProps) {
-  if (!standings || typeof standings !== "object") {
-    return (
-      <div className="border-t border-border pt-2 mt-2">
-        <div className="text-[10px] uppercase tracking-widest text-muted-foreground/70 mb-1">
-          Standings
-        </div>
-        <div className="text-[9px] text-muted-foreground/50 italic">—</div>
-      </div>
-    );
-  }
+const EMPTY_PANEL = (
+  <div className="border-t border-border pt-2 mt-2">
+    <div className="text-[10px] uppercase tracking-widest text-muted-foreground/70 mb-1">
+      Standings
+    </div>
+    <div className="text-[9px] text-muted-foreground/50 italic">—</div>
+  </div>
+);
 
-  const entries = Object.entries(standings).filter(([_, standing]) =>
-    standing && typeof standing === "object" && hasAnyNonZero(standing)
+export function StandingsPanel({ standings }: StandingsPanelProps) {
+  if (!standings || typeof standings !== "object") return EMPTY_PANEL;
+
+  const entries = Object.entries(standings).filter(
+    ([_, s]) => s && typeof s === "object" && hasNotableStanding(s)
   );
 
-  if (entries.length === 0) {
-    return (
-      <div className="border-t border-border pt-2 mt-2">
-        <div className="text-[10px] uppercase tracking-widest text-muted-foreground/70 mb-1">
-          Standings
-        </div>
-        <div className="text-[9px] text-muted-foreground/50 italic">—</div>
-      </div>
-    );
-  }
+  if (entries.length === 0) return EMPTY_PANEL;
 
   return (
     <div className="border-t border-border pt-2 mt-2">
@@ -86,11 +60,8 @@ export function StandingsPanel({ standings }: StandingsPanelProps) {
       </div>
       <div className="space-y-0.5">
         {entries.map(([empire, standing]) => {
-          const activeDims = REP_DIMS.filter(
-            (dim) => typeof standing[dim] === "number" && standing[dim] !== 0
-          );
-
-          // Pirates row gets its own simple display
+          const rep = standing.reputation ?? 0;
+          const bounty = standing.bounty ?? 0;
           const isPirates = empire.toLowerCase() === "pirates";
 
           return (
@@ -105,25 +76,19 @@ export function StandingsPanel({ standings }: StandingsPanelProps) {
                 {empire}:
               </span>
               <div className="flex flex-wrap gap-x-1.5 gap-y-0.5">
-                {isPirates ? (
-                  <span className="text-red-400/80">
-                    {typeof (standing as Record<string, unknown>).standing === "number"
-                      ? String((standing as Record<string, unknown>).standing)
-                      : activeDims.map((dim) => `${shortDimLabel(dim)} ${standing[dim]}`).join(" / ")}
+                <span
+                  className={cn("whitespace-nowrap", reputationClass(rep))}
+                  title={`reputation: ${rep}`}
+                >
+                  rep&nbsp;{rep}
+                </span>
+                {bounty > 0 && (
+                  <span
+                    className="whitespace-nowrap text-red-400/80"
+                    title={`bounty: ${bounty.toLocaleString()}cr`}
+                  >
+                    bounty&nbsp;{bounty.toLocaleString()}cr
                   </span>
-                ) : (
-                  activeDims.map((dim) => {
-                    const v = standing[dim] as number;
-                    return (
-                      <span
-                        key={dim}
-                        className={cn("whitespace-nowrap", standingClass(dim, v))}
-                        title={`${dim}: ${v}`}
-                      >
-                        {shortDimLabel(dim)}&nbsp;{v}
-                      </span>
-                    );
-                  })
                 )}
               </div>
             </div>
