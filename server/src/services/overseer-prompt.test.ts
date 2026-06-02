@@ -376,4 +376,107 @@ describe("buildUserPrompt", () => {
     expect(prompt).toContain("LOW FUEL");
     expect(prompt).not.toContain("PERMA-STRANDED");
   });
+
+  // --- Transient-miss / OFFLINE false-positive guard ---
+
+  it("suppresses OFFLINE triage for agent with isOnline=false but statusCacheAgeMs < 10min (transient miss)", () => {
+    // hollow-pyre race: agent finished a turn, status cache is 6min stale (>5min threshold but <10min)
+    // — should NOT appear in triage as OFFLINE
+    const snapshot = makeSnapshot({
+      agents: [
+        {
+          name: "hollow-pyre",
+          role: "Scout",
+          credits: 8000,
+          system: "voidborn",
+          poi: "voidborn_station",
+          cargoUsed: 5,
+          cargoMax: 50,
+          fuel: 70,
+          fuelMax: 100,
+          isOnline: false,
+          statusCacheAgeMs: 6 * 60 * 1000, // 6 min — stale but not confirmed offline
+          isInCombat: false,
+        },
+      ],
+    });
+    const prompt = buildUserPrompt(snapshot, []);
+    expect(prompt).not.toContain("OFFLINE");
+    expect(prompt).not.toContain("start_agent");
+    expect(prompt).not.toContain("PERMA-STRANDED");
+  });
+
+  it("shows OFFLINE triage for agent with isOnline=false and statusCacheAgeMs > 10min (confirmed offline)", () => {
+    // Agent has been missing for 15 minutes — well past the confirmation window
+    const snapshot = makeSnapshot({
+      agents: [
+        {
+          name: "hollow-pyre",
+          role: "Scout",
+          credits: 8000,
+          system: "voidborn",
+          poi: "voidborn_station",
+          cargoUsed: 5,
+          cargoMax: 50,
+          fuel: 70,
+          fuelMax: 100,
+          isOnline: false,
+          statusCacheAgeMs: 15 * 60 * 1000, // 15 min — confirmed offline
+          isInCombat: false,
+        },
+      ],
+    });
+    const prompt = buildUserPrompt(snapshot, []);
+    expect(prompt).toContain("OFFLINE → call start_agent");
+    expect(prompt).not.toContain("PERMA-STRANDED");
+  });
+
+  it("shows OFFLINE triage for agent with isOnline=false and no statusCacheAgeMs (never seen)", () => {
+    // Agent has never had a status entry — must be classified as OFFLINE
+    const snapshot = makeSnapshot({
+      agents: [
+        {
+          name: "new-recruit",
+          role: "Trader",
+          credits: undefined,
+          system: undefined,
+          poi: undefined,
+          cargoUsed: undefined,
+          cargoMax: undefined,
+          fuel: undefined,
+          fuelMax: undefined,
+          isOnline: false,
+          statusCacheAgeMs: undefined,
+          isInCombat: false,
+        },
+      ],
+    });
+    const prompt = buildUserPrompt(snapshot, []);
+    expect(prompt).toContain("OFFLINE → call start_agent");
+  });
+
+  it("PERMA-STRANDED still fires for confirmed-offline agent with 0 fuel (statusCacheAgeMs > 10min)", () => {
+    const snapshot = makeSnapshot({
+      agents: [
+        {
+          name: "stranded-confirmed",
+          role: "Combat",
+          credits: 50000,
+          system: "the_rampart",
+          poi: "the_sentinel",
+          cargoUsed: 0,
+          cargoMax: 110,
+          fuel: 0,
+          fuelMax: 90,
+          isOnline: false,
+          statusCacheAgeMs: 20 * 60 * 1000, // 20 min — confirmed offline
+          isInCombat: false,
+        },
+      ],
+    });
+    const prompt = buildUserPrompt(snapshot, []);
+    expect(prompt).toContain("PERMA-STRANDED");
+    expect(prompt).toContain("DO NOT call start_agent");
+    expect(prompt).not.toContain("OFFLINE → call start_agent");
+  });
 });

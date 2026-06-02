@@ -25,6 +25,8 @@ export interface AgentSnapshot {
   fuel?: number;
   fuelMax?: number;
   isOnline: boolean;
+  /** Age of the last status cache entry in ms. Undefined if agent has never been seen. */
+  statusCacheAgeMs?: number;
   isInCombat?: boolean;
   lastToolCallAge?: number; // seconds since last tool call
   currentRole?: CoordinatorRole; // from previous coordinator assignment

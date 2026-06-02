@@ -601,6 +601,68 @@ describe("createApiDriftMonitor", () => {
     expect(baseline).not.toBeNull();
     expect(baseline!.tools.map((t) => t.name)).toContain("mine");
   });
+
+  // ---- version-change → schema-refresh regression (v0.323.0 info.x-gameserver-version) ----
+  //
+  // When the game server bumps its version (e.g. v0.322 → v0.323.0 which added
+  // info.x-gameserver-version to the OpenAPI spec), mcp-factory calls invalidateSchemaCache()
+  // and then apiDriftMonitor.forceCheck(). These tests verify the monitor's side of that
+  // contract: forceCheck() bypasses dedup, stamps the baseline with the new version, and
+  // fires an alert even when the dedup window is active.
+
+  it("version change: forceCheck() runs cleanly when tools unchanged despite version bump", async () => {
+    // Baseline was captured at v0.322
+    const baselineTools = [makeTool("mine"), makeTool("travel")];
+    writeDriftBaseline(tmpDir, buildBaseline(baselineTools, "v0.322"));
+
+    // Server is now at v0.323.0 but tool list is the same
+    mockFetchSuccess(baselineTools);
+    const monitor = createApiDriftMonitor(makeDeps({ getGameVersion: () => "v0.323.0" }));
+
+    // forceCheck runs — no tool drift, so no alert
+    await monitor.forceCheck();
+    expect(mockCreateAlert).not.toHaveBeenCalled();
+  });
+
+  it("version change: forceCheck() fires alert (bypasses dedup) when tools also change on version bump", async () => {
+    // Baseline at v0.322 with 2 tools; server at v0.323.0 has added a new tool
+    const baselineTools = [makeTool("mine"), makeTool("travel")];
+    const serverToolsAfterPatch = [makeTool("mine"), makeTool("travel"), makeTool("deploy_recycler")];
+
+    writeDriftBaseline(tmpDir, buildBaseline(baselineTools, "v0.322"));
+
+    // Simulate dedup window being active (alert was already filed in the previous tick)
+    mockHasRecentAlert.mockReturnValue(true);
+
+    mockFetchSuccess(serverToolsAfterPatch);
+    const monitor = createApiDriftMonitor(makeDeps({ getGameVersion: () => "v0.323.0" }));
+
+    // forceCheck bypasses dedup — alert must fire even though hasRecentAlert returns true
+    await monitor.forceCheck();
+
+    expect(mockCreateAlert).toHaveBeenCalledTimes(1);
+    const [, , , message] = mockCreateAlert.mock.calls[0] as [string, string, string, string];
+    expect(message).toContain("v0.323.0");
+    expect(message).toContain("deploy_recycler");
+  });
+
+  it("version change: acceptBaseline() after forceCheck() stores baseline stamped with new version", async () => {
+    const tools = [makeTool("mine"), makeTool("travel")];
+    writeDriftBaseline(tmpDir, buildBaseline(tools, "v0.322"));
+
+    mockFetchSuccess(tools);
+    const monitor = createApiDriftMonitor(makeDeps({ getGameVersion: () => "v0.323.0" }));
+
+    // forceCheck captures pendingServerTools even with no tool drift
+    await monitor.forceCheck();
+
+    // acceptBaseline should write with the new version
+    monitor.acceptBaseline();
+
+    const stored = readDriftBaseline(tmpDir);
+    expect(stored).not.toBeNull();
+    expect(stored!.version).toBe("v0.323.0");
+  });
 });
 
 // ---------------------------------------------------------------------------
