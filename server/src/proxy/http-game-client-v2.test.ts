@@ -7,7 +7,7 @@
 //   3. login() falls back to mcpSessionId when greeting has no Session ID line
 //   4. execute() injects session_id for spacemolt/spacemolt_battle but not spacemolt_catalog
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
-import { HttpGameClientV2, parseGetStatusText, SessionCreateSpacing } from "./http-game-client-v2.js";
+import { HttpGameClientV2, parseGetStatusText, SessionCreateSpacing, noteSessionRateLimited, sessionCreateWaitMs } from "./http-game-client-v2.js";
 
 let fetchMock: ReturnType<typeof mock>;
 let fetchResponses: Array<{ status: number; body: string; headers?: Record<string, string> }>;
@@ -356,6 +356,10 @@ describe("HttpGameClientV2", () => {
     // Disable cross-instance spacing during fast unit tests so they don't sleep.
     // Specific spacing tests re-enable it explicitly.
     SessionCreateSpacing.enabled = false;
+    // Clear any IP-block window a prior test may have recorded, so it can't leak
+    // into spacing/timing assertions in later tests.
+    SessionCreateSpacing.blockedUntilMs = 0;
+    SessionCreateSpacing.lastCreateAtMs = 0;
     fetchMock = mock(async (_url: string | URL | Request, _opts?: RequestInit) => {
       const resp = fetchResponses.shift();
       if (!resp) throw new Error("No mock response queued");
@@ -665,6 +669,61 @@ describe("HttpGameClientV2", () => {
     expect(resp.error).toBeUndefined();
     // 1 rate-limited session call + 1 successful session call + initialize + initialized + login tool = 5
     expect(fetchMock.mock.calls.length).toBe(5);
+  });
+
+  it("noteSessionRateLimited sets a process-wide block window (retry_after + 1s), monotonic", () => {
+    SessionCreateSpacing.blockedUntilMs = 0;
+    noteSessionRateLimited(10, 1_000);
+    expect(SessionCreateSpacing.blockedUntilMs).toBe(1_000 + 11_000); // now + (10+1)s
+    // A shorter later block must NOT shrink the existing window.
+    noteSessionRateLimited(2, 1_000);
+    expect(SessionCreateSpacing.blockedUntilMs).toBe(12_000);
+    // A longer later block extends it.
+    noteSessionRateLimited(30, 1_000);
+    expect(SessionCreateSpacing.blockedUntilMs).toBe(1_000 + 31_000);
+    // Missing retry_after falls back to a non-zero default block.
+    SessionCreateSpacing.blockedUntilMs = 0;
+    noteSessionRateLimited(undefined, 0);
+    expect(SessionCreateSpacing.blockedUntilMs).toBeGreaterThan(0);
+  });
+
+  it("sessionCreateWaitMs waits out an active IP block, overriding spacing", () => {
+    const saved = { min: SessionCreateSpacing.minSpacingMs, last: SessionCreateSpacing.lastCreateAtMs, blocked: SessionCreateSpacing.blockedUntilMs };
+    try {
+      SessionCreateSpacing.minSpacingMs = 50;
+      SessionCreateSpacing.lastCreateAtMs = 0;
+      // Active block until t=10_000: at t=1_000 we must wait ~9_000ms despite tiny spacing.
+      SessionCreateSpacing.blockedUntilMs = 10_000;
+      expect(sessionCreateWaitMs(1_000, 0)).toBe(9_000);
+      // Block clear → only inter-create spacing applies.
+      SessionCreateSpacing.blockedUntilMs = 0;
+      SessionCreateSpacing.lastCreateAtMs = 1_000;
+      expect(sessionCreateWaitMs(1_010, 0)).toBe(40); // 1000+50 - 1010
+      // Both clear → no wait.
+      expect(sessionCreateWaitMs(2_000, 0)).toBe(0);
+    } finally {
+      SessionCreateSpacing.minSpacingMs = saved.min;
+      SessionCreateSpacing.lastCreateAtMs = saved.last;
+      SessionCreateSpacing.blockedUntilMs = saved.blocked;
+    }
+  });
+
+  it("mcpInitialize records a process-wide IP block when /api/v1/session is rate_limited", async () => {
+    // The core fix for the self-sustaining block: a rate_limited session response
+    // from ANY instance must advance the shared gate so all instances (and our own
+    // retries) stop POSTing /api/v1/session until the window clears. Otherwise the
+    // game re-extends its per-IP block on every request made during the window.
+    SessionCreateSpacing.blockedUntilMs = 0;
+    fetchResponses.push({
+      status: 429,
+      body: JSON.stringify({ error: { code: "rate_limited", retry_after: 30, message: "temporarily blocked due to excessive rate limit violations" } }),
+      headers: { "Content-Type": "application/json" },
+    });
+    pushLoginSequence();
+    const before = Date.now();
+    const resp = await client.login("bot", "pw");
+    expect(resp.error).toBeUndefined();
+    expect(SessionCreateSpacing.blockedUntilMs).toBeGreaterThanOrEqual(before + 30_000);
   });
 
   it("mcpInitialize gives up and throws after MAX rate-limited retries", async () => {

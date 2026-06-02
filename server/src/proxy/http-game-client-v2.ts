@@ -122,6 +122,20 @@ export type McpPreset = "standard" | "full";
  */
 export const SessionCreateSpacing = {
   lastCreateAtMs: 0,
+  /**
+   * Process-wide IP-block gate. When the game returns a rate_limited /
+   * "temporarily blocked" response on /api/v1/session, this is set to the wall
+   * time the block is expected to clear. NO instance POSTs /api/v1/session until
+   * now >= blockedUntilMs.
+   *
+   * Why this exists: the game's per-IP block is a SECONDARY "excessive rate
+   * limit violations" penalty that is RE-EXTENDED by every request made during
+   * the window. With all agents sharing one outbound IP, even spaced retries
+   * form a steady drip that keeps the block alive indefinitely (a self-
+   * sustaining wedge). Gating every instance to zero POSTs during the window is
+   * what lets the block actually expire and the fleet recover.
+   */
+  blockedUntilMs: 0,
   /** Hard minimum spacing between sessions to stay under game-server burst limit. */
   minSpacingMs: 600,
   /** Extra randomized fuzz added to spacing (0..jitterMs). */
@@ -130,27 +144,56 @@ export const SessionCreateSpacing = {
   enabled: true,
 };
 
+/** Default block (seconds) when the game omits retry_after on a rate_limited
+ * session response. Conservative — better to over-wait than re-trip the block. */
+const SESSION_BLOCK_DEFAULT_SEC = 5;
+
+/**
+ * Record a rate_limited / temporarily-blocked /api/v1/session response so EVERY
+ * instance in this process (and this instance's own retries) backs off until the
+ * block clears. Monotonic: never shortens an already-recorded window — a later,
+ * shorter retry_after must not let us start POSTing again early. `retry_after`
+ * is in seconds; we add a 1s safety margin.
+ */
+export function noteSessionRateLimited(retryAfterSec?: number, nowMs: number = Date.now()): void {
+  const sec = retryAfterSec != null && retryAfterSec >= 0 ? retryAfterSec : SESSION_BLOCK_DEFAULT_SEC;
+  const until = nowMs + (sec + 1) * 1000;
+  if (until > SessionCreateSpacing.blockedUntilMs) {
+    SessionCreateSpacing.blockedUntilMs = until;
+  }
+}
+
+/**
+ * Pure: how many ms a caller must wait before POSTing /api/v1/session, taking
+ * the larger of (a) the process-wide IP-block window and (b) the inter-create
+ * spacing window. The caller supplies the random fuzz (0..jitterMs) so this
+ * stays deterministic and unit-testable.
+ */
+export function sessionCreateWaitMs(nowMs: number, randomFuzzMs: number): number {
+  const blockWait = SessionCreateSpacing.blockedUntilMs - nowMs;
+  const spacingEarliest =
+    SessionCreateSpacing.lastCreateAtMs + SessionCreateSpacing.minSpacingMs + randomFuzzMs;
+  const spacingWait = spacingEarliest - nowMs;
+  return Math.max(0, blockWait, spacingWait);
+}
+
 /**
  * Wait until the global session-create slot is available, then claim it.
  *
- * Called once at the top of mcpInitialize. If another instance just created
- * a session, this awaits the remaining spacing window plus a small random
- * jitter. The randomization is what prevents N concurrent callers from all
- * unblocking at the same instant.
+ * Called once at the top of every mcpInitialize attempt (including rate-limit
+ * retries). Honors both the IP-block gate and inter-create spacing, plus a small
+ * random jitter so N concurrent callers don't unblock at the same instant.
  *
  * The slot is claimed eagerly (lastCreateAtMs is set before the network call)
- * so concurrent callers serialize correctly. If the actual call ends up
- * failing or being retried, the spacing still applies.
+ * so concurrent callers serialize correctly. If the actual call ends up failing
+ * or being retried, the spacing still applies.
  */
 async function awaitSessionCreateSlot(): Promise<void> {
   if (!SessionCreateSpacing.enabled) return;
-  const now = Date.now();
-  const required =
-    SessionCreateSpacing.minSpacingMs +
-    Math.random() * SessionCreateSpacing.jitterMs;
-  const earliest = SessionCreateSpacing.lastCreateAtMs + required;
-  if (now < earliest) {
-    await new Promise<void>(resolve => setTimeout(resolve, earliest - now));
+  const fuzz = Math.random() * SessionCreateSpacing.jitterMs;
+  const waitMs = sessionCreateWaitMs(Date.now(), fuzz);
+  if (waitMs > 0) {
+    await new Promise<void>(resolve => setTimeout(resolve, waitMs));
   }
   SessionCreateSpacing.lastCreateAtMs = Date.now();
 }
@@ -291,20 +334,25 @@ export class HttpGameClientV2 implements GameTransport {
         throw new Error(`Session creation failed: response not JSON: ${sessionResp.body.slice(0, 100)}`);
       }
 
-      // Honor an explicit rate_limited response: wait the retry_after window,
-      // then loop to claim a fresh slot.
+      // Honor an explicit rate_limited response. Record the block PROCESS-WIDE so
+      // that every instance (and our own retry below) parks until it clears —
+      // POSTing during the window re-extends the game's per-IP block, so spaced
+      // retries would otherwise keep it alive forever. awaitSessionCreateSlot()
+      // at the top of the loop does the actual waiting against blockedUntilMs.
       const err = sessionData.error;
-      if (err?.code === "rate_limited" && attempt < MAX_RATE_LIMIT_RETRIES) {
-        const waitMs = ((err.retry_after ?? 5) + 1) * 1000;
-        log.warn("Session creation: rate-limited, backing off", {
-          agent: this.label,
-          retry_after: err.retry_after,
-          attempt: attempt + 1,
-          maxAttempts: MAX_RATE_LIMIT_RETRIES,
-        });
-        await new Promise<void>(resolve => setTimeout(resolve, waitMs));
-        attempt++;
-        continue;
+      if (err?.code === "rate_limited") {
+        noteSessionRateLimited(err.retry_after);
+        if (attempt < MAX_RATE_LIMIT_RETRIES) {
+          log.warn("Session creation: rate-limited, backing off (process-wide gate)", {
+            agent: this.label,
+            retry_after: err.retry_after,
+            attempt: attempt + 1,
+            maxAttempts: MAX_RATE_LIMIT_RETRIES,
+            blockedForMs: Math.max(0, SessionCreateSpacing.blockedUntilMs - Date.now()),
+          });
+          attempt++;
+          continue;
+        }
       }
       break;
     }
