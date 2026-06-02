@@ -392,6 +392,31 @@ export const TOOL_SCHEMAS: Record<string, { description: string; schema: z.ZodTy
       recipe_id: z.string().describe("Recipe ID to run in reverse (e.g. 'refine_steel'). v0.327.1+ blocks irreversible recipes."),
     }),
   },
+
+  // ---------------------------------------------------------------------------
+  // Rescue actions — ship-to-ship fuel rescue workflow (fix/proxy-rescue-actions)
+  // ---------------------------------------------------------------------------
+
+  // jettison: dump cargo items overboard, creating a wreck that other ships can loot.
+  // Rescue workflow: jettison fuel cells → stranded ship loots the wreck → refuels.
+  // item_id is the cargo item to jettison; qty controls how many units.
+  jettison: {
+    description: "Jettison (eject) a cargo item overboard, creating a lootable wreck at your location. Use this to rescue a stranded fleet member: jettison fuel cells, then have them loot_wreck to recover the fuel.",
+    schema: z.object({
+      item_id: z.string().describe("Item ID to jettison from cargo (e.g. 'fuel_cell')."),
+      qty: z.number().int().min(1).optional().describe("Quantity to jettison (default: 1)."),
+    }),
+  },
+
+  // refuel: station refuel (no params) OR cargo-cell refuel (item_id=fuel_cell).
+  // Moved from NO_PARAM_DESCRIPTIONS to TOOL_SCHEMAS to expose the optional item_id param.
+  // TODO(unverified): confirm game accepts refuel item_id=fuel_cell on a live call
+  refuel: {
+    description: "Refuel at a station (must be docked, no params), or refuel from a cargo item like fuel_cell by passing item_id. Station refuel costs credits; cargo-cell refuel consumes the item.",
+    schema: z.object({
+      item_id: z.string().optional().describe("Item ID to consume as fuel (e.g. 'fuel_cell'). Omit for station refuel."),
+    }),
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -403,7 +428,6 @@ export const NO_PARAM_DESCRIPTIONS: Record<string, string> = {
   mine: "Mine ore at current location. Use batch_mine() instead for efficiency.",
   dock: "Dock at current POI. Use travel_to() instead for full sequences.",
   undock: "Undock from current station. Use travel_to() instead for full sequences.",
-  refuel: "Refuel your ship at a station. Must be docked.",
   repair: "Repair your ship at a station. Must be docked.",
   get_cargo: "Get full cargo contents. Expensive — use get_cargo_summary for quick checks.",
   get_missions: "List available missions at current station.",

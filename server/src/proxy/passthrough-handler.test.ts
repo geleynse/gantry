@@ -2098,6 +2098,12 @@ describe("checkRefuelTargetGuard", () => {
     expect(checkRefuelTargetGuard("attack", { target: "pirate_1" })).toBeNull();
     expect(checkRefuelTargetGuard("dock", { target: "station" })).toBeNull();
   });
+
+  it("returns null for refuel with item_id but no target — cargo-cell refuel must NOT be blocked", () => {
+    // fix/proxy-rescue-actions: item_id=fuel_cell is cargo-cell refuel, NOT target= game rescue.
+    // The guard must only block target=, never item_id=.
+    expect(checkRefuelTargetGuard("refuel", { item_id: "fuel_cell" })).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2241,5 +2247,39 @@ describe("executeForClient — v2 path", () => {
       tool: "spacemolt_social",
       args: { action: "captains_log_list" },
     }]);
+  });
+
+  // -------------------------------------------------------------------------
+  // jettison v2 dispatch — rescue-action unblock (fix/proxy-rescue-actions)
+  // -------------------------------------------------------------------------
+
+  it("jettison dispatches to spacemolt(action='jettison') with item_id and qty", async () => {
+    // Agent calls jettison(item_id="fuel_cell", qty=5) → spacemolt(action="jettison", item_id="fuel_cell", qty=5)
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "jettison", { item_id: "fuel_cell", qty: 5 });
+    expect(calls).toEqual([{ tool: "spacemolt", args: { action: "jettison", item_id: "fuel_cell", qty: 5 } }]);
+  });
+
+  it("jettison v2 dispatch drops any agent-supplied action override", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "jettison", { item_id: "iron_ore", qty: 2, action: "self_destruct" });
+    expect(calls[0].args?.action).toBe("jettison");
+  });
+
+  // -------------------------------------------------------------------------
+  // refuel with item_id v2 dispatch — cargo-cell refuel (fix/proxy-rescue-actions)
+  // -------------------------------------------------------------------------
+
+  it("refuel (no args) dispatches to spacemolt(action='refuel') — station refuel", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "refuel");
+    expect(calls).toEqual([{ tool: "spacemolt", args: { action: "refuel" } }]);
+  });
+
+  it("refuel with item_id dispatches to spacemolt(action='refuel', item_id='fuel_cell')", async () => {
+    // TODO(unverified): confirm game accepts refuel item_id=fuel_cell on a live call
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "refuel", { item_id: "fuel_cell" });
+    expect(calls).toEqual([{ tool: "spacemolt", args: { action: "refuel", item_id: "fuel_cell" } }]);
   });
 });

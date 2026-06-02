@@ -31,6 +31,9 @@ const V1_PROXIED_TOOLS = new Set([
   "attack", "battle", "get_battle_status", "get_wrecks", "loot_wreck", "salvage_wreck",
   "sell_wreck", "scrap_wreck", "tow_wreck", "release_tow",
   "cloak",
+  // Rescue action: jettison fuel cells → stranded ship loots wreck → refuels from cargo cells.
+  // Previously skipped as a cargo-dump footgun; operator reversed decision (fix/proxy-rescue-actions).
+  "jettison",
   "sell_ship", "list_ships", "switch_ship", "get_ship",
   "commission_ship", "commission_quote", "claim_commission",
   "commission_status", "cancel_commission", "supply_commission", "browse_ships",
@@ -113,10 +116,9 @@ const INTENTIONALLY_SKIPPED = new Set([
   // Huge response (~188KB) — use catalog instead
   "get_recipes",
 
-  // Self-destruct / jettison — moved to agentDeniedTools (not DENIED_TOOLS),
-  // so the server still exposes them but we don't include them for all agents
+  // self_destruct — moved to agentDeniedTools; server exposes but agents must not use it.
+  // jettison was previously here but is now proxied: see V1_PROXIED_TOOLS above.
   "self_destruct",
-  "jettison",
 
   // Removed from game server (were in our STATIC_GAME_TOOLS; now gone)
   "buy_ship",          // replaced by browse_ships + buy_listed_ship
@@ -373,5 +375,19 @@ describe("schema-drift — static consistency checks", () => {
     // Agents use get_empire_policies (cached, free) instead of raw get_empire_info.
     expect(INTENTIONALLY_SKIPPED.has("get_empire_info")).toBe(true);
     expect(V1_PROXIED_TOOLS.has("get_empire_info")).toBe(false);
+  });
+
+  it("jettison is in V1_PROXIED_TOOLS and NOT in INTENTIONALLY_SKIPPED (rescue-action unblock)", () => {
+    // fix/proxy-rescue-actions: jettison was previously skipped as a cargo-dump footgun.
+    // Operator reversed that decision to enable ship-to-ship fuel rescue workflow.
+    // Regression guard — if someone re-skips jettison this fails loudly.
+    expect(V1_PROXIED_TOOLS.has("jettison")).toBe(true);
+    expect(INTENTIONALLY_SKIPPED.has("jettison")).toBe(false);
+  });
+
+  it("self_destruct remains in INTENTIONALLY_SKIPPED (not unblocked)", () => {
+    // Only jettison was unblocked; self_destruct stays denied.
+    expect(INTENTIONALLY_SKIPPED.has("self_destruct")).toBe(true);
+    expect(V1_PROXIED_TOOLS.has("self_destruct")).toBe(false);
   });
 });

@@ -68,4 +68,56 @@ describe("dispatchV1ToV2", () => {
     expect(r?.args.facility_id).toBe("r1");
     expect(r?.args.recipe_id).toBe("smelt_iron");
   });
+
+  // -------------------------------------------------------------------------
+  // jettison — rescue-action unblock (fix/proxy-rescue-actions)
+  // -------------------------------------------------------------------------
+
+  it("dispatches jettison to spacemolt with action=jettison", () => {
+    // jettison(item_id, qty) → spacemolt(action="jettison", item_id, qty)
+    const r = dispatchV1ToV2("jettison", { item_id: "fuel_cell", qty: 5 });
+    expect(r).not.toBeNull();
+    expect(r?.tool).toBe("spacemolt");
+    expect(r?.args.action).toBe("jettison");
+  });
+
+  it("jettison dispatch forwards item_id and qty params", () => {
+    const r = dispatchV1ToV2("jettison", { item_id: "fuel_cell", qty: 10 });
+    expect(r?.args.item_id).toBe("fuel_cell");
+    expect(r?.args.qty).toBe(10);
+  });
+
+  it("jettison dispatch strips any agent-supplied action override", () => {
+    const r = dispatchV1ToV2("jettison", { item_id: "iron_ore", qty: 2, action: "something_else" });
+    expect(r?.args.action).toBe("jettison");
+  });
+
+  // -------------------------------------------------------------------------
+  // refuel with item_id — cargo-cell refuel path (fix/proxy-rescue-actions)
+  // -------------------------------------------------------------------------
+
+  it("dispatches refuel (no args) to spacemolt with action=refuel", () => {
+    // Station refuel — no item_id
+    const r = dispatchV1ToV2("refuel");
+    expect(r).not.toBeNull();
+    expect(r?.tool).toBe("spacemolt");
+    expect(r?.args.action).toBe("refuel");
+  });
+
+  it("dispatches refuel with item_id to spacemolt, forwarding item_id", () => {
+    // Cargo-cell refuel — item_id=fuel_cell
+    // TODO(unverified): confirm game accepts refuel item_id=fuel_cell on a live call
+    const r = dispatchV1ToV2("refuel", { item_id: "fuel_cell" });
+    expect(r).not.toBeNull();
+    expect(r?.tool).toBe("spacemolt");
+    expect(r?.args.action).toBe("refuel");
+    expect(r?.args.item_id).toBe("fuel_cell");
+  });
+
+  it("refuel dispatch does NOT add target= to outgoing args", () => {
+    // Ensure the target= guard pattern at the passthrough layer is the only blocker;
+    // dispatch itself must never inject a target param.
+    const r = dispatchV1ToV2("refuel", { item_id: "fuel_cell" });
+    expect(r?.args.target).toBeUndefined();
+  });
 });

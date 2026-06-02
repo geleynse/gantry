@@ -78,6 +78,9 @@ export const STATIC_GAME_TOOLS = [
   "view_market", "view_storage", "estimate_purchase",
   "scan", "survey_system", "search_systems", "get_nearby", "get_map", "get_poi", "find_route",
   "attack", "battle", "get_battle_status", "get_wrecks", "loot_wreck", "salvage_wreck", "sell_wreck", "scrap_wreck", "tow_wreck", "release_tow",
+  // Rescue action: jettison(item_id, qty) to create a wreck; stranded ship loots it to refuel.
+  // Previously blocked as a cargo-dump footgun; operator reversed decision (fix/proxy-rescue-actions).
+  "jettison",
   "cloak",
   "buy_ship", "sell_ship", "list_ships", "switch_ship", "get_ship",
   "shipyard_showroom", "commission_ship", "commission_quote", "claim_commission", "commission_status", "cancel_commission", "supply_commission", "browse_ships", "buy_listed_ship", "list_ship_for_sale", "cancel_ship_listing",

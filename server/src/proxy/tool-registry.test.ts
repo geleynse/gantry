@@ -188,6 +188,67 @@ describe("tool-registry", () => {
       const missing = schema.safeParse({});
       expect(missing.success).toBe(false);
     });
+
+    // -----------------------------------------------------------------------
+    // jettison schema — rescue-action unblock (fix/proxy-rescue-actions)
+    // -----------------------------------------------------------------------
+
+    it("jettison is in TOOL_SCHEMAS with item_id and qty params", () => {
+      const entry = TOOL_SCHEMAS.jettison;
+      expect(entry).toBeDefined();
+      expect(entry.description).toMatch(/jettison/i);
+    });
+
+    it("jettison schema requires item_id", () => {
+      const entry = TOOL_SCHEMAS.jettison;
+      const schema = entry.schema;
+      // Valid: item_id present
+      const valid = schema.safeParse({ item_id: "fuel_cell", qty: 5 });
+      expect(valid.success).toBe(true);
+      // Invalid: missing item_id
+      const missing = schema.safeParse({ qty: 5 });
+      expect(missing.success).toBe(false);
+    });
+
+    it("jettison schema accepts qty as optional", () => {
+      const entry = TOOL_SCHEMAS.jettison;
+      const schema = entry.schema;
+      // qty is optional — jettison with just item_id should be valid
+      const noQty = schema.safeParse({ item_id: "iron_ore" });
+      expect(noQty.success).toBe(true);
+    });
+
+    it("jettison is NOT in NO_PARAM_DESCRIPTIONS (has params)", () => {
+      expect(NO_PARAM_DESCRIPTIONS.jettison).toBeUndefined();
+    });
+
+    // -----------------------------------------------------------------------
+    // refuel with item_id — cargo-cell refuel path (fix/proxy-rescue-actions)
+    // -----------------------------------------------------------------------
+
+    it("refuel is in TOOL_SCHEMAS (moved from NO_PARAM_DESCRIPTIONS)", () => {
+      expect(TOOL_SCHEMAS.refuel).toBeDefined();
+      expect(TOOL_SCHEMAS.refuel.description).toMatch(/refuel/i);
+    });
+
+    it("refuel schema accepts no params (station refuel)", () => {
+      const entry = TOOL_SCHEMAS.refuel;
+      const schema = entry.schema;
+      const noParams = schema.safeParse({});
+      expect(noParams.success).toBe(true);
+    });
+
+    it("refuel schema accepts item_id (cargo-cell refuel)", () => {
+      // TODO(unverified): confirm game accepts refuel item_id=fuel_cell on a live call
+      const entry = TOOL_SCHEMAS.refuel;
+      const schema = entry.schema;
+      const withItemId = schema.safeParse({ item_id: "fuel_cell" });
+      expect(withItemId.success).toBe(true);
+    });
+
+    it("refuel is NOT in NO_PARAM_DESCRIPTIONS (moved to TOOL_SCHEMAS)", () => {
+      expect(NO_PARAM_DESCRIPTIONS.refuel).toBeUndefined();
+    });
   });
 
   describe("NO_PARAM_DESCRIPTIONS", () => {

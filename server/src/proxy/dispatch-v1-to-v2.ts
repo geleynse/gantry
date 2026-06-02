@@ -23,6 +23,9 @@ export const V1_TO_V2_DISPATCH: Record<string, { tool: string; action: string }>
   jump_route: { tool: "spacemolt", action: "jump_route" },
   dock: { tool: "spacemolt", action: "dock" },
   undock: { tool: "spacemolt", action: "undock" },
+  // TODO(unverified): confirm game accepts refuel item_id=fuel_cell on a live call.
+  // Forum says `sm refuel item_id=fuel_cell` works; fleet was down at proxy change time.
+  // item_id flows through as-is (no generic id/text remap for spacemolt.refuel).
   refuel: { tool: "spacemolt", action: "refuel" },
   repair: { tool: "spacemolt", action: "repair" },
   sell: { tool: "spacemolt", action: "sell" },
