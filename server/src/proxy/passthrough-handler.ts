@@ -32,6 +32,7 @@ import { normalizeSystemName } from "./compound-tools/utils.js";
 import { autoRecordLoreFromResult, buildLoreHint } from "../services/poi-lore.js";
 import { recordMarketResources } from "../services/resource-knowledge.js";
 import { dispatchV1ToV2, V1_TO_V2_DISPATCH } from "./dispatch-v1-to-v2.js";
+import { checkFuelFloorGuard, checkCargoFullDockGuard } from "./fuel-floor-guard.js";
 
 const log = createLogger("passthrough");
 
@@ -276,6 +277,32 @@ export async function handlePassthrough(
     }
     log.warn("refuel target= rejected by proxy guard", { agent: agentName, target: String(payload?.target) });
     return await withInjections(agentName, textResult(refuelGuard));
+  }
+
+  // --- 0a. Fuel-floor + cargo-full dock guards (anti-stranding) ---
+  // Structural block: an undocked, near-empty ship that jumps lands at the
+  // destination with no fuel to continue to a station — unrecoverable (see
+  // cinder-wake @ delta_major_star, 0/160, 2026-06-01). Likewise a full-cargo
+  // ship that keeps jumping burns fuel it cannot replace without selling.
+  // Both guards read the cached status, never block a docked / Pathfinder-Drive
+  // ship, and allow when the numbers are unknown (a false block strands too).
+  // Cargo-full is checked first: if the agent is BOTH full AND low on fuel,
+  // "dock and sell" is the more complete instruction (it also lets them refuel).
+  {
+    const guardCached = statusCache.get(agentName);
+    const navGuard =
+      checkCargoFullDockGuard(v1ToolName, guardCached) ??
+      checkFuelFloorGuard(v1ToolName, guardCached);
+    if (navGuard) {
+      if (!opts?.skipLogging) {
+        const guardId = logToolCallStart(agentName, action, payload, { traceId });
+        logToolCallComplete(guardId, agentName, action, navGuard, 0, {
+          success: false,
+          errorCode: navGuard.error,
+        });
+      }
+      return await withInjections(agentName, textResult(navGuard));
+    }
   }
 
   // --- 1. Nav BEFORE capture + auto-undock before jump ---
