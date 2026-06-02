@@ -93,6 +93,19 @@ export function buildUserPrompt(
 
     // Offline agents
     if (!agent.isOnline) {
+      // Transient-miss guard: the status cache has a 5-minute online threshold. An agent
+      // finishing a turn cycle can briefly miss the window without actually being offline
+      // (race between turn-cycle exit and the next status fetch). Only classify as OFFLINE
+      // when the cache age is >10 minutes (2× the threshold) OR when there is no cache entry
+      // at all (agent was never seen). A miss under 10 minutes is a transient gap — skip.
+      const OFFLINE_CONFIRM_MS = 10 * 60 * 1000; // 10 minutes
+      const isConfirmedOffline =
+        agent.statusCacheAgeMs === undefined || agent.statusCacheAgeMs > OFFLINE_CONFIRM_MS;
+      if (!isConfirmedOffline) {
+        // Transient gap — agent recently had status; skip triage this tick.
+        continue;
+      }
+
       // Perma-stranded check: agent logged out with 0 fuel and is sitting at a non-refueling
       // POI (or no POI). Restarting just burns cost cycling logout/login until external rescue
       // arrives. Flag for operator attention instead of auto-restart.

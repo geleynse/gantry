@@ -147,6 +147,7 @@ export function gatherFleetSnapshot(deps: StateGathererDeps): FleetSnapshot {
     const entry = statusCache.get(agent.name);
     const state = entry?.data;
     const isOnline = !!entry && (now - entry.fetchedAt) < ONLINE_THRESHOLD_MS;
+    const statusCacheAgeMs = entry ? now - entry.fetchedAt : undefined;
 
     let lastToolCallAge: number | undefined;
     const lastToolCallTs = lastToolCallByAgent.get(agent.name);
@@ -181,6 +182,7 @@ export function gatherFleetSnapshot(deps: StateGathererDeps): FleetSnapshot {
       fuel: ship?.fuel as number | undefined,
       fuelMax: ship?.max_fuel as number | undefined,
       isOnline,
+      statusCacheAgeMs,
       isInCombat: !!battle?.battle_id && battle?.status !== "resolved",
       lastToolCallAge,
       currentRole,

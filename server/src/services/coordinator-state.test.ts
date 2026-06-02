@@ -305,4 +305,44 @@ describe("gatherFleetSnapshot", () => {
     expect(Array.isArray(snapshot.recentDeliveries)).toBe(true);
     expect(snapshot.recentDeliveries).toHaveLength(0);
   });
+
+  // --- statusCacheAgeMs ---
+
+  test("statusCacheAgeMs is undefined for agents absent from statusCache", () => {
+    // sable-thorn has no entry in the empty cache
+    const snapshot = gatherFleetSnapshot(makeDeps());
+    const sable = snapshot.agents.find((a) => a.name === "sable-thorn")!;
+    expect(sable.statusCacheAgeMs).toBeUndefined();
+  });
+
+  test("statusCacheAgeMs reflects cache entry age for agents with a recent status", () => {
+    const fetchedAt = Date.now() - 2 * 60 * 1000; // 2 minutes ago
+    const statusCache = makeStatusCache({
+      "drifter-gale": {
+        data: { player: { credits: 5000 } },
+        fetchedAt,
+      },
+    });
+    const snapshot = gatherFleetSnapshot(makeDeps({ statusCache }));
+    const gale = snapshot.agents.find((a) => a.name === "drifter-gale")!;
+    // Age should be approximately 2 minutes; allow a 5s window for test execution time
+    expect(gale.statusCacheAgeMs).toBeDefined();
+    expect(gale.statusCacheAgeMs!).toBeGreaterThanOrEqual(2 * 60 * 1000 - 5000);
+    expect(gale.statusCacheAgeMs!).toBeLessThanOrEqual(2 * 60 * 1000 + 5000);
+  });
+
+  test("statusCacheAgeMs reflects cache entry age for stale (offline) agents", () => {
+    const fetchedAt = Date.now() - 7 * 60 * 1000; // 7 minutes ago — stale
+    const statusCache = makeStatusCache({
+      "drifter-gale": {
+        data: { player: { credits: 5000 } },
+        fetchedAt,
+      },
+    });
+    const snapshot = gatherFleetSnapshot(makeDeps({ statusCache }));
+    const gale = snapshot.agents.find((a) => a.name === "drifter-gale")!;
+    expect(gale.isOnline).toBe(false);
+    expect(gale.statusCacheAgeMs).toBeDefined();
+    expect(gale.statusCacheAgeMs!).toBeGreaterThanOrEqual(7 * 60 * 1000 - 5000);
+  });
 });
