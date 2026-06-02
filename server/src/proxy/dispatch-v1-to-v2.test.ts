@@ -49,4 +49,23 @@ describe("dispatchV1ToV2", () => {
     // accept either name — the schema decides which is canonical
     expect(r?.args.id ?? r?.args.target_system).toBe("sol");
   });
+
+  it("dispatches configure_recycler to spacemolt_facility with explicit param names preserved", () => {
+    // v0.327 Recycling Processor: params are facility_id and recipe_id (no generic id/text rename).
+    // spacemolt_facility is not in TRANSLATE_TOOLS, so args pass through as-is.
+    const r = dispatchV1ToV2("configure_recycler", { facility_id: "recycler_1", recipe_id: "refine_steel" });
+    expect(r).not.toBeNull();
+    expect(r?.tool).toBe("spacemolt_facility");
+    expect(r?.args.action).toBe("configure_recycler");
+    expect(r?.args.facility_id).toBe("recycler_1");
+    expect(r?.args.recipe_id).toBe("refine_steel");
+  });
+
+  it("configure_recycler dispatch strips any agent-supplied action override", () => {
+    // Agent should not be able to override the dispatched action name.
+    const r = dispatchV1ToV2("configure_recycler", { facility_id: "r1", recipe_id: "smelt_iron", action: "something_else" });
+    expect(r?.args.action).toBe("configure_recycler");
+    expect(r?.args.facility_id).toBe("r1");
+    expect(r?.args.recipe_id).toBe("smelt_iron");
+  });
 });

@@ -255,6 +255,12 @@ describe("V2_TO_V1_PARAM_MAP", () => {
     // estimate_purchase needs id → item_id remap so agents can call it with generic id param
     expect(V2_TO_V1_PARAM_MAP.estimate_purchase).toEqual({ id: "item_id" });
   });
+
+  it("configure_recycler maps generic id→facility_id and text→recipe_id (v0.327 Recycling Processor)", () => {
+    // v2 agents using generic id/text params get remapped to the game's explicit names.
+    // The v1 schema uses facility_id/recipe_id directly, but v2 param-map is the safety net.
+    expect(V2_TO_V1_PARAM_MAP.configure_recycler).toEqual({ id: "facility_id", text: "recipe_id" });
+  });
 });
 
 describe("checkSchemaDrift - schema fix verification", () => {

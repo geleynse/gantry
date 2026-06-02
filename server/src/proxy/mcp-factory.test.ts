@@ -29,6 +29,12 @@ describe("mcp-factory", () => {
     expect(STATIC_GAME_TOOLS.length).toBeGreaterThan(50);
   });
 
+  it("STATIC_GAME_TOOLS contains configure_recycler (v0.327 Recycling Processor)", () => {
+    // v0.327 added Recycling Processor facilities with configure_recycler action.
+    // Must be in the static list so v1 agents can call it before the game publishes it.
+    expect(STATIC_GAME_TOOLS).toContain("configure_recycler");
+  });
+
   it("OUR_SCHEMA_PARAMS has expected tool entries", () => {
     expect(OUR_SCHEMA_PARAMS.jump).toEqual(["system_id"]);
     expect(OUR_SCHEMA_PARAMS.travel).toEqual(["destination_id"]);
@@ -211,6 +217,10 @@ describe("OUR_SCHEMA_PARAMS — consistency checks", () => {
   it("ship commission tools have ship_class param", () => {
     expect(OUR_SCHEMA_PARAMS.commission_ship).toContain("ship_class");
     expect(OUR_SCHEMA_PARAMS.commission_quote).toContain("ship_class");
+  });
+
+  it("configure_recycler has facility_id and recipe_id params (v0.327 Recycling Processor)", () => {
+    expect(OUR_SCHEMA_PARAMS.configure_recycler).toEqual(["facility_id", "recipe_id"]);
   });
 });
 
