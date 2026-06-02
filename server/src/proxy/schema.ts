@@ -102,9 +102,9 @@ const DENIED_TOOLS = new Set([
   "set_anonymous",
   "set_status",
 
-  // Destructive/risky — moved to agentDeniedTools
+  // self_destruct: moved to agentDeniedTools (transit guard in pipeline.ts).
+  // jettison: previously blocked here, now proxied (fix/proxy-rescue-actions).
   // "self_destruct",
-  // "jettison",
 
   // Drones: deploy_drone, recall_drone, load_drone, unload_drone,
   // upload_drone_script, get_drones, get_drone, set_drone_name are now
