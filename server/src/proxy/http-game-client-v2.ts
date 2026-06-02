@@ -509,14 +509,15 @@ export class HttpGameClientV2 implements GameTransport {
       return { error: { code: "connection_failed", message: `MCP init failed: ${err}` } };
     }
 
-    // v2: login via spacemolt_auth(action=login). The mcpSessionId is sent as
-    // an arg here too — the audit established the server accepts the Mcp-Session-Id
-    // header value as a session_id arg until login replaces it.
+    // v2: login via spacemolt_auth(action=login). Do NOT send session_id here:
+    // the game server's login endpoint accepts only username + password and now
+    // rejects any session_id with "Unknown parameter(s): session_id", which broke
+    // re-auth fleet-wide on session expiry (2026-06-02). Login establishes the
+    // canonical session — we parse it from the greeting below.
     const resp = await this.mcpToolCall("spacemolt_auth", {
       action: "login",
       username,
       password,
-      session_id: this.mcpSessionId,
     });
     if (resp.error) {
       this.logError(`login failed: ${resp.error.code}`);
