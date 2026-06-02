@@ -53,6 +53,8 @@ export const STATUS_SLICE_EXTRACTORS: Record<string, (data: Record<string, unkno
         modules: ship.modules ?? d.modules,
       },
       in_combat: d.in_combat,
+      // v0.280+ per-empire standings. Present only when the parser captured them.
+      standings: player.standings,
     };
 
     injectTransitContext(player, statusResult, "You are in hyperspace/transit. Do productive work while waiting — do NOT repeatedly check location.");

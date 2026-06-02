@@ -871,6 +871,9 @@ export class HttpGameClientV2 implements GameTransport {
       // Include skills from the status text so they update on every status refresh.
       // This supplements (and can replace) the separate get_skills fetch at login.
       ...(parsed.skills.length > 0 ? { skills: skillsFromText } : {}),
+      // Include standings if parsed (v0.280+). Omit the key entirely when absent
+      // so downstream consumers can distinguish "not emitted" from "all zeroes".
+      ...(Object.keys(parsed.standings).length > 0 ? { standings: parsed.standings } : {}),
     };
 
     const ship: Record<string, unknown> = {
@@ -1073,6 +1076,8 @@ export interface ParsedGetStatus {
   modules: Array<{ id?: string; class_id?: string; slot?: string; size?: string; wear?: string }>;
   cargo: Array<{ name: string; quantity: number }>;
   skills: Array<{ name: string; level: number; xp: number; xpToNext: number }>;
+  /** v0.280+ per-empire standings: keyed by empire name (lowercase), e.g. "solarian". */
+  standings: Record<string, { reputation: number; baseline: number; bounty: number }>;
 }
 
 /**
@@ -1081,7 +1086,7 @@ export interface ParsedGetStatus {
  * others. See plan §A for the regex contracts.
  */
 export function parseGetStatusText(text: string): ParsedGetStatus {
-  const out: ParsedGetStatus = { modules: [], cargo: [], skills: [] };
+  const out: ParsedGetStatus = { modules: [], cargo: [], skills: [], standings: {} };
 
   // Header: "Username [Empire] | 1,234,567cr | System Display Name"
   // Empire token is \w+ (e.g. "Drifter") but the username can have arbitrary
@@ -1176,6 +1181,26 @@ export function parseGetStatusText(text: string): ParsedGetStatus {
     const xpToNext = parseInt(cols[3], 10);
     if (name && !isNaN(level)) {
       out.skills.push({ name, level, xp: isNaN(xp) ? 0 : xp, xpToNext: isNaN(xpToNext) ? 0 : xpToNext });
+    }
+  }
+
+  // Empire standings: tab-split rows under "Empire standings:" header (v0.280+).
+  // Format: "empire\trep\tbaseline\tbounty" header, then one row per empire.
+  // Example: "solarian\t20\t20\t0"
+  const standingsSectionRe = new RegExp(`Empire standings:\\n([\\s\\S]*?)${SECTION_END.source}`);
+  for (const cols of parseSection(standingsSectionRe)) {
+    // Skip header row
+    if (cols[0].toLowerCase() === "empire") continue;
+    const empire = cols[0].toLowerCase();
+    const reputation = parseInt(cols[1], 10);
+    const baseline = parseInt(cols[2], 10);
+    const bounty = parseInt(cols[3], 10);
+    if (empire && !isNaN(reputation)) {
+      out.standings[empire] = {
+        reputation,
+        baseline: isNaN(baseline) ? 0 : baseline,
+        bounty: isNaN(bounty) ? 0 : bounty,
+      };
     }
   }
 

@@ -237,5 +237,42 @@ describe("STATUS_SLICE_EXTRACTORS", () => {
       const result = STATUS_SLICE_EXTRACTORS.get_status(data);
       expect(result).toBeDefined();
     });
+
+    it("passes v0.280 standings from player object through to the result", () => {
+      const standings = {
+        solarian: { reputation: 20, baseline: 20, bounty: 0 },
+        pirates: { reputation: -30, baseline: -30, bounty: 0 },
+      };
+      const data = {
+        tick: 99,
+        player: {
+          username: "rust-vane",
+          credits: 56520968,
+          current_system: "sirius",
+          current_poi: "sirius_station",
+          docked_at_base: null,
+          standings,
+        },
+        ship: { hull: 480, max_hull: 480, fuel: 332, max_fuel: 350, cargo_used: 68, cargo_capacity: 655 },
+        in_combat: false,
+      };
+      const result = STATUS_SLICE_EXTRACTORS.get_status(data) as Record<string, unknown>;
+      expect(result.standings).toBeDefined();
+      const s = result.standings as typeof standings;
+      expect(s.solarian).toEqual({ reputation: 20, baseline: 20, bounty: 0 });
+      expect(s.pirates).toEqual({ reputation: -30, baseline: -30, bounty: 0 });
+    });
+
+    it("omits standings key when player has no standings (pre-v0.280 or stripped)", () => {
+      const data = {
+        tick: 1,
+        player: { username: "old-ship", credits: 1000, current_system: "sol", current_poi: null, docked_at_base: null },
+        ship: { hull: 10, max_hull: 10, fuel: 5, max_fuel: 10, cargo_used: 0, cargo_capacity: 10 },
+        in_combat: false,
+      };
+      const result = STATUS_SLICE_EXTRACTORS.get_status(data) as Record<string, unknown>;
+      // standings should be undefined (not an empty object that could be mistaken for live data)
+      expect(result.standings).toBeUndefined();
+    });
   });
 });

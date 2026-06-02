@@ -289,4 +289,55 @@ describe("summarizeToolResult", () => {
     const modules = result.modules as Array<Record<string, unknown>>;
     expect(modules).toHaveLength(1);
   });
+
+  // ---------------------------------------------------------------------------
+  // get_status standings — v0.280+ two-layer allowlist
+  // ---------------------------------------------------------------------------
+
+  it("get_status summarizer passes standings through to agents", () => {
+    // Verifies that standings added to the STATUS_SLICE_EXTRACTORS result
+    // survives the summarizers.ts allowlist (discoverPick importantKeys).
+    const raw = {
+      username: "rust-vane",
+      credits: 56520968,
+      current_system: "sirius",
+      current_poi: "sirius_station",
+      docked_at_base: null,
+      ship: {
+        name: "Compendium",
+        class_id: "compendium",
+        hull: 480, max_hull: 480,
+        fuel: 332, max_fuel: 350,
+        cargo_used: 68, cargo_capacity: 655,
+        modules: [],
+      },
+      in_combat: false,
+      standings: {
+        solarian: { reputation: 20, baseline: 20, bounty: 0 },
+        pirates: { reputation: -30, baseline: -30, bounty: 0 },
+        crimson: { reputation: 10, baseline: 10, bounty: 0 },
+      },
+    };
+    const result = summarizeToolResult("get_status", raw) as Record<string, unknown>;
+    expect(result.standings).toBeDefined();
+    const s = result.standings as Record<string, { reputation: number; baseline: number; bounty: number }>;
+    expect(s.solarian.reputation).toBe(20);
+    expect(s.pirates.reputation).toBe(-30);
+    expect(s.crimson.reputation).toBe(10);
+  });
+
+  it("get_status summarizer handles absent standings gracefully (pre-v0.280)", () => {
+    const raw = {
+      username: "old-agent",
+      credits: 1000,
+      current_system: "sol",
+      current_poi: null,
+      docked_at_base: null,
+      ship: { hull: 10, max_hull: 10, fuel: 5, max_fuel: 10, cargo_used: 0, cargo_capacity: 10, modules: [] },
+      in_combat: false,
+    };
+    const result = summarizeToolResult("get_status", raw) as Record<string, unknown>;
+    // standings should be undefined, not null or {}
+    expect(result.standings).toBeUndefined();
+  });
 });

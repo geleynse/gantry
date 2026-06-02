@@ -261,6 +261,91 @@ describe("parseGetStatusText (parser)", () => {
     const p = parseGetStatusText(text);
     expect(p.skills).toEqual([]);
   });
+
+  // ---------------------------------------------------------------------------
+  // Empire standings (v0.280+)
+  // ---------------------------------------------------------------------------
+
+  it("parses 'Empire standings:' section into standings map", () => {
+    const text = [
+      "Rust Vane [solarian] | 56,520,968cr | Sirius",
+      "Hull: 480/480 | Shield: 225/225 | Armor: 22 | Speed: 1",
+      "Fuel: 332/350 | Cargo: 68/655 | CPU: 18/32 | Power: 34/80",
+      "Skills (1):",
+      "skill\tlevel\txp\tnext_level",
+      "mining\t18\t6,474\t12,660",
+      "Empire standings:",
+      "empire\trep\tbaseline\tbounty",
+      "solarian\t20\t20\t0",
+      "voidborn\t10\t10\t0",
+      "crimson\t10\t10\t0",
+      "nebula\t10\t10\t0",
+      "outerrim\t10\t10\t0",
+      "pirates\t-30\t-30\t0",
+    ].join("\n");
+    const p = parseGetStatusText(text);
+    expect(Object.keys(p.standings)).toHaveLength(6);
+    expect(p.standings.solarian).toEqual({ reputation: 20, baseline: 20, bounty: 0 });
+    expect(p.standings.pirates).toEqual({ reputation: -30, baseline: -30, bounty: 0 });
+    expect(p.standings.voidborn).toEqual({ reputation: 10, baseline: 10, bounty: 0 });
+  });
+
+  it("parses negative reputation correctly", () => {
+    const text = [
+      "Agent X [crimson] | 100cr | Sol",
+      "Hull: 10/10 | Fuel: 5/10 | Cargo: 0/10",
+      "Empire standings:",
+      "empire\trep\tbaseline\tbounty",
+      "crimson\t-18\t-20\t1500",
+    ].join("\n");
+    const p = parseGetStatusText(text);
+    expect(p.standings.crimson).toEqual({ reputation: -18, baseline: -20, bounty: 1500 });
+  });
+
+  it("returns empty standings map when no 'Empire standings:' section", () => {
+    const text = "Drifter Gale [Drifter] | 100cr | Sol\nHull: 10/10\nFuel: 5/10\nCargo: 0/10\n";
+    const p = parseGetStatusText(text);
+    expect(p.standings).toEqual({});
+  });
+
+  it("parses standings section that appears at end of text (real production format)", () => {
+    // Mirrors the exact live payload captured 2026-06-01 (abbreviated)
+    const text = [
+      "Rust Vane [solarian] | 56,520,968cr | Sirius",
+      "Ship: Compendium (compendium) | Hull: 480/480 | Shield: 225/225 (+4/tick) | Armor: 22 | Speed: 1",
+      "Fuel: 332/350 | Cargo: 68/655 | CPU: 18/32 | Power: 34/80",
+      "Modules (1):",
+      "id\ttype\tslot\tsize\twear\tstats",
+      "d533dd3c\tpulse_laser_ii\tweapon\t10\tPristine\tdamage:18",
+      "Cargo (1 items):",
+      "item\tqty\tsize",
+      "Sol Alloy Ore\t7\t2",
+      "Skills (2):",
+      "skill\tlevel\txp\tnext_level",
+      "mining\t18\t6,474\t12,660",
+      "trading\t41\t32,918\t61,765",
+      "Active missions (1/5):",
+      "- The Deep Core Initiative (crafting)",
+      "Empire standings:",
+      "empire\trep\tbaseline\tbounty",
+      "solarian\t20\t20\t0",
+      "voidborn\t10\t10\t0",
+      "crimson\t10\t10\t0",
+      "nebula\t10\t10\t0",
+      "outerrim\t10\t10\t0",
+      "pirates\t-30\t-30\t0",
+    ].join("\n");
+    const p = parseGetStatusText(text);
+    // Skills should still parse correctly
+    expect(p.skills).toHaveLength(2);
+    expect(p.modules).toHaveLength(1);
+    expect(p.cargo).toHaveLength(1);
+    // Standings should parse correctly
+    expect(Object.keys(p.standings)).toHaveLength(6);
+    expect(p.standings.solarian.reputation).toBe(20);
+    expect(p.standings.pirates.reputation).toBe(-30);
+    expect(p.standings.outerrim.bounty).toBe(0);
+  });
 });
 
 describe("HttpGameClientV2", () => {

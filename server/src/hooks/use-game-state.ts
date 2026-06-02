@@ -28,14 +28,11 @@ export interface SkillData {
   xp_to_next?: number;
 }
 
+/** v0.280+ per-empire reputation shape: single score in −100..+100 range. */
 export interface EmpireStanding {
-  Fame?: number;
-  Criminal?: number;
-  CriminalEncounters?: number;
-  Love?: number;
-  Hate?: number;
-  Fear?: number;
-  Need?: number;
+  reputation?: number;
+  baseline?: number;
+  bounty?: number;
 }
 
 export type Standings = Record<string, EmpireStanding>;

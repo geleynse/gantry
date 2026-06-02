@@ -19,52 +19,99 @@ describe('StandingsPanel', () => {
     expect(screen.getByText('—')).toBeDefined();
   });
 
-  it('shows "—" when all empires have zero values', () => {
+  it('shows "—" when all empires have zero reputation and no bounty', () => {
     const standings: Standings = {
-      Solara: { Fame: 0, Criminal: 0 },
+      solarian: { reputation: 0, baseline: 0, bounty: 0 },
     };
     render(<StandingsPanel standings={standings} />);
     expect(screen.getByText('—')).toBeDefined();
   });
 
-  it('renders empire names and non-zero dims', () => {
-    const standings: Standings = {
-      Solara: { Fame: 75, Criminal: 20 },
-      Nexus: { Criminal: 80, Love: 10 },
-    };
-    render(<StandingsPanel standings={standings} />);
-    expect(screen.getByText(/Solara/)).toBeDefined();
-    expect(screen.getByText(/Nexus/)).toBeDefined();
-    // Fame 75 should appear
-    expect(screen.getByText(/Fame\s*75/)).toBeDefined();
-    // Criminal 80 should appear for Nexus
-    expect(screen.getByText(/Criminal\s*80/)).toBeDefined();
+  it('shows "—" when standings is empty object', () => {
+    render(<StandingsPanel standings={{}} />);
+    expect(screen.getByText('—')).toBeDefined();
   });
 
-  it('skips zero-value dimensions', () => {
+  it('renders empire name and reputation for non-zero standing', () => {
     const standings: Standings = {
-      Solara: { Fame: 60, Criminal: 0, Love: 0 },
+      solarian: { reputation: 20, baseline: 20, bounty: 0 },
+      pirates: { reputation: -30, baseline: -30, bounty: 0 },
     };
     render(<StandingsPanel standings={standings} />);
-    // Fame shows but Criminal/Love are zero so they shouldn't appear
-    expect(screen.getByText(/Fame\s*60/)).toBeDefined();
-    const criminalEls = screen.queryAllByText(/Criminal\s*0/);
-    expect(criminalEls.length).toBe(0);
+    expect(screen.getByText(/solarian/)).toBeDefined();
+    expect(screen.getByText(/pirates/)).toBeDefined();
   });
 
-  it('uses "Enc" abbreviation for CriminalEncounters', () => {
+  it('displays reputation value', () => {
     const standings: Standings = {
-      Solara: { CriminalEncounters: 30 },
+      solarian: { reputation: 20, baseline: 20, bounty: 0 },
     };
     render(<StandingsPanel standings={standings} />);
-    expect(screen.getByText(/Enc\s*30/)).toBeDefined();
+    // Should render "rep 20"
+    expect(screen.getByText(/rep\s*20/i)).toBeDefined();
+  });
+
+  it('does not render bounty when bounty is 0', () => {
+    const standings: Standings = {
+      solarian: { reputation: 20, baseline: 20, bounty: 0 },
+    };
+    render(<StandingsPanel standings={standings} />);
+    const bountyEls = screen.queryAllByText(/bounty/i);
+    expect(bountyEls.length).toBe(0);
+  });
+
+  it('renders bounty when bounty is non-zero', () => {
+    const standings: Standings = {
+      crimson: { reputation: -25, baseline: -20, bounty: 5000 },
+    };
+    render(<StandingsPanel standings={standings} />);
+    expect(screen.getByText(/bounty/i)).toBeDefined();
+    expect(screen.getByText(/5,000cr/)).toBeDefined();
+  });
+
+  it('hides empire with zero reputation and zero bounty', () => {
+    const standings: Standings = {
+      voidborn: { reputation: 0, baseline: 0, bounty: 0 },
+      crimson: { reputation: -18, baseline: -20, bounty: 0 },
+    };
+    render(<StandingsPanel standings={standings} />);
+    // voidborn is all-zero so it shouldn't appear
+    const voidbornEls = screen.queryAllByText(/voidborn/i);
+    expect(voidbornEls.length).toBe(0);
+    // crimson should appear
+    expect(screen.getByText(/crimson/)).toBeDefined();
+  });
+
+  it('shows empire when bounty > 0 even if reputation is 0', () => {
+    const standings: Standings = {
+      outerrim: { reputation: 0, baseline: 0, bounty: 1000 },
+    };
+    render(<StandingsPanel standings={standings} />);
+    expect(screen.getByText(/outerrim/)).toBeDefined();
+    expect(screen.getByText(/bounty/i)).toBeDefined();
   });
 
   it('renders pirates row', () => {
     const standings: Standings = {
-      pirates: { Criminal: 99 },
+      pirates: { reputation: -30, baseline: -30, bounty: 0 },
     };
     render(<StandingsPanel standings={standings} />);
     expect(screen.getByText(/pirates/i)).toBeDefined();
+  });
+
+  it('renders full live-data example without crashing', () => {
+    // Shape captured from live server log (2026-06-01)
+    const standings: Standings = {
+      solarian: { reputation: 20, baseline: 20, bounty: 0 },
+      voidborn: { reputation: 10, baseline: 10, bounty: 0 },
+      crimson: { reputation: 10, baseline: 10, bounty: 0 },
+      nebula: { reputation: 10, baseline: 10, bounty: 0 },
+      outerrim: { reputation: 10, baseline: 10, bounty: 0 },
+      pirates: { reputation: -30, baseline: -30, bounty: 0 },
+    };
+    render(<StandingsPanel standings={standings} />);
+    // solarian (rep 20) and pirates (rep -30) show; others are rep=10 (non-zero)
+    expect(screen.getByText(/solarian/)).toBeDefined();
+    expect(screen.getByText(/pirates/)).toBeDefined();
   });
 });

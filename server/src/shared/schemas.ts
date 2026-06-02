@@ -148,17 +148,15 @@ export const FactionStateSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// Standings (as returned by get_status in game v0.271.0+)
+// Standings (as returned by get_status in game v0.280+)
 // ---------------------------------------------------------------------------
+// v0.280 replaced the Fame/Criminal/Love/Hate/Fear/Need multi-dim model with a
+// single per-empire score: reputation (−100..+100), baseline, and bounty.
 
 export const EmpireStandingSchema = z.object({
-  Fame: z.number().optional(),
-  Criminal: z.number().optional(),
-  CriminalEncounters: z.number().optional(),
-  Love: z.number().optional(),
-  Hate: z.number().optional(),
-  Fear: z.number().optional(),
-  Need: z.number().optional(),
+  reputation: z.number().optional(),
+  baseline: z.number().optional(),
+  bounty: z.number().optional(),
 });
 
 export const StandingsSchema = z.record(EmpireStandingSchema);
