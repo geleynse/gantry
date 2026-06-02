@@ -172,6 +172,67 @@ export async function multiSell(
     verification_attempts: refreshOutcome.attempts,
   });
 
+  // Normalize "Sold 0 for 0cr" cosmetic display — see sable-thorn 2026-06-01.
+  // The game's sell readout sometimes shows "Sold 0 for 0cr" even when credits
+  // DID transfer. Annotate each affected item with the real outcome so agents
+  // don't retry-loop or abandon a successful sell based on the display string.
+  //
+  // Three cases:
+  //   (a) credits_before unavailable → _cosmetic_display_unknown: true (no delta fabricated)
+  //   (b) credits increased → _cosmetic_zero_cr: true + credits_delta (divided evenly across items)
+  //   (c) credits unchanged → _sell_no_op: true + cause_hint (genuine no-op)
+  //
+  // Note: this runs BEFORE the rate-limited branch so we annotate items regardless;
+  // the rate-limited branch may later suppress credits_after/credits_delta at the
+  // top level, but per-item normalization is still useful context for the agent.
+  const ZERO_CR_PATTERN = /^Sold 0(\s|$).*for 0\s*cr/i;
+  const zeroCrItems = results.filter((r) => {
+    if (r.result && typeof r.result === "object" && !Array.isArray(r.result)) {
+      const msg = (r.result as Record<string, unknown>).message;
+      if (typeof msg === "string" && ZERO_CR_PATTERN.test(msg)) return true;
+    }
+    return false;
+  });
+
+  if (zeroCrItems.length > 0) {
+    if (creditsBefore === undefined) {
+      // Case (a): can't compute real delta — flag ambiguity without fabricating
+      for (const item of zeroCrItems) {
+        (item.result as Record<string, unknown>)._cosmetic_display_unknown = true;
+        log.info("multi_sell zero-cr display: credits_before unavailable, flagging ambiguity", {
+          agent: agentName,
+          item_id: item.item_id,
+        });
+      }
+    } else if (typeof creditDelta === "number" && creditDelta > 0) {
+      // Case (b): credits DID transfer — divide delta evenly among zero-cr items
+      // (best approximation; can't split precisely without per-item game responses)
+      const perItemDelta = Math.floor(creditDelta / zeroCrItems.length);
+      for (const item of zeroCrItems) {
+        (item.result as Record<string, unknown>)._cosmetic_zero_cr = true;
+        (item.result as Record<string, unknown>).credits_delta = perItemDelta;
+        log.info("multi_sell zero-cr display normalized: cosmetic lag, credits transferred", {
+          agent: agentName,
+          item_id: item.item_id,
+          credits_delta: perItemDelta,
+        });
+      }
+    } else if (typeof creditDelta === "number" && creditDelta === 0) {
+      // Case (c): genuine no-op — no credits moved
+      for (const item of zeroCrItems) {
+        (item.result as Record<string, unknown>)._sell_no_op = true;
+        (item.result as Record<string, unknown>).cause_hint =
+          "Station has no demand for this item — 0 credits earned. " +
+          "Travel to a station with buyers (use analyze_market to find one) or create a sell order.";
+        log.info("multi_sell zero-cr display normalized: genuine no-op", {
+          agent: agentName,
+          item_id: item.item_id,
+        });
+      }
+    }
+    // Case: creditDelta === "unknown" — refresh failed (rate-limited path below handles it)
+  }
+
   const sellResult: Record<string, unknown> = {
     status: "completed",
     sells: results,

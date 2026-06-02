@@ -582,4 +582,158 @@ describe("multi-sell (direct import)", () => {
     const sells = result.sells as Array<{ item_id: string; result: unknown }>;
     expect(sells.find((s) => s.item_id === "missing_item")).toBeTruthy();
   });
+
+  // ---------------------------------------------------------------------------
+  // "Sold 0 for 0cr" normalization (sable-thorn 2026-06-01)
+  // ---------------------------------------------------------------------------
+
+  it("zero-cr display: when credits increased despite 'Sold 0 for 0cr' result, surfaces real delta as multi_sell_ok", async () => {
+    // Repro: game returns { message: "Sold 0 for 0cr" } cosmetically, but credits
+    // actually transferred. Without normalization the agent sees "Sold 0" and retries.
+    const cache = makeStatusCache("agent", {
+      player: { current_poi: "sol_station", credits: 1000, docked_at_base: "sol_station" },
+      ship: { cargo_used: 10 },
+    });
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "sell") {
+          // Credits update in cache (simulates post-sell state_update)
+          const entry = cache.get("agent")!;
+          cache.set("agent", {
+            ...entry,
+            data: {
+              ...entry.data,
+              player: { ...(entry.data.player as Record<string, unknown>), credits: 1500 },
+              ship: { cargo_used: 5 },
+            },
+          });
+          // But display says "Sold 0 for 0cr" — cosmetic lag
+          return { result: { message: "Sold 0 for 0cr" } };
+        }
+        return { result: {} };
+      },
+    }, { cache, agentName: "agent" });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await multiSell(
+      deps,
+      [{ item_id: "iron_ore", quantity: 5 }],
+      new Set(["analyze_market"]),
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.verification_status).toBe("ok");
+    // Must NOT warn "0 credits earned" when credits actually changed
+    expect(result.warning).toBeUndefined();
+    // Must expose credits_delta so the agent sees the real outcome
+    // Note: normalization flags are on the per-item result object, not the sell entry
+    const sellEntry = (result.sells as Array<Record<string, unknown>>)[0];
+    const sellResult = sellEntry.result as Record<string, unknown>;
+    expect(sellResult._cosmetic_zero_cr).toBe(true);
+    expect(typeof sellResult.credits_delta).toBe("number");
+    expect((sellResult.credits_delta as number)).toBeGreaterThan(0);
+  });
+
+  it("zero-cr display: when credits DID NOT change after 'Sold 0 for 0cr', normalizes to multi_sell_no_op with cause hint", async () => {
+    // Genuine no-op: game says "Sold 0 for 0cr" AND credits stayed the same.
+    // Should produce a clear no-op marker instead of an opaque 0-credit display.
+    const cache = makeStatusCache("agent", {
+      player: { current_poi: "sol_station", credits: 5000, docked_at_base: "sol_station" },
+      ship: { cargo_used: 10 },
+    });
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "sell") {
+          // Credits do NOT change — genuine no-op
+          return { result: { message: "Sold 0 for 0cr" } };
+        }
+        return { result: {} };
+      },
+    }, { cache, agentName: "agent" });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await multiSell(
+      deps,
+      [{ item_id: "unknown_item", quantity: 5 }],
+      new Set(["analyze_market"]),
+    );
+
+    expect(result.status).toBe("completed");
+    const sellEntry = (result.sells as Array<Record<string, unknown>>)[0];
+    const sellResult = sellEntry.result as Record<string, unknown>;
+    // Should be flagged as a genuine no-op with a cause hint
+    expect(sellResult._sell_no_op).toBe(true);
+    expect(typeof sellResult.cause_hint).toBe("string");
+    expect(String(sellResult.cause_hint)).toContain("no demand");
+  });
+
+  it("zero-cr display: when credits_before is unavailable, marks _cosmetic_display_unknown and does NOT fabricate a delta", async () => {
+    // Degrade gracefully when we can't compute a real delta.
+    // credits_before = undefined because cache had no credits field.
+    const cache = makeStatusCache("agent", {
+      player: { current_poi: "sol_station", docked_at_base: "sol_station" }, // no credits field
+      ship: { cargo_used: 10 },
+    });
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "sell") return { result: { message: "Sold 0 for 0cr" } };
+        return { result: {} };
+      },
+    }, { cache, agentName: "agent" });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await multiSell(
+      deps,
+      [{ item_id: "iron_ore", quantity: 5 }],
+      new Set(["analyze_market"]),
+    );
+
+    expect(result.status).toBe("completed");
+    const sellEntry = (result.sells as Array<Record<string, unknown>>)[0];
+    const sellResult = sellEntry.result as Record<string, unknown>;
+    // Must NOT fabricate a delta
+    expect(sellResult.credits_delta).toBeUndefined();
+    // Must flag the ambiguity so the agent can verify independently
+    expect(sellResult._cosmetic_display_unknown).toBe(true);
+  });
+
+  it("zero-cr display: normal 'Sold X for Ycr' result is not affected by normalization", async () => {
+    // Regression guard: the normalization only fires on the zero-cr pattern.
+    const cache = makeStatusCache("agent", {
+      player: { current_poi: "sol_station", credits: 1000, docked_at_base: "sol_station" },
+      ship: { cargo_used: 10 },
+    });
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "sell") {
+          const entry = cache.get("agent")!;
+          cache.set("agent", {
+            ...entry,
+            data: {
+              ...entry.data,
+              player: { ...(entry.data.player as Record<string, unknown>), credits: 1500 },
+              ship: { cargo_used: 5 },
+            },
+          });
+          return { result: { message: "Sold 5 iron_ore for 500cr" } };
+        }
+        return { result: {} };
+      },
+    }, { cache, agentName: "agent" });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await multiSell(
+      deps,
+      [{ item_id: "iron_ore", quantity: 5 }],
+      new Set(["analyze_market"]),
+    );
+
+    expect(result.status).toBe("completed");
+    const sellEntry = (result.sells as Array<Record<string, unknown>>)[0];
+    const sellResult = sellEntry.result as Record<string, unknown>;
+    // None of the normalization fields should be present
+    expect(sellResult._cosmetic_zero_cr).toBeUndefined();
+    expect(sellResult._sell_no_op).toBeUndefined();
+    expect(sellResult._cosmetic_display_unknown).toBeUndefined();
+  });
 });
