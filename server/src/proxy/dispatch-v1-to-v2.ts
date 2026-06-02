@@ -106,6 +106,10 @@ export const V1_TO_V2_DISPATCH: Record<string, { tool: string; action: string }>
   captains_log_list: { tool: "spacemolt_social", action: "captains_log_list" },
   captains_log_get: { tool: "spacemolt_social", action: "captains_log_get" },
   captains_log_add: { tool: "spacemolt_social", action: "captains_log_add" },
+  // facility namespace — v0.327 Recycling Processor
+  // configure_recycler(facility_id, recipe_id) → spacemolt_facility(action="configure_recycler", facility_id, recipe_id)
+  // Params are kept as-is (no generic id/text rename) — game API uses explicit names on this action.
+  configure_recycler: { tool: "spacemolt_facility", action: "configure_recycler" },
 };
 
 /**

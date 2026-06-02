@@ -95,6 +95,8 @@ export const STATIC_GAME_TOOLS = [
   "get_drones", "get_drone", "set_drone_name",
   // Tax economy — v0.305+ income tax estimate with bracket breakdown
   "get_tax_estimate",
+  // v0.327 Recycling Processor — run a recycling recipe on a facility to recover input materials
+  "configure_recycler",
   // Read-only informational tools
   "get_system_agents",  // list agents/players in the current system
   "view_insurance",     // view current insurance policy details

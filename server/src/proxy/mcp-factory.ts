@@ -198,6 +198,8 @@ export const OUR_SCHEMA_PARAMS: Record<string, string[]> = {
   trade_cancel: ["trade_id"],
   commission_ship: ["ship_class", "provide_materials"],
   commission_quote: ["ship_class"],
+  // v0.327 Recycling Processor
+  configure_recycler: ["facility_id", "recipe_id"],
   // Note: get_tax_estimate has no params — omitted from OUR_SCHEMA_PARAMS (only tracks tools with params)
 };
 

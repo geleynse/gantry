@@ -383,6 +383,15 @@ export const TOOL_SCHEMAS: Record<string, { description: string; schema: z.ZodTy
       name: z.string().describe("New drone name."),
     }),
   },
+  // v0.327 Recycling Processor — run a recycling recipe to recover input materials from finished goods.
+  // v0.327.1 blocked many irreversible recipes; only reversible ones pass through.
+  configure_recycler: {
+    description: "Configure a Recycling Processor facility to run a recipe in reverse, recovering input materials from finished goods. Requires a docked Recycling Processor (Mk I/II/III). v0.327.0+.",
+    schema: z.object({
+      facility_id: z.string().describe("Facility ID of the Recycling Processor to configure."),
+      recipe_id: z.string().describe("Recipe ID to run in reverse (e.g. 'refine_steel'). v0.327.1+ blocks irreversible recipes."),
+    }),
+  },
 };
 
 // ---------------------------------------------------------------------------
