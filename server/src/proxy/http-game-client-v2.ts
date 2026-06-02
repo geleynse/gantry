@@ -50,11 +50,19 @@ const SERVER_ERROR_CODES = new Set([
 const SESSION_EXPIRED_CODES = new Set([
   "session_expired", "unauthorized", "token_expired", "invalid_session",
   "session_invalid", "not_logged_in",
+  // JSON-RPC level -32001 is what the game server returns for "Session expired
+  // (server may have restarted)" — it arrives as rpc.error.code (numeric -32001
+  // stringified to "-32001") rather than a tool-level isError result. Without
+  // this entry execute() never attempts renewal on turn-1 stale sessions.
+  "-32001",
 ]);
 
 function isNotLoggedInError(error: { code: string; message: string }): boolean {
   if (SESSION_EXPIRED_CODES.has(error.code)) return true;
   if (error.message && error.message.toLowerCase().includes("not logged in")) return true;
+  // The game server sometimes returns human-readable -32001 messages — catch
+  // "session expired" wording even when the numeric code doesn't match the set.
+  if (error.message && error.message.toLowerCase().includes("session expired")) return true;
   return false;
 }
 
@@ -537,6 +545,44 @@ export class HttpGameClientV2 implements GameTransport {
     this.loginTime = Date.now();
     this.log(`authenticated via MCP v2 (preset=${this.preset})`);
     return resp;
+  }
+
+  /**
+   * Pre-warm / validate the game session immediately after a successful login.
+   *
+   * A freshly-created game session can become stale before turn 1 if the game
+   * server restarts between /api/v1/session creation and the first real tool
+   * call. The symptom: the agent's very first tool call returns
+   * `-32001 Session expired (server may have restarted)`, which burns the 180s
+   * turn timer and triggers login/logout thrash.
+   *
+   * This method issues a lightweight `get_location` probe via the normal
+   * `execute()` path. If the session is stale, `execute()` recognises the
+   * -32001 code (now in SESSION_EXPIRED_CODES) and performs ONE clean renewal
+   * before returning. The result is not used — the side-effect (renewed session)
+   * is what matters.
+   *
+   * Called from handleLogin() in auth-handlers.ts, after client.login() returns
+   * success, so that the agent's first tool call is guaranteed to hit a live
+   * session.
+   *
+   * @returns true  if the probe succeeded (session is live)
+   *          false if renewal failed (the execute() error path already logged it)
+   */
+  async prewarmSession(): Promise<boolean> {
+    if (!this.authenticated || !this.gameSessionId) return false;
+    this.log("pre-warming session (turn-1 validation probe)");
+    const resp = await this.execute("spacemolt", { action: "get_location" }, { skipMetrics: true });
+    if (resp.error) {
+      // If renewal was attempted (session_renewal_failed / session_renewal_exhausted),
+      // or if there's a non-session error, log and signal failure. The caller
+      // (handleLogin) will still return a login-success response — normal execute()
+      // renewal will handle any subsequent errors on the agent's first real tool call.
+      this.log(`pre-warm probe returned error: ${resp.error.code} — ${resp.error.message}`);
+      return false;
+    }
+    this.log("pre-warm session probe succeeded — session validated");
+    return true;
   }
 
   async logout(): Promise<GameResponse> {

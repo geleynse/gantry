@@ -421,6 +421,19 @@ export async function handleLogin(
     if (sessionId) {
       sessionStore.resetIterationCount(sessionId);
     }
+
+    // Pre-warm: validate the game session before handing off to the agent.
+    // A freshly-created game session can become stale between creation and
+    // turn 1 when the game server restarts mid-auth (producing -32001). The
+    // prewarmSession() probe calls execute(get_location) — if the session is
+    // stale, execute() now recognises -32001 as a session-expiry code and
+    // performs ONE clean renewal before returning. This eliminates the
+    // login/logout thrash that burned the 180s turn-1 timeout.
+    // Only available on HttpGameClientV2 — MockGameClient skips it gracefully.
+    if ('prewarmSession' in client && typeof (client as { prewarmSession?: unknown }).prewarmSession === 'function') {
+      await (client as { prewarmSession: () => Promise<boolean> }).prewarmSession();
+    }
+
     // Prime status cache so cached queries work from the first tool call.
     // The game server may need a moment to initialize the player state,
     // so we retry up to 3 times with a small delay if we get incomplete data.

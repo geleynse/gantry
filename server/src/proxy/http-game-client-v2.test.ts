@@ -792,4 +792,154 @@ describe("HttpGameClientV2", () => {
     await delay(220);
     expect(fetchMock.mock.calls.length).toBe(callsAtClose);
   });
+
+  // -------------------------------------------------------------------------
+  // Turn-1 pre-warm: -32001 recognised as session-expiry + prewarmSession()
+  // -------------------------------------------------------------------------
+
+  it("execute: -32001 JSON-RPC error triggers session renewal (turn-1 stale-session fix)", async () => {
+    // Turn-1 scenario: login succeeds, but the game server's MCP session is
+    // already stale. The first execute() call returns -32001 as a JSON-RPC
+    // level error (not a tool isError), which lands as code="-32001".
+    // Before the fix, SESSION_EXPIRED_CODES didn't include "-32001", so
+    // isNotLoggedInError returned false and no renewal was attempted.
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    const callsAfterLogin = fetchMock.mock.calls.length;
+
+    // Queue a JSON-RPC -32001 error response (as the game server returns it
+    // when the MCP session is expired/gone).
+    fetchResponses.push({
+      status: 200,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        error: { code: -32001, message: "Session expired (server may have restarted)" },
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    // Renewal sequence: init(3) + login tool
+    pushInitSequence("mcp-sess-renew-32001");
+    pushMcpToolResult("Welcome back! Session ID: renewed32001000000");
+    // The retry after renewal
+    pushMcpToolResult(JSON.stringify({ system_id: "sol", poi_id: "earth" }));
+
+    const resp = await client.execute("spacemolt", { action: "get_location" }, { skipMetrics: true });
+
+    // execute() should have renewed and returned the retry result.
+    expect(resp.error).toBeUndefined();
+
+    // Exactly ONE renewal init (3 session-create calls) happened.
+    const sessionPosts = fetchMock.mock.calls
+      .slice(callsAfterLogin)
+      .filter((c) => String(c[0]).endsWith("/api/v1/session"));
+    expect(sessionPosts.length).toBe(1);
+    expect(client.getConnectionHealth().totalReconnects).toBe(1);
+  });
+
+  it("execute: 'session expired' in message triggers renewal even with non-standard code", async () => {
+    // Some game-server variants return session expiry with a string code instead of
+    // the numeric -32001. The message-based fallback in isNotLoggedInError must
+    // catch these so renewal still fires.
+    pushLoginSequence();
+    await client.login("bot", "pw");
+
+    // Error with a non-standard code but session-expired message text.
+    pushMcpToolError("game_error", "Session expired — please re-authenticate");
+    pushInitSequence("mcp-sess-msg-renew");
+    pushMcpToolResult("Welcome back! Session ID: msgrenewal0000000");
+    pushMcpToolResult(JSON.stringify({ ok: true }));
+
+    const resp = await client.execute("spacemolt", { action: "get_status" }, { skipMetrics: true });
+    expect(resp.error).toBeUndefined();
+    expect(client.getConnectionHealth().totalReconnects).toBe(1);
+  });
+
+  it("prewarmSession: returns true and does not renew when session is live", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    const callsAfterLogin = fetchMock.mock.calls.length;
+
+    // Queue a successful get_location response for the prewarm probe.
+    pushMcpToolResult(JSON.stringify({ system_id: "sol", poi_id: "earth" }));
+
+    const ok = await client.prewarmSession();
+
+    expect(ok).toBe(true);
+    expect(client.getConnectionHealth().totalReconnects).toBe(0);
+    // Only one extra fetch (the probe itself) should have happened.
+    expect(fetchMock.mock.calls.length).toBe(callsAfterLogin + 1);
+  });
+
+  it("prewarmSession: renews on -32001 and returns false (renewal failure path)", async () => {
+    // prewarmSession calls execute(get_location). If that returns -32001,
+    // execute() fires renewal. If renewal fails (e.g. server still down),
+    // execute() returns session_renewal_failed — prewarmSession returns false.
+    pushLoginSequence();
+    await client.login("bot", "pw");
+
+    // Probe returns -32001; renewal fails (non-JSON 500).
+    fetchResponses.push({
+      status: 200,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        error: { code: -32001, message: "Session expired (server may have restarted)" },
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    fetchResponses.push({
+      status: 500,
+      body: "upstream down",
+      headers: { "Content-Type": "text/plain" },
+    });
+
+    const ok = await client.prewarmSession();
+
+    // Renewal attempted but failed → prewarmSession returns false.
+    expect(ok).toBe(false);
+  });
+
+  it("prewarmSession: renews on -32001 and returns true when renewal succeeds", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    const callsAfterLogin = fetchMock.mock.calls.length;
+
+    // Probe returns -32001.
+    fetchResponses.push({
+      status: 200,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        error: { code: -32001, message: "Session expired (server may have restarted)" },
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    // Renewal sequence: init(3) + login tool
+    pushInitSequence("mcp-sess-prewarm-ok");
+    pushMcpToolResult("Welcome back! Session ID: prewarm0000000000");
+    // Probe retry after renewal
+    pushMcpToolResult(JSON.stringify({ system_id: "sol", poi_id: "earth" }));
+
+    const ok = await client.prewarmSession();
+
+    expect(ok).toBe(true);
+    expect(client.getConnectionHealth().totalReconnects).toBe(1);
+    // The renewed session should be usable.
+    expect(client.isAuthenticated()).toBe(true);
+
+    // Verify session was actually renewed (new session-create POST happened).
+    const sessionPosts = fetchMock.mock.calls
+      .slice(callsAfterLogin)
+      .filter((c) => String(c[0]).endsWith("/api/v1/session"));
+    expect(sessionPosts.length).toBe(1);
+  });
+
+  it("prewarmSession: returns false when not authenticated", async () => {
+    // No login — prewarmSession should be a no-op.
+    const ok = await client.prewarmSession();
+    expect(ok).toBe(false);
+    // No fetches.
+    expect(fetchMock.mock.calls.length).toBe(0);
+  });
 });
