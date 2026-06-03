@@ -83,6 +83,28 @@ describe("createHealthMonitor", () => {
     });
   });
 
+  describe("tick — retired agent (enabled: false)", () => {
+    it("never restarts a retired agent, even when desired state is running and no stop signal", async () => {
+      // This is the durable-retirement guarantee: a stopped_gracefully signal can
+      // be cleared (consumed / server restart), flipping a manually-stopped agent
+      // back to restartable. enabled:false must keep it down unconditionally.
+      const agents: AgentConfig[] = [
+        { name: "drifter-gale", backend: "claude", model: "haiku" },
+        { name: "cinder-wake", backend: "claude", model: "haiku", enabled: false },
+      ] as AgentConfig[];
+      mockHasSession.mockResolvedValue(false); // both not running
+      mockHasSignal.mockReturnValue(false);    // no stop signals present
+      const monitor = createHealthMonitor(agents);
+      monitor.markRunning("drifter-gale");
+      monitor.markRunning("cinder-wake");      // pretend both were running → desiredState "running"
+      await monitor.tick();
+      // Control: a normal crashed agent IS restarted.
+      expect(mockStartAgent).toHaveBeenCalledWith("drifter-gale");
+      // Retired agent must NOT be restarted.
+      expect(mockStartAgent).not.toHaveBeenCalledWith("cinder-wake");
+    });
+  });
+
   describe("tick — agent is dead, stopped_gracefully signal present", () => {
     it("does not restart when stopped_gracefully signal is set", async () => {
       mockHasSession.mockResolvedValue(false);

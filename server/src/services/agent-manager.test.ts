@@ -67,6 +67,22 @@ describe('agent-manager', () => {
       expect(mockedClearSignal).toHaveBeenCalledWith('drifter-gale', 'stopped_gracefully');
     });
 
+    it('refuses to start a retired (enabled:false) agent', async () => {
+      setConfigForTesting({
+        ...testConfig,
+        agents: [
+          { name: 'drifter-gale', backend: 'claude', model: 'haiku' },
+          { name: 'cinder-wake', backend: 'claude', model: 'haiku', enabled: false },
+        ] as GantryConfig['agents'],
+      });
+      mockedHasSession.mockResolvedValue(false);
+
+      const result = await startAgent('cinder-wake');
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain('retired');
+      expect(mockedNewSession).not.toHaveBeenCalled();
+    });
+
     it('fails when agent already running', async () => {
       mockedHasSession.mockResolvedValue(true);
 

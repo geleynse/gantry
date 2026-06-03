@@ -106,6 +106,16 @@ export function createHealthMonitor(agents: AgentConfig[]): HealthMonitor {
   }
 
   async function checkAgent(name: string): Promise<void> {
+    // Retired agents (enabled:false) are never (re)started by the monitor,
+    // regardless of liveness, desired state, or stop signals. A manual stop
+    // alone is fragile here — the stopped_gracefully signal can be cleared
+    // (consumed / server restart), flipping the agent back to restartable.
+    // enabled:false is the durable "keep this agent down" switch.
+    if (agentsByName.get(name)?.enabled === false) {
+      getOrInitState(name).desiredState = "stopped";
+      return;
+    }
+
     const alive = await hasSession(name);
 
     if (alive) {

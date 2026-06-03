@@ -5,6 +5,13 @@ import * as z from "zod";
 
 export const AgentConfigSchema = z.object({
   name: z.string().min(1),
+  /**
+   * When false, the agent is RETIRED: startAll/startAgent skip it and the health
+   * monitor never (re)starts it. Use to take an agent permanently offline without
+   * deleting its config (reversible — flip back to true and redeploy). Default
+   * (undefined): active.
+   */
+  enabled: z.boolean().optional(),
   backend: z.enum(["claude", "codex", "gemini"]).optional(),
   model: z.string().optional(),
   extraTools: z.string().optional(),

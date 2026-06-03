@@ -161,6 +161,12 @@ export async function startAgent(name: string): Promise<{ ok: boolean; message: 
     return { ok: false, message: `Fleet is disabled; refusing to start ${name}.${reason}` };
   }
 
+  const cfg = AGENTS.find(a => a.name === name);
+  if (cfg?.enabled === false) {
+    log.info('Agent start refused — agent is retired (enabled:false)', { agent: name });
+    return { ok: false, message: `${name} is retired (enabled:false); not starting. Flip enabled:true in fleet-config and redeploy to revive.` };
+  }
+
   log.info(`Starting agent via API: ${name}`);
   const running = await proc.hasSession(name);
   if (running) {
@@ -356,10 +362,16 @@ export async function startAll(): Promise<string[]> {
   // Example: rust-vane (sonnet) → sable-thorn (sonnet) now waits 2x.
   const heavyPairStaggerMs = baseStaggerMs * 2;
 
-  for (let i = 0; i < AGENTS.length; i++) {
-    const agent = AGENTS[i];
+  // Skip retired agents (enabled:false) so a full start-all never revives them.
+  const active = AGENTS.filter(a => a.enabled !== false);
+  for (const skipped of AGENTS.filter(a => a.enabled === false)) {
+    log.info('startAll: skipping retired agent', { agent: skipped.name });
+    messages.push(`${skipped.name} skipped (retired)`);
+  }
+  for (let i = 0; i < active.length; i++) {
+    const agent = active[i];
     if (i > 0) {
-      const prev = AGENTS[i - 1];
+      const prev = active[i - 1];
       const bothHeavy = isHeavyTokenAgent(prev) && isHeavyTokenAgent(agent);
       const delay = bothHeavy ? heavyPairStaggerMs : baseStaggerMs;
       log.info('startAll: staggering before next agent', {
