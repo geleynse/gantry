@@ -2138,6 +2138,15 @@ describe("executeForClient — v1 path", () => {
     await executeForClient(client, "jump", { system_id: "sirius" });
     expect(calls).toEqual([{ tool: "jump", args: { target_system: "sirius" } }]);
   });
+
+  it("normalizes find_route text / destination_system_id → target_system (v1)", async () => {
+    const a = makeRecorderClient(false);
+    await executeForClient(a.client, "find_route", { text: "sirius" });
+    expect(a.calls).toEqual([{ tool: "find_route", args: { target_system: "sirius" } }]);
+    const b = makeRecorderClient(false);
+    await executeForClient(b.client, "find_route", { destination_system_id: "vega" });
+    expect(b.calls).toEqual([{ tool: "find_route", args: { target_system: "vega" } }]);
+  });
 });
 
 describe("executeForClient — v2 path", () => {
@@ -2151,6 +2160,12 @@ describe("executeForClient — v2 path", () => {
     const { calls, client } = makeRecorderClient(true);
     await executeForClient(client, "jump", { system_id: "sirius" });
     expect(calls).toEqual([{ tool: "spacemolt", args: { action: "jump", id: "sirius" } }]);
+  });
+
+  it("normalizes find_route text → target_system → id on v2 path (strict-param fix)", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "find_route", { text: "sirius" });
+    expect(calls).toEqual([{ tool: "spacemolt", args: { action: "find_route", id: "sirius" } }]);
   });
 
   it("dispatches v1 'travel' with target_poi → spacemolt(action='travel', id=...)", async () => {

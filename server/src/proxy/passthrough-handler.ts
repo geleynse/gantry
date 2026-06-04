@@ -104,15 +104,23 @@ export async function executeForClient(
   args?: Record<string, unknown>,
   v2ToolHint?: string,
 ): Promise<{ result?: unknown; error?: { code?: unknown; message?: unknown } | null }> {
-  // Last-mile nav param normalization. The agent-facing schema exposes `system_id`
-  // for jump, but the game server expects `target_system` and (since the v0.335.0
-  // strict-param patch) hard-rejects `system_id` with invalid_payload. tool-registry
-  // remaps on the generic dispatch path, but direct passthrough / nav-retry paths
-  // reach here un-remapped. Idempotent: only fires when system_id is present and
-  // target_system is not, so it's a no-op on the already-remapped path.
-  if (v1ToolName === "jump" && args && "system_id" in args && !("target_system" in args)) {
-    args = { ...args, target_system: args.system_id };
-    delete args.system_id;
+  // Last-mile nav param normalization. jump/find_route name their destination
+  // system inconsistently across call paths (system_id, destination_system_id,
+  // text), but the game server expects `target_system` and (since the v0.335.0
+  // strict-param patch) hard-rejects unknown params with invalid_payload.
+  // tool-registry remaps on the generic dispatch path, but direct passthrough /
+  // nav-retry paths reach here un-remapped (observed: jump system_id=muscida,
+  // find_route text=...). Idempotent: only fills target_system when it's absent,
+  // so it's a no-op on the already-remapped path. `bearing` (jump's alt param)
+  // is left untouched — no alias present means no rewrite.
+  if ((v1ToolName === "jump" || v1ToolName === "find_route") && args && !("target_system" in args)) {
+    const dest = args.system_id ?? args.destination_system_id ?? args.text;
+    if (dest !== undefined) {
+      args = { ...args, target_system: dest };
+      delete args.system_id;
+      delete args.destination_system_id;
+      delete args.text;
+    }
   }
 
   const isV2 = typeof client.isV2 === "function" && client.isV2();
