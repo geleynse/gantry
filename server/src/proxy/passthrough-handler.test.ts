@@ -2132,12 +2132,24 @@ describe("executeForClient — v1 path", () => {
     await executeForClient(client, "jump", { target_system: "sirius" });
     expect(calls).toEqual([{ tool: "jump", args: { target_system: "sirius" } }]);
   });
+
+  it("normalizes jump system_id → target_system before sending (v0.335.0 strict-param fix)", async () => {
+    const { calls, client } = makeRecorderClient(false);
+    await executeForClient(client, "jump", { system_id: "sirius" });
+    expect(calls).toEqual([{ tool: "jump", args: { target_system: "sirius" } }]);
+  });
 });
 
 describe("executeForClient — v2 path", () => {
   it("dispatches v1 'jump' as spacemolt(action='jump', id=...) — translates target_system→id", async () => {
     const { calls, client } = makeRecorderClient(true);
     await executeForClient(client, "jump", { target_system: "sirius" });
+    expect(calls).toEqual([{ tool: "spacemolt", args: { action: "jump", id: "sirius" } }]);
+  });
+
+  it("normalizes jump system_id → target_system → id on v2 path (strict-param fix)", async () => {
+    const { calls, client } = makeRecorderClient(true);
+    await executeForClient(client, "jump", { system_id: "sirius" });
     expect(calls).toEqual([{ tool: "spacemolt", args: { action: "jump", id: "sirius" } }]);
   });
 

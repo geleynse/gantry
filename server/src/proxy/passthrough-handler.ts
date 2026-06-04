@@ -104,6 +104,17 @@ export async function executeForClient(
   args?: Record<string, unknown>,
   v2ToolHint?: string,
 ): Promise<{ result?: unknown; error?: { code?: unknown; message?: unknown } | null }> {
+  // Last-mile nav param normalization. The agent-facing schema exposes `system_id`
+  // for jump, but the game server expects `target_system` and (since the v0.335.0
+  // strict-param patch) hard-rejects `system_id` with invalid_payload. tool-registry
+  // remaps on the generic dispatch path, but direct passthrough / nav-retry paths
+  // reach here un-remapped. Idempotent: only fires when system_id is present and
+  // target_system is not, so it's a no-op on the already-remapped path.
+  if (v1ToolName === "jump" && args && "system_id" in args && !("target_system" in args)) {
+    args = { ...args, target_system: args.system_id };
+    delete args.system_id;
+  }
+
   const isV2 = typeof client.isV2 === "function" && client.isV2();
   if (!isV2) {
     return client.execute(v1ToolName, args);
