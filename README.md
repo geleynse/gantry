@@ -64,7 +64,7 @@ See the [server README](server/README.md) for full configuration and deployment 
 
 ### Compound Tools
 
-Gantry exposes 8 compound tools that handle full multi-step game sequences:
+Gantry exposes 9 compound tools that handle full multi-step game sequences:
 
 | Tool | What it does |
 |------|-------------|
@@ -72,6 +72,7 @@ Gantry exposes 8 compound tools that handle full multi-step game sequences:
 | `travel_to` | Undock, travel, dock in one call with POI name resolution |
 | `jump_route` | Multi-hop jump sequence with auto-refuel and arrival tick detection |
 | `multi_sell` | Sell multiple items sequentially, check demand first, deconflict with fleet |
+| `passenger_run` | Load waiting passengers by destination into free berths and plan the delivery route |
 | `scan_and_attack` | Full combat loop: scan, pick target, battle loop, auto-loot |
 | `loot_wrecks` | Scan for wrecks and salvage them |
 | `battle_readiness` | Check hull, fuel, ammo, and nearby threats before combat |
@@ -153,7 +154,7 @@ The binary is fully self-contained — static frontend assets are embedded at co
 
 - [Getting Started](docs/getting-started.md) — Install, configure, run your first agent turn
 - [Configuration](docs/configuration.md) — gantry.json schema, auth, environment variables
-- [Compound Tools](docs/compound-tools.md) — All 8 tools with parameters and examples
+- [Compound Tools](docs/compound-tools.md) — All 9 tools with parameters and examples
 - [PrayerLang](docs/prayer.md) — Server-side DSL for bounded, deterministic scripts
 - [Dashboard](docs/dashboard.md) — Web dashboard features and usage
 - [Deployment](docs/deployment.md) — Docker, systemd, Cloudflare Tunnel, nginx/Caddy

@@ -12,6 +12,7 @@ Without compound tools, an agent mining ore needs to call `mine`, wait for the t
 | [`travel_to`](#travel_to) | Undock, travel to destination, dock |
 | [`jump_route`](#jump_route) | Multi-hop jump sequence with auto-refuel |
 | [`multi_sell`](#multi_sell) | Sell multiple items, check demand, deconflict with fleet |
+| [`passenger_run`](#passenger_run) | Load waiting passengers by destination into free berths and plan the delivery route |
 | [`scan_and_attack`](#scan_and_attack) | Full combat loop: scan, target, battle, loot |
 | [`loot_wrecks`](#loot_wrecks) | Scan for wrecks and salvage them |
 | [`battle_readiness`](#battle_readiness) | Pre-combat check: hull, fuel, ammo, threats |
@@ -248,6 +249,48 @@ Use `multi_sell` whenever you need to sell cargo. Never call raw `sell` in a loo
 - The demand check (`analyze_market` prerequisite) is enforced at the proxy level. Agents cannot bypass it.
 - Fleet deconfliction is advisory only — it warns agents but does not block the sale.
 - Sells at stations with no demand auto-create exchange orders. The items are safe but credits don't arrive until another player fills the order.
+
+---
+
+## passenger_run
+
+Run the passenger-transport loop at the current station (game v0.354.0+). Lists waiting passengers, groups them by destination, loads them into free berths (highest-fare first, stopping when berths are full), confirms who's aboard, and returns a delivery route ordered by soonest-expiring fare timer. New in **v2.8.0**.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `destination` | string | no | Restrict the run to passengers bound for a single destination. Omit to load across all destinations into available berths. |
+
+### Example
+
+```json
+{
+  "action": "passenger_run"
+}
+```
+
+### Response
+
+```json
+{
+  "status": "completed",
+  "loaded": [ { "name": "...", "destination": "...", "fare": 0, "class": "economy" } ],
+  "route": [ { "destination": "...", "expires_in": 0 } ],
+  "next_action": "travel to the soonest-expiring destination, then unload_passenger",
+  "reminder": "A ship cannot be sold/scrapped/listed while passengers are aboard (v0.356.1)."
+}
+```
+
+### When to Use
+
+Use `passenger_run` when docked at a station with passenger demand, on a liner (built-in berths) or a ship fitted with passenger cabin modules. It batches the `list_station_passengers` → `load_passenger` (per destination) → `list_passengers` sequence so the agent only has to drive `travel_to` and `unload_passenger` to deliver. Deliver before each fare timer expires for the speed bonus (up to +50%); stranding a passenger pays nothing and costs standing.
+
+### Notes
+
+- The 4 underlying game tools (`list_station_passengers`, `load_passenger`, `list_passengers`, `unload_passenger`) pass through the proxy dynamically — no registration needed; this compound just sequences them.
+- `unload_passenger` accepts `name="all"` (v0.368.0) to drop everyone at the current station — those at their destination are delivered and paid, the rest stranded.
+- Field-name handling is tolerant of game-side variants; confirm exact passenger field names / tool namespace on first live run.
 
 ---
 
