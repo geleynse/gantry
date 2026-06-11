@@ -11,6 +11,7 @@ import { stripPendingFields, waitForNavCacheUpdate, normalizeSystemName } from "
 import { systemPoiCache, cacheSystemPois } from "../poi-resolver.js";
 import type { PoiEntry } from "../poi-resolver.js";
 import { jumpRoute } from "./jump-route.js";
+import { NAV_COMMAND_TIMEOUT_MS } from "../game-transport.js";
 
 const log = createLogger("compound-tools");
 
@@ -18,6 +19,40 @@ const log = createLogger("compound-tools");
 function isInvalidPoiError(errMsg: string): boolean {
   const lower = errMsg.toLowerCase();
   return lower.includes("invalid_poi") || lower.includes("unknown destination") || lower.includes("invalid poi");
+}
+
+/** Extract a normalized {code, message} pair from a game error of any shape. */
+function errorParts(err: unknown): { code: string; message: string } {
+  if (typeof err === "string") return { code: "", message: err };
+  if (err && typeof err === "object") {
+    const e = err as { code?: unknown; message?: unknown };
+    return {
+      code: typeof e.code === "string" ? e.code : "",
+      message: typeof e.message === "string" ? e.message : String(err),
+    };
+  }
+  return { code: "", message: "unknown error" };
+}
+
+/** Client timeout / transit-hold error — the game held the request open past our cap. */
+function isTimeoutError(code: string, msg: string): boolean {
+  return code === "timeout" || msg.toLowerCase().includes("did not respond");
+}
+
+/**
+ * Parse the destination system out of a `wrong_system` error (v0.345.1). The game
+ * message names both the POI's system and the player's current system, e.g.
+ *   "POI poi_0050_002 is in system sirius, but you are in sol"
+ * Returns the destination system token, or null if it can't be confidently parsed.
+ */
+export function parseWrongSystemTarget(msg: string): string | null {
+  // "... is in <system> ... you are in <current>" — capture the first named system.
+  const m = msg.match(/in(?:\s+system)?\s+([A-Za-z0-9_\-]+)[,.]?\s+(?:but|and)?\s*you\s+are\s+in\s+([A-Za-z0-9_\-]+)/i);
+  if (m && m[1]) return m[1];
+  // Fallback: "... is in system <system>" without the "you are in" clause.
+  const m2 = msg.match(/is\s+in(?:\s+system)?\s+([A-Za-z0-9_\-]+)/i);
+  if (m2 && m2[1]) return m2[1];
+  return null;
 }
 
 /**
@@ -358,18 +393,135 @@ export async function travelTo(
   const arrivalTickBeforeTravel = client.lastArrivalTick;
   const systemBefore = playerBefore?.current_system;
 
-  // Travel to destination (server auto-undocks if needed)
+  // Travel to destination (server auto-undocks if needed).
+  // Use the extended nav timeout (v0.341.1): the game holds travel OPEN until
+  // arrival, up to several minutes for slow ships. The default 90s would abort a
+  // legitimate long haul and surface a spurious `timeout` error.
   let travelResp = isV2
-    ? await client.execute("spacemolt", { action: "travel", target_poi: resolvedDest })
-    : await client.execute("travel", { target_poi: resolvedDest });
+    ? await client.execute("spacemolt", { action: "travel", target_poi: resolvedDest }, { timeoutMs: NAV_COMMAND_TIMEOUT_MS })
+    : await client.execute("travel", { target_poi: resolvedDest }, { timeoutMs: NAV_COMMAND_TIMEOUT_MS });
   steps.push({ action: "travel", result: travelResp.result ?? travelResp.error });
   const tTravel = Date.now();
   if (travelResp.error) {
-    const errMsg = typeof travelResp.error === "string"
-      ? travelResp.error
-      : ((travelResp.error as { message?: string })?.message ?? "unknown error");
+    const { code: errCode, message: errMsg } = errorParts(travelResp.error);
 
-    if (isInvalidPoiError(errMsg)) {
+    // wrong_system (v0.345.1): the POI is in another system. Auto-jump to the named
+    // system, then retry the travel once. Bounded — exactly one jump+retry.
+    if (errCode === "wrong_system" || errMsg.toLowerCase().includes("wrong_system")) {
+      const targetSystem = parseWrongSystemTarget(errMsg);
+      const currentSystem = playerBefore?.current_system as string | undefined;
+      if (targetSystem && deps.galaxyGraph) {
+        const fromId = deps.galaxyGraph.resolveSystemId(currentSystem ?? "") ?? currentSystem ?? "";
+        const toId = deps.galaxyGraph.resolveSystemId(targetSystem) ?? targetSystem;
+        const route = fromId && toId && fromId !== toId ? deps.galaxyGraph.findRoute(fromId, toId) : null;
+        const hops = route ? route.route.slice(1) : (toId ? [toId] : []);
+        if (hops.length > 0) {
+          log.info("travel_to wrong_system: auto-jumping to destination system", {
+            agent: agentName, destination: finalDestination, from: currentSystem, to: targetSystem, hops: hops.length,
+          });
+          const jumpResult = await jumpRoute(deps, hops);
+          steps.push({ action: "wrong_system_jump", result: jumpResult });
+          if (jumpResult.status === "completed") {
+            // Refresh local POI cache for the new system before retrying travel.
+            try {
+              const sysResp = isV2
+                ? await client.execute("spacemolt", { action: "get_system" })
+                : await client.execute("get_system", {});
+              if (sysResp.result) cacheSystemPois(sysResp.result);
+            } catch { /* best-effort */ }
+            const retryResp = isV2
+              ? await client.execute("spacemolt", { action: "travel", target_poi: resolvedDest }, { timeoutMs: NAV_COMMAND_TIMEOUT_MS })
+              : await client.execute("travel", { target_poi: resolvedDest }, { timeoutMs: NAV_COMMAND_TIMEOUT_MS });
+            steps.push({ action: "travel_wrong_system_retry", result: retryResp.result ?? retryResp.error });
+            if (retryResp.error) {
+              const { message: retryMsg } = errorParts(retryResp.error);
+              return {
+                status: "error",
+                error: "travel_failed",
+                message: `Travel to "${finalDestination}" failed after auto-jumping to ${targetSystem}: ${retryMsg}`,
+                steps,
+              };
+            }
+            travelResp = retryResp;
+          } else {
+            return {
+              status: "error",
+              error: "wrong_system_jump_failed",
+              message:
+                `Destination "${finalDestination}" is in ${targetSystem}, but the auto-jump there failed. ` +
+                `${(jumpResult as { message?: string }).message ?? "See wrong_system_jump step."}`,
+              steps,
+            };
+          }
+        } else {
+          return {
+            status: "error",
+            error: "wrong_system",
+            message:
+              `Destination "${finalDestination}" is in system ${targetSystem}, not your current system. ` +
+              `No route found — call find_route(target_system="${targetSystem}") and jump manually.`,
+            steps,
+          };
+        }
+      } else {
+        return {
+          status: "error",
+          error: "wrong_system",
+          message:
+            `Destination "${finalDestination}" is in a different system. ${errMsg} ` +
+            `jump/jump_route to that system first, then travel_to the POI.`,
+          steps,
+        };
+      }
+    } else if (errCode === "fleet_moved" || errMsg.toLowerCase().includes("fleet_moved")) {
+      // fleet_moved (v0.341.1): the fleet leader jumped/traveled while this member
+      // had a pending command. Clean, actionable result instead of the raw error.
+      log.info("travel_to: fleet_moved — leader moved during pending command", {
+        agent: agentName, destination: finalDestination,
+      });
+      return {
+        status: "error",
+        error: "fleet_moved",
+        message:
+          "Your fleet leader jumped/traveled while this command was pending, so it was cancelled. " +
+          "Call get_status to re-query your current position, then retry travel_to.",
+        steps,
+      };
+    } else if (errCode === "in_transit" || /\bin[_ ]transit\b/i.test(errMsg)) {
+      // Game's in_transit ERROR code (v0.341.1) — a command was sent mid-jump.
+      // NOTE: distinct from the proxy's OWN internal in_transit status flag
+      // (transit-throttle.ts / cached-queries.ts). This branch handles only the
+      // game error-code case.
+      log.info("travel_to: game in_transit error — command sent mid-jump", {
+        agent: agentName, destination: finalDestination,
+      });
+      return {
+        status: "error",
+        error: "in_transit",
+        message:
+          "Your ship is still moving (in transit), so this command was rejected. " +
+          "Call get_status in 30-60 seconds to confirm arrival, then retry travel_to. " +
+          "Do NOT call logout/login — the ship will arrive naturally.",
+        steps,
+      };
+    } else if (isTimeoutError(errCode, errMsg)) {
+      // Client timeout while the game held the travel request open (v0.341.1).
+      // The ship is very likely still en route. Degrade to in-transit polling
+      // rather than reporting a spurious travel_failed — the same contract the
+      // arrival-wait path below returns on timeout.
+      log.warn("travel_to: client timeout during travel — ship likely still en route, returning in_transit", {
+        agent: agentName, destination: finalDestination, elapsed_ms: Date.now() - t0,
+      });
+      return {
+        status: "in_transit",
+        message:
+          "Travel request is taking longer than expected (slow ship / long haul). " +
+          "Your ship is most likely still en route. Call get_status in 30-60 seconds to check arrival. " +
+          "Do NOT call logout/login — the ship will arrive naturally.",
+        destination: finalDestination,
+        steps,
+      };
+    } else if (isInvalidPoiError(errMsg)) {
       // Attempt fuzzy POI resolution and retry once
       const fuzzyResp = await attemptFuzzyPoiRetry(
         client, agentName, finalDestination, resolvedDest, playerBefore, statusCache, steps, resolvePoiId,

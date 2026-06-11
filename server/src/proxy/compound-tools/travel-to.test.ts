@@ -6,7 +6,8 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createDatabase, closeDb } from "../../services/database.js";
-import { travelTo, resolveCrossSystem } from "./travel-to.js";
+import { travelTo, resolveCrossSystem, parseWrongSystemTarget } from "./travel-to.js";
+import { NAV_COMMAND_TIMEOUT_MS } from "../game-transport.js";
 import { systemPoiCache } from "../poi-resolver.js";
 import type { CompoundToolDeps, GameClientLike } from "./types.js";
 import { SellLog } from "../sell-log.js";
@@ -740,6 +741,139 @@ describe("travel-to fuzzy POI matching", () => {
       const result = await travelTo(deps, "sirius", identityResolver, false);
       expect(result.status).toBe("error");
       expect(travelCalls).toBe(1); // travel was attempted; cross-system path was a noop
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Nav error-code handling (v0.341.1 / v0.345.1)
+  // -------------------------------------------------------------------------
+  describe("nav error codes", () => {
+    function makeGalaxyGraphWithSystems(systems: Array<{ id: string; name: string; connections?: string[] }>): GalaxyGraph {
+      const g = new GalaxyGraph();
+      for (const s of systems) g.addSystem(s.id, s.name);
+      for (const s of systems) {
+        for (const c of s.connections ?? []) g.addEdge(s.id, c);
+      }
+      return g;
+    }
+
+    it("wrong_system: auto-jumps to the named system then retries travel (v0.345.1)", async () => {
+      const cache = makeStatusCache("agent", {
+        player: { current_system: "sol", current_poi: "sol_station", docked_at_base: null },
+      });
+      let travelCalls = 0;
+      let jumpCalls = 0;
+      const client = makeClient({
+        execute: async (tool, args) => {
+          const action = (args as Record<string, unknown> | undefined)?.action;
+          if (tool === "travel") {
+            travelCalls++;
+            if (travelCalls === 1) {
+              return { error: { code: "wrong_system", message: "POI poi_0050_002 is in system sirius, but you are in sol" } };
+            }
+            return { result: { ok: true } };
+          }
+          if (tool === "jump" || action === "jump") {
+            jumpCalls++;
+            // Simulate arrival by advancing the cache to sirius.
+            cache.set("agent", { data: { player: { current_system: "sirius", current_poi: "sirius_gate", docked_at_base: null } }, fetchedAt: Date.now() });
+            return { result: { status: "completed", location_after: { system: "sirius" } } };
+          }
+          return { result: {} };
+        },
+      });
+      const deps = makeDeps("agent", client, cache);
+      deps.galaxyGraph = makeGalaxyGraphWithSystems([
+        { id: "sol", name: "Sol", connections: ["sirius"] },
+        { id: "sirius", name: "Sirius" },
+      ]);
+
+      // Use a raw poi_* id so the pre-travel cross-system resolver is skipped and
+      // the wrong_system error path is exercised.
+      const result = await travelTo(deps, "poi_0050_002", identityResolver, false);
+
+      expect(jumpCalls).toBeGreaterThanOrEqual(1);
+      expect(travelCalls).toBe(2); // original + retry after jump
+      expect(result.status).toBe("completed");
+    });
+
+    it("fleet_moved: returns a clean actionable error (v0.341.1)", async () => {
+      const cache = makeStatusCache("agent", {
+        player: { current_system: "sol", current_poi: "sol_station", docked_at_base: null },
+      });
+      const client = makeClient({
+        execute: async (tool) => {
+          if (tool === "travel") return { error: { code: "fleet_moved", message: "fleet leader moved" } };
+          return { result: {} };
+        },
+      });
+      const deps = makeDeps("agent", client, cache);
+      const result = await travelTo(deps, "poi_0041_002", identityResolver, false);
+      expect(result.status).toBe("error");
+      expect(result.error).toBe("fleet_moved");
+      expect(String(result.message)).toContain("get_status");
+    });
+
+    it("in_transit error: returns a clean actionable error, distinct from internal flag (v0.341.1)", async () => {
+      const cache = makeStatusCache("agent", {
+        player: { current_system: "sol", current_poi: "sol_station", docked_at_base: null },
+      });
+      const client = makeClient({
+        execute: async (tool) => {
+          if (tool === "travel") return { error: { code: "in_transit", message: "ship is in transit" } };
+          return { result: {} };
+        },
+      });
+      const deps = makeDeps("agent", client, cache);
+      const result = await travelTo(deps, "poi_0041_002", identityResolver, false);
+      expect(result.status).toBe("error");
+      expect(result.error).toBe("in_transit");
+      expect(String(result.message)).toContain("Do NOT call logout/login");
+    });
+
+    it("client timeout: degrades to in_transit rather than travel_failed (v0.341.1)", async () => {
+      const cache = makeStatusCache("agent", {
+        player: { current_system: "sol", current_poi: "sol_station", docked_at_base: null },
+      });
+      const client = makeClient({
+        execute: async (tool) => {
+          if (tool === "travel") return { error: { code: "timeout", message: "Game server did not respond to spacemolt within 600000ms" } };
+          return { result: {} };
+        },
+      });
+      const deps = makeDeps("agent", client, cache);
+      const result = await travelTo(deps, "poi_0041_002", identityResolver, false);
+      expect(result.status).toBe("in_transit");
+      expect(result.destination).toBe("poi_0041_002");
+      expect(String(result.message)).toContain("Do NOT call logout/login");
+    });
+
+    it("passes the extended nav timeout to the travel execute call", async () => {
+      const cache = makeStatusCache("agent", {
+        player: { current_system: "sol", current_poi: "sol_station", docked_at_base: null },
+      });
+      let travelOpts: unknown;
+      const client = makeClient({
+        execute: async (tool, _args, opts) => {
+          if (tool === "travel") travelOpts = opts;
+          return { result: { ok: true } };
+        },
+      });
+      const deps = makeDeps("agent", client, cache);
+      await travelTo(deps, "poi_0041_002", identityResolver, false);
+      expect((travelOpts as { timeoutMs?: number } | undefined)?.timeoutMs).toBe(NAV_COMMAND_TIMEOUT_MS);
+    });
+  });
+
+  describe("parseWrongSystemTarget", () => {
+    it("parses the destination system from the v0.345.1 message", () => {
+      expect(parseWrongSystemTarget("POI poi_0050_002 is in system sirius, but you are in sol")).toBe("sirius");
+    });
+    it("parses the 'in <system>' fallback form", () => {
+      expect(parseWrongSystemTarget("That POI is in alrakis_prime")).toBe("alrakis_prime");
+    });
+    it("returns null when no system can be parsed", () => {
+      expect(parseWrongSystemTarget("some unrelated error")).toBeNull();
     });
   });
 });

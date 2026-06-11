@@ -9,6 +9,7 @@ export const COMPOUND_TOOL_DESCRIPTIONS: Record<string, string> = {
   travel_to: "Undock → travel → dock in one operation",
   jump_route: "Multi-system jump via shortest path",
   multi_sell: "Sell cargo across multiple buyers",
+  passenger_run: "Load waiting passengers by destination into free berths and plan the delivery route",
   scan_and_attack: "Scan for hostiles and engage",
   loot_wrecks: "Loot multiple wrecks at current location",
   battle_readiness: "Check combat readiness status",

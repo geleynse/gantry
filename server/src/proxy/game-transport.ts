@@ -83,3 +83,15 @@ export const ACTION_PENDING_DEFAULT_WAIT_S = 12;
 export const RATE_LIMITED_MAX_RETRIES = 3;
 export const RATE_LIMITED_WAIT_S = 2;
 export const COMMAND_TIMEOUT_MS = 90_000;
+
+/**
+ * Per-tool client timeout for the nav commands `travel` and `jump` (v0.341.1).
+ *
+ * The game now holds these requests OPEN until the ship arrives — "up to several
+ * minutes" for slow ships / long hauls — and explicitly recommends a client
+ * timeout of >=600s. The default COMMAND_TIMEOUT_MS (90s) would abort a legitimate
+ * long haul and surface a spurious `timeout` error before the game returns. This
+ * override is applied ONLY to travel/jump (see compound-tools/travel-to.ts and the
+ * passthrough nav path) — a blanket 600s would hide real hangs on every other tool.
+ */
+export const NAV_COMMAND_TIMEOUT_MS = 600_000;

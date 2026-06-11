@@ -1,4 +1,5 @@
 import { createLogger } from "../lib/logger.js";
+import { PASSENGER_SUMMARIZERS } from "./passenger-summarizer.js";
 
 const log = createLogger("summarizers");
 
@@ -76,10 +77,29 @@ const SUMMARIZERS: Record<string, Summarizer> = {
   get_status: (r) => {
     const d = (r && typeof r === "object") ? r as Record<string, unknown> : {};
     const ship = d.ship && typeof d.ship === "object" ? d.ship as Record<string, unknown> : undefined;
-    const summarized = discoverPick("get_status", d, ["username", "credits", "current_system", "current_poi", "docked_at_base", "skills", "stats", "discovered_systems", "status_message", "ship", "standings"]);
+    // v0.343.0: ship status now includes active burn / armor-melt status-effect fields.
+    // Guessed field names: status_effects (array), active_effects (array), burn_stacks,
+    // armor_melt_stacks, burn_damage_per_tick, armor_melt_per_tick. All included so the
+    // combat agent sees them; unknown variants will log via discoverPick discovery.
+    const summarized = discoverPick("get_status", d, [
+      "username", "credits", "current_system", "current_poi", "docked_at_base",
+      "skills", "stats", "discovered_systems", "status_message", "ship", "standings",
+      "in_combat",
+      // v0.343.0 burn / armor-melt active status effects
+      "status_effects", "active_effects",
+      "burn_stacks", "armor_melt_stacks",
+      "burn_damage_per_tick", "armor_melt_per_tick",
+    ]);
     if (ship) {
       summarized.ship = {
-        ...discoverPick("ship", ship, ["name", "class_id", "hull", "max_hull", "shield", "max_shield", "fuel", "max_fuel", "cargo_used", "cargo_capacity", "stats", "position", "modules"]),
+        ...discoverPick("ship", ship, [
+          "name", "class_id", "hull", "max_hull", "shield", "max_shield",
+          "fuel", "max_fuel", "cargo_used", "cargo_capacity", "stats", "position", "modules",
+          // v0.343.0 burn / armor-melt effects may also appear on the ship sub-object
+          "status_effects", "active_effects",
+          "burn_stacks", "armor_melt_stacks",
+          "burn_damage_per_tick", "armor_melt_per_tick",
+        ]),
         modules: summarizeModules(ship.modules),
       };
     }
@@ -170,7 +190,16 @@ const SUMMARIZERS: Record<string, Summarizer> = {
     return summarized;
   },
   battle: (r) => discoverPick("battle", r as Record<string, unknown>, ["battle_id", "stance", "zone", "target", "message", "status"]),
-  get_battle_status: (r) => discoverPick("get_battle_status", r as Record<string, unknown>, ["battle_id", "zone", "stance", "hull", "shields", "target", "combatants", "status"]),
+  // v0.343.0: battle status now surfaces active burn / armor-melt effects on your ship.
+  // Guessed field names match those added to get_status above; include at both
+  // top-level and nested under a possible "self" or "player" key.
+  get_battle_status: (r) => discoverPick("get_battle_status", r as Record<string, unknown>, [
+    "battle_id", "zone", "stance", "hull", "shields", "target", "combatants", "status",
+    // v0.343.0 burn / armor-melt
+    "status_effects", "active_effects",
+    "burn_stacks", "armor_melt_stacks",
+    "burn_damage_per_tick", "armor_melt_per_tick",
+  ]),
   get_insurance_quote: (r) => discoverPick("get_insurance_quote", r as Record<string, unknown>, ["premium", "coverage", "policy_id", "message"]),
   buy_insurance: (r) => discoverPick("buy_insurance", r as Record<string, unknown>, ["policy_id", "premium", "coverage", "message"]),
   claim_insurance: (r) => discoverPick("claim_insurance", r as Record<string, unknown>, ["payout", "message", "status"]),
@@ -210,6 +239,100 @@ const SUMMARIZERS: Record<string, Summarizer> = {
     summarized.replies = replies.map((reply) => discoverPick("forum_reply", reply as Record<string, unknown>, ["author", "author_empire", "author_faction_tag", "content", "upvotes", "created_at"]));
     return summarized;
   },
+  // ---------------------------------------------------------------------------
+  // catalog (v0.343.0 ammo effects)
+  // ---------------------------------------------------------------------------
+  // The catalog response is large (can be 100KB+). This summarizer lets it
+  // pass through in full but marks the known ammo-effect fields so discoverPick
+  // logs them as "expected" rather than triggering discovery noise.
+  // Guessed field names for v0.343.0 ammo effects (armor-piercing, incendiary
+  // burn-over-time, EMP, corrosive armor-melt, cluster/antimatter splash, swarm):
+  //   effects, effect_type, combat_effects, armor_pierce, incendiary_damage,
+  //   emp_damage, corrosive_damage, burn_per_tick, splash_radius,
+  //   accuracy_modifier, accuracy_bonus.
+  // All fields flow through stripFields regardless; this summarizer adds no
+  // filtering and simply registers known fields for discovery logging.
+  catalog: (r) => {
+    const d = (r && typeof r === "object") ? r as Record<string, unknown> : {};
+    // Pass all top-level fields through (non-destructive, marks them as known).
+    // Non-item types (recipes, ships, modules) are forwarded verbatim via discoverPick.
+    const summarized = discoverPick("catalog", d, [
+      "type", "items", "catalog_items", "recipes", "ships", "modules",
+    ]);
+    // Only re-project items when the response carries an item list.
+    // Items may live under d.items, d.catalog_items, or as the array root.
+    const rawItems = (d.items as unknown[] | undefined) ?? (d.catalog_items as unknown[] | undefined) ?? (Array.isArray(d) ? (d as unknown[]) : undefined);
+    if (rawItems && rawItems.length > 0) {
+      // Re-project each item with known keys (including v0.343.0 ammo effect fields).
+      // Non-destructive: all fields from each item are forwarded via discoverPick.
+      summarized.items = rawItems.map((item) => discoverPick("catalog_item", item as Record<string, unknown>, [
+        "id", "item_id", "name", "category", "type", "description", "price", "size",
+        "damage", "fire_rate", "range", "accuracy",
+        // v0.343.0 ammo effect fields (armor-piercing, incendiary, EMP, corrosive, cluster, swarm)
+        "effects", "effect_type", "combat_effects",
+        "armor_pierce", "armor_piercing",
+        "incendiary_damage", "burn_per_tick", "burn_stacks",
+        "emp_damage", "emp_duration",
+        "corrosive_damage", "armor_melt_per_tick", "armor_melt_stacks",
+        "splash_radius", "splash_damage",
+        "accuracy_modifier", "accuracy_bonus",
+      ]));
+    }
+    return summarized;
+  },
+
+  // ---------------------------------------------------------------------------
+  // spacemolt_facility action="list" / action="faction_list" (v0.342.0 idle_reason)
+  // ---------------------------------------------------------------------------
+  // v0.342.0 adds idle_reason per facility: one of no_inputs, no_maintenance,
+  // insufficient_labor_credits, no_fuel_bunker, fuel_tank_full, output_storage_full,
+  // unprofitable (station-owned), stockpile_full (station-owned).
+  // The v1ToolName that reaches summarizeToolResult is the action string extracted
+  // from the spacemolt_facility call — so "list" and "faction_list".
+  list: (r) => {
+    const d = (r && typeof r === "object") ? r as Record<string, unknown> : {};
+    const facilities = (
+      (d.facilities as unknown[] | undefined) ??
+      (d.items as unknown[] | undefined) ??
+      (Array.isArray(d) ? d : [])
+    );
+    const summarized = discoverPick("facility_list", d, ["facilities", "items", "count", "message"]);
+    summarized.facilities = facilities.map((f) =>
+      discoverPick("facility", f as Record<string, unknown>, [
+        "id", "facility_id", "name", "type", "level", "status", "owner",
+        "system", "poi", "station",
+        "production", "output", "input", "upgrades",
+        "labor_credits", "maintenance",
+        // v0.342.0 idle diagnosis
+        "idle_reason",
+      ])
+    );
+    return summarized;
+  },
+  faction_list: (r) => {
+    const d = (r && typeof r === "object") ? r as Record<string, unknown> : {};
+    const facilities = (
+      (d.facilities as unknown[] | undefined) ??
+      (d.items as unknown[] | undefined) ??
+      (Array.isArray(d) ? d : [])
+    );
+    const summarized = discoverPick("faction_facility_list", d, ["facilities", "items", "count", "message"]);
+    summarized.facilities = facilities.map((f) =>
+      discoverPick("facility", f as Record<string, unknown>, [
+        "id", "facility_id", "name", "type", "level", "status", "owner",
+        "system", "poi", "station",
+        "production", "output", "input", "upgrades",
+        "labor_credits", "maintenance",
+        // v0.342.0 idle diagnosis
+        "idle_reason",
+      ])
+    );
+    return summarized;
+  },
+
+  // Passenger summarizers (v0.354.0+) — wired from passenger-summarizer.ts
+  ...PASSENGER_SUMMARIZERS,
+
   // Defensive summarizer: explicitly lists empire_official so a future SKIP_FIELDS
   // addition can never silently strip this security-critical field.
   // empire_official is SERVER-SET (cannot be forged by players) — it must always flow to agents.

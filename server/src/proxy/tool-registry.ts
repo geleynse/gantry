@@ -46,6 +46,9 @@ import {
   getCraftProfitability,
   craftPathTo,
 } from "./compound-tools/index.js";
+// Imported directly (not via the barrel) so this passenger feature stays
+// self-contained in its own module without touching the shared index/descriptions.
+import { passengerRun } from "./compound-tools/passenger-run.js";
 
 // ---------------------------------------------------------------------------
 // Typed parameter schemas for tools that require arguments.
@@ -698,6 +701,10 @@ export function buildCompoundActions(
         : "";
       return craftPathTo(makeDeps(client, agentName), { item_id });
     },
+
+    passenger_run: async (client, agentName, _args) => {
+      return passengerRun(makeDeps(client, agentName));
+    },
   };
 }
 
@@ -1035,6 +1042,28 @@ export function registerCompoundTools(deps: ToolRegistryDeps): void {
     return await withInjections(agentName, textResult(sellResult));
   });
   registeredTools.push("multi_sell");
+
+  // --- passenger_run ---
+
+  mcpServer.registerTool("passenger_run", {
+    description:
+      "Pick up waiting passengers at your docked station, loading them by destination into free berths, " +
+      "and report the delivery route (destinations + soonest-expiring fare timers). " +
+      "Requires a liner ship (built-in berths) or a passenger cabin module. " +
+      "You still drive travel: travel_to each destination and unload_passenger(name=\"all\") to deliver. " +
+      "Note: a ship can't be sold/scrapped/listed while passengers are aboard.",
+    inputSchema: {},
+  }, async (_args, extra) => {
+    const agentName = getAgentForSession(extra.sessionId);
+    if (!agentName) return textResult({ error: "not logged in" });
+    const blocked = checkGuardrails(agentName, "passenger_run", {});
+    if (blocked) return textResult({ error: blocked });
+    const client = sessions.getClient(agentName);
+    if (!client) return textResult({ error: "no session" });
+
+    return runCompound("passenger_run", client as unknown as GameClient, agentName, {});
+  });
+  registeredTools.push("passenger_run");
 
   // --- scan_and_attack ---
 

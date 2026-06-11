@@ -33,6 +33,7 @@ import { autoRecordLoreFromResult, buildLoreHint } from "../services/poi-lore.js
 import { recordMarketResources } from "../services/resource-knowledge.js";
 import { dispatchV1ToV2, V1_TO_V2_DISPATCH } from "./dispatch-v1-to-v2.js";
 import { checkFuelFloorGuard, checkCargoFullDockGuard } from "./fuel-floor-guard.js";
+import { NAV_COMMAND_TIMEOUT_MS } from "./game-transport.js";
 
 const log = createLogger("passthrough");
 
@@ -90,7 +91,11 @@ export function checkRefuelTargetGuard(
 
 /** Minimal client interface required by handlePassthrough */
 export interface PassthroughClient {
-  execute: (cmd: string, args?: Record<string, unknown>) => Promise<{ result?: unknown; error?: { code?: unknown; message?: unknown } | null }>;
+  execute: (
+    cmd: string,
+    args?: Record<string, unknown>,
+    opts?: { timeoutMs?: number; noRetry?: boolean },
+  ) => Promise<{ result?: unknown; error?: { code?: unknown; message?: unknown } | null }>;
   waitForTick: (ms?: number) => Promise<void>;
   lastArrivalTick: number | null;
   /** Optional: present on v1/v2 HTTP clients, absent on test mocks. Test mocks
@@ -103,6 +108,7 @@ export async function executeForClient(
   v1ToolName: string,
   args?: Record<string, unknown>,
   v2ToolHint?: string,
+  opts?: { timeoutMs?: number; noRetry?: boolean },
 ): Promise<{ result?: unknown; error?: { code?: unknown; message?: unknown } | null }> {
   // Last-mile nav param normalization. jump/find_route name their destination
   // system inconsistently across call paths (system_id, destination_system_id,
@@ -123,23 +129,32 @@ export async function executeForClient(
     }
   }
 
+  // Only forward opts when present, so the no-opts call shape is byte-for-byte
+  // identical to the pre-opts signature (avoids a trailing `undefined` arg that
+  // would break strict toHaveBeenCalledWith assertions and is a no-op anyway).
+  const fwd = (
+    cmd: string,
+    a?: Record<string, unknown>,
+  ): Promise<{ result?: unknown; error?: { code?: unknown; message?: unknown } | null }> =>
+    opts ? client.execute(cmd, a, opts) : client.execute(cmd, a);
+
   const isV2 = typeof client.isV2 === "function" && client.isV2();
   if (!isV2) {
-    return client.execute(v1ToolName, args);
+    return fwd(v1ToolName, args);
   }
 
   // Use shared dispatch table. Fall back to v2ToolHint for v2-native action
   // names not in the legacy map (e.g. spacemolt_storage(action="deposit")).
   const dispatched = dispatchV1ToV2(v1ToolName, args);
   if (dispatched) {
-    return client.execute(dispatched.tool, dispatched.args);
+    return fwd(dispatched.tool, dispatched.args);
   }
 
   if (v2ToolHint && !V1_TO_V2_DISPATCH[v1ToolName]) {
-    return client.execute(v2ToolHint, { action: v1ToolName, ...(args ?? {}) });
+    return fwd(v2ToolHint, { action: v1ToolName, ...(args ?? {}) });
   }
 
-  return client.execute(v1ToolName, args);
+  return fwd(v1ToolName, args);
 }
 
 export interface PassthroughDeps {
@@ -634,7 +649,16 @@ export async function handlePassthrough(
     : logToolCallComplete;
   const toolStartMs = Date.now();
   try {
-  const resp = await executeForClient(client, v1ToolName, payload, opts?.v2ToolHint);
+  // Extended client timeout for travel/jump (v0.341.1): the game holds these
+  // requests OPEN until arrival — up to several minutes for slow ships. The
+  // default 90s would abort a legitimate long haul and surface a spurious
+  // `timeout` error. Applied ONLY to travel/jump so real hangs on other tools
+  // still surface promptly. jump_route is excluded — it loops per-hop internally.
+  const execOpts =
+    v1ToolName === "travel" || v1ToolName === "jump"
+      ? { timeoutMs: NAV_COMMAND_TIMEOUT_MS }
+      : undefined;
+  const resp = await executeForClient(client, v1ToolName, payload, opts?.v2ToolHint, execOpts);
 
   // --- Record game API call in rate limit tracker ---
   if (deps.rateLimitTracker) {
@@ -1159,6 +1183,61 @@ export async function handlePassthrough(
     }
   }
 
+  // --- 3c. Nav error-code mapping (v0.341.1 / v0.345.1) ---
+  // Map the game's new nav error codes to clean, actionable results for jump/travel
+  // instead of passing the raw error through. NOTE: the game's `in_transit` ERROR
+  // code here is distinct from the proxy's OWN internal `in_transit` status flag
+  // (transit-throttle.ts / cached-queries.ts) — this only handles the error code.
+  if (resp.error && (v1ToolName === "jump" || v1ToolName === "travel" || v1ToolName === "jump_route")) {
+    const navCode = String((resp.error as Record<string, unknown>).code ?? "");
+    const navMsg = String((resp.error as Record<string, unknown>).message ?? "");
+    const lower = navMsg.toLowerCase();
+
+    if (navCode === "fleet_moved" || lower.includes("fleet_moved")) {
+      log.info("nav fleet_moved — leader moved during pending command", { agent: agentName, tool: v1ToolName });
+      const mapped = {
+        status: "error",
+        error: "fleet_moved",
+        message:
+          "Your fleet leader jumped/traveled while this command was pending, so it was cancelled. " +
+          "Call get_status to re-query your current position, then retry.",
+      };
+      completeLog(pendingId, agentName, action, mapped, elapsed, { success: false, errorCode: "fleet_moved" });
+      return await withInjections(agentName, textResult(mapped));
+    }
+
+    if (navCode === "in_transit" || /\bin[_ ]transit\b/.test(lower)) {
+      log.info("nav in_transit error — command sent mid-jump", { agent: agentName, tool: v1ToolName });
+      const mapped = {
+        status: "error",
+        error: "in_transit",
+        message:
+          "Your ship is still moving (in transit), so this command was rejected. " +
+          "Call get_status in 30-60 seconds to confirm arrival, then retry. " +
+          "Do NOT call logout/login — the ship will arrive naturally.",
+      };
+      completeLog(pendingId, agentName, action, mapped, elapsed, { success: false, errorCode: "in_transit" });
+      return await withInjections(agentName, textResult(mapped));
+    }
+
+    if (v1ToolName === "travel" && (navCode === "wrong_system" || lower.includes("wrong_system"))) {
+      // The travel_to compound tool auto-jumps + retries on wrong_system. The raw
+      // travel passthrough can't drive a multi-step route, so return a clean,
+      // actionable message that names the destination system (v0.345.1 includes it).
+      log.info("nav wrong_system on direct travel", { agent: agentName, tool: v1ToolName, detail: navMsg.slice(0, 120) });
+      const mapped = {
+        status: "error",
+        error: "wrong_system",
+        message:
+          `That POI is in a different system. ${navMsg} ` +
+          "jump (or jump_route) to that system first, then travel to the POI — " +
+          "or use travel_to, which auto-routes across systems.",
+      };
+      completeLog(pendingId, agentName, action, mapped, elapsed, { success: false, errorCode: "wrong_system" });
+      return await withInjections(agentName, textResult(mapped));
+    }
+  }
+
   // --- 4. Error path ---
 
   if (resp.error) {
@@ -1667,7 +1746,14 @@ export async function handlePassthrough(
   }
 
   if (v1ToolName === "deposit_items" && typeof summarized === "object" && summarized !== null) {
-    (summarized as any).hint = "⚠️ Items deposited to STATION STORAGE — you earned 0 credits. Use multi_sell instead to earn credits. Deposits are almost never the right choice.";
+    // v0.367.0: deposit/withdraw accept an `items` array (up to 100 types) to move
+    // many item types in one action. Both the scalar (item_id/quantity) and the
+    // batched (items:[...]) forms pass through dispatch untouched; we only annotate
+    // the count so the hint reads correctly for a bulk deposit.
+    const depositedItems = payload?.items;
+    const itemCount = Array.isArray(depositedItems) ? depositedItems.length : undefined;
+    const countClause = itemCount && itemCount > 1 ? `${itemCount} item types ` : "Items ";
+    (summarized as any).hint = `⚠️ ${countClause}deposited to STATION STORAGE — you earned 0 credits. Use multi_sell instead to earn credits. Deposits are almost never the right choice.`;
   }
 
   // install_mod: the game sometimes returns success immediately but fails asynchronously.

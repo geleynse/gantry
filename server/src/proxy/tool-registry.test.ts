@@ -438,14 +438,14 @@ describe("tool-registry", () => {
       const deps = makeDeps();
       registerCompoundTools(deps);
       const expected = [
-        "batch_mine", "travel_to", "jump_route", "multi_sell",
+        "batch_mine", "travel_to", "jump_route", "multi_sell", "passenger_run",
         "scan_and_attack", "battle_readiness", "loot_wrecks", "flee",
         "get_craft_profitability", "get_events", "get_session_info",
       ];
       for (const name of expected) {
         expect(deps.registeredTools).toContain(name);
       }
-      expect(deps.registeredTools.length).toBe(11);
+      expect(deps.registeredTools.length).toBe(12);
     });
 
     it("batch_mine returns not-logged-in when no session", async () => {
@@ -646,13 +646,13 @@ describe("tool-registry", () => {
   }
 
   describe("buildCompoundActions", () => {
-    it("returns all 10 compound actions", () => {
+    it("returns all 11 compound actions", () => {
       const deps = makeCompoundDepsBase();
       const actions = buildCompoundActions(deps, new Set());
       expect(Object.keys(actions)).toEqual([
         "batch_mine", "travel_to", "jump_route", "multi_sell",
         "scan_and_attack", "battle_readiness", "loot_wrecks", "flee",
-        "get_craft_profitability", "craft_path_to",
+        "get_craft_profitability", "craft_path_to", "passenger_run",
       ]);
     });
 

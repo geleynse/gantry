@@ -9,6 +9,7 @@ import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
 import { handlePassthrough, waitForActionResult, textResult, executeForClient, checkRefuelTargetGuard, type PassthroughDeps, type McpTextResult } from "./passthrough-handler.js";
 import { EventBuffer } from "./event-buffer.js";
 import { STATE_CHANGING_TOOLS } from "./proxy-constants.js";
+import { NAV_COMMAND_TIMEOUT_MS } from "./game-transport.js";
 import { GalaxyGraph } from "./pathfinder.js";
 import { createDatabase, closeDb } from "../services/database.js";
 import { registerPoi, markDockable, isDockable, _resetDockFailures } from "../services/galaxy-poi-registry.js";
@@ -199,7 +200,7 @@ describe("handlePassthrough", () => {
     const parsed = parseResult(result) as Record<string, unknown>;
 
     // Should have executed successfully (no error injected due to unexpected field)
-    expect(client.execute).toHaveBeenCalledWith("jump", { target_system: "beta" });
+    expect(client.execute).toHaveBeenCalledWith("jump", { target_system: "beta" }, { timeoutMs: NAV_COMMAND_TIMEOUT_MS });
     expect(parsed.error).toBeUndefined();
   });
 
@@ -306,7 +307,7 @@ describe("handlePassthrough", () => {
     const result = await handlePassthrough(deps, client, "test-agent", "travel", "travel", { target_poi: "beta_station" }, undefined);
     const parsed = parseResult(result) as Record<string, unknown>;
 
-    expect(client.execute).toHaveBeenCalledWith("travel", { target_poi: "beta_station" });
+    expect(client.execute).toHaveBeenCalledWith("travel", { target_poi: "beta_station" }, { timeoutMs: NAV_COMMAND_TIMEOUT_MS });
     expect(parsed.error).toBeUndefined();
   });
 
@@ -1025,7 +1026,7 @@ describe("jump neighbor validation", () => {
 
     // Should have executed the jump (no error)
     expect(parsed.error).toBeUndefined();
-    expect(client.execute).toHaveBeenCalledWith("jump", { target_system: "sirius" });
+    expect(client.execute).toHaveBeenCalledWith("jump", { target_system: "sirius" }, { timeoutMs: NAV_COMMAND_TIMEOUT_MS });
   });
 });
 
@@ -2308,5 +2309,60 @@ describe("executeForClient — v2 path", () => {
     const { calls, client } = makeRecorderClient(true);
     await executeForClient(client, "refuel", { item_id: "fuel_cell" });
     expect(calls).toEqual([{ tool: "spacemolt", args: { action: "refuel", item_id: "fuel_cell" } }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Nav error-code mapping (v0.341.1 / v0.345.1)
+// ---------------------------------------------------------------------------
+describe("nav error-code mapping in handlePassthrough", () => {
+  it("jump fleet_moved → clean actionable result (not raw error)", async () => {
+    const client = createMockClient({ jump: { error: { code: "fleet_moved", message: "fleet leader moved" } } });
+    const deps = createMockDeps();
+    const result = await handlePassthrough(deps, client, "agent", "jump", "jump", { target_system: "sirius" }, "sirius");
+    const parsed = parseResult(result) as Record<string, unknown>;
+    expect(parsed.error).toBe("fleet_moved");
+    expect(String(parsed.message)).toContain("get_status");
+  });
+
+  it("travel in_transit error → clean actionable result, distinct from internal flag", async () => {
+    const client = createMockClient({ travel: { error: { code: "in_transit", message: "ship is in transit" } } });
+    const deps = createMockDeps();
+    const result = await handlePassthrough(deps, client, "agent", "travel", "travel", { target_poi: "beta_station" });
+    const parsed = parseResult(result) as Record<string, unknown>;
+    expect(parsed.error).toBe("in_transit");
+    expect(String(parsed.message)).toContain("Do NOT call logout/login");
+  });
+
+  it("travel wrong_system → clean actionable result naming the system", async () => {
+    const client = createMockClient({ travel: { error: { code: "wrong_system", message: "POI poi_0050_002 is in system sirius, but you are in sol" } } });
+    const deps = createMockDeps();
+    const result = await handlePassthrough(deps, client, "agent", "travel", "travel", { target_poi: "poi_0050_002" });
+    const parsed = parseResult(result) as Record<string, unknown>;
+    expect(parsed.error).toBe("wrong_system");
+    expect(String(parsed.message)).toContain("sirius");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bulk storage batched-items pass-through (v0.367.0)
+// ---------------------------------------------------------------------------
+describe("bulk storage items[] pass-through", () => {
+  it("deposit_items with an items[] array passes through and the hint reflects the count", async () => {
+    const client = createMockClient({ deposit_items: { result: { ok: true } } });
+    const deps = createMockDeps();
+    const items = [
+      { item_id: "iron_ore", quantity: 10 },
+      { item_id: "copper_ore", quantity: 5 },
+      { item_id: "gold_ore", quantity: 3 },
+    ];
+    const result = await handlePassthrough(deps, client, "agent", "deposit_items", "deposit_items", { items });
+    // The array form reaches the client untouched (no choke / no scalar assumption).
+    expect(client.execute).toHaveBeenCalledWith("deposit_items", { items });
+    const parsed = parseResult(result) as Record<string, unknown>;
+    // deposit_items is state-changing, so the summarized payload (with the hint)
+    // is wrapped under `result`.
+    const hint = (parsed.result as Record<string, unknown> | undefined)?.hint ?? parsed.hint;
+    expect(String(hint)).toContain("3 item types");
   });
 });
