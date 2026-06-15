@@ -12,8 +12,10 @@ export const AgentConfigSchema = z.object({
    * (undefined): active.
    */
   enabled: z.boolean().optional(),
-  backend: z.enum(["claude", "codex", "gemini"]).optional(),
+  backend: z.enum(["claude", "codex", "gemini", "ollama"]).optional(),
   model: z.string().optional(),
+  /** OpenAI-compatible /v1 endpoint, required by the runner when backend === "ollama". */
+  baseUrl: z.string().optional(),
   extraTools: z.string().optional(),
   faction: z.string().optional(),
   role: z.string().optional(),

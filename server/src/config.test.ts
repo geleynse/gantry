@@ -261,4 +261,22 @@ describe("loadConfig", () => {
     expect(config.agents[0].backend).toBe("gemini");
     expect(config.agents[0].model).toBe("flash");
   });
+
+  test("loads ollama backend with baseUrl for local-model agents", () => {
+    const fleetDir = makeTempFleetDir();
+    writeConfig(fleetDir, "gantry.json", {
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [{
+        name: "local-agent",
+        backend: "ollama",
+        model: "qwen3:14b",
+        baseUrl: "http://192.168.1.23:11434/v1",
+        contextMode: "compressed",
+      }],
+    });
+    const config = loadConfig(fleetDir);
+    expect(config.agents[0].backend).toBe("ollama");
+    expect(config.agents[0].model).toBe("qwen3:14b");
+    expect(config.agents[0].baseUrl).toBe("http://192.168.1.23:11434/v1");
+  });
 });
