@@ -51,8 +51,11 @@ function buildStartSpec(agent: AgentConfig & { canaryMode?: boolean }): proc.Ses
   // v2 agents use a different tool allowlist
   const mcpVersion = agent.mcpVersion ?? 'v2';
   const mcpAllow = 'mcp__gantry__*';
+  // The ollama adapter owns its own MCP client and reads a direct http `url`
+  // (mcp-proxy.json) — it cannot use the stdio mcp-remote wrapper in mcp-v2.json.
   const mcpConfig = mcpVersion === 'overseer' ? 'mcp-overseer.json'
-    : mcpVersion === 'v2' ? 'mcp-v2.json' : 'mcp.json';
+    : backend === 'ollama' ? 'mcp-proxy.json'
+      : mcpVersion === 'v2' ? 'mcp-v2.json' : 'mcp.json';
 
   const args: string[] = [
     '--agent', name,
