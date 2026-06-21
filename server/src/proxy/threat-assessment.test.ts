@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from "bun:test";
 import { createDatabase, closeDb, getDb } from "../services/database.js";
-import { assessSystemThreat, clearThreatCache } from "./threat-assessment.js";
+import { assessSystemThreat, clearThreatCache, assessShipThreat } from "./threat-assessment.js";
 
 beforeAll(() => {
   createDatabase(":memory:");
@@ -133,5 +133,37 @@ describe("assessSystemThreat — caching", () => {
     clearThreatCache();
     const fresh = assessSystemThreat("Krix");
     expect(fresh.score).toBeGreaterThanOrEqual(first.score);
+  });
+});
+
+describe("assessShipThreat — pirate tier & boss (combat-survey #1 gap)", () => {
+  it("rates an elite pirate as extreme even with sparse data", () => {
+    const r = assessShipThreat({ class_id: "scout", pirate_tier: "elite" });
+    expect(r.level).toBe("extreme");
+  });
+
+  it("rates a boss pirate as extreme unconditionally (even an unarmed shuttle)", () => {
+    const r = assessShipThreat({ class_id: "shuttle", is_boss: true, weapons: [] });
+    expect(r.level).toBe("extreme");
+  });
+
+  it("rates a 'dangerous' tier pirate above harmless even when unarmed", () => {
+    const r = assessShipThreat({ class_id: "scout", pirate_tier: "dangerous", weapons: [] });
+    expect(r.level).not.toBe("harmless");
+  });
+
+  it("leaves a plain unarmed shuttle with no tier as harmless (tier logic doesn't inflate)", () => {
+    const r = assessShipThreat({ class_id: "shuttle", weapons: [] });
+    expect(r.level).toBe("harmless");
+  });
+
+  it("reads the tier from the `tier` field as well as `pirate_tier`", () => {
+    const r = assessShipThreat({ class_id: "frigate", tier: "elite" });
+    expect(r.level).toBe("extreme");
+  });
+
+  it("annotates the summary with the pirate tier", () => {
+    const r = assessShipThreat({ class_id: "frigate", pirate_tier: "elite" });
+    expect(r.summary.toLowerCase()).toContain("elite");
   });
 });

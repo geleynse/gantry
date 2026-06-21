@@ -33,6 +33,12 @@ export interface ShipData {
   faction?: string;
   hostile?: boolean;
   owner?: string;
+  /** Pirate threat tier (elite/dangerous/veteran/…). Recorded in combat_events. */
+  pirate_tier?: string;
+  /** Alternate field name the game uses for the same tier. */
+  tier?: string;
+  /** Boss/named pirate flag — always an extreme threat. */
+  is_boss?: boolean;
 }
 
 export interface ShipThreatAssessment {
@@ -116,17 +122,34 @@ export function assessShipThreat(ship: ShipData): ShipThreatAssessment {
   const hasHeavy = weaponTypes.some(t => heavyTypes.some(h => t.includes(h)));
   if (hasHeavy) score += 1;
 
-  // Unarmed small ships are harmless
-  if (weaponCount === 0 && (shipClass === "shuttle" || shipClass === "scout" || shipClass === "unknown")) {
+  // Pirate tier / boss — combat-survey #1 gap: pirate_tier was recorded in
+  // combat_events but never used, so agents only fled once their hull was already
+  // low. Tier/boss raise the threat BEFORE any damage, enabling a proactive flee
+  // against elites/bosses (model: vcarl/sm-cli _threat_level).
+  const tier = String(ship.pirate_tier ?? ship.tier ?? "").toLowerCase().trim();
+  const isBoss = ship.is_boss === true || tier.includes("boss");
+  const tierScore: Record<string, number> = {
+    elite: 6, dangerous: 4, veteran: 2, hardened: 2, rookie: 0, novice: 0,
+  };
+  const hasTier = tier.length > 0;
+  if (hasTier) score += tierScore[tier] ?? 2; // unknown non-empty tier → moderate
+
+  // Unarmed small ships are harmless — UNLESS they carry a pirate tier/boss flag
+  // (a tagged pirate is dangerous regardless of the sparse ship telemetry).
+  if (weaponCount === 0 && !hasTier && !isBoss &&
+      (shipClass === "shuttle" || shipClass === "scout" || shipClass === "unknown")) {
     score = Math.min(score, 1);
   }
 
-  const level: ShipThreatLevel =
+  let level: ShipThreatLevel =
     score <= 0 ? "harmless" :
     score <= 2 ? "low" :
     score <= 4 ? "medium" :
     score <= 6 ? "high" :
     "extreme";
+
+  // Boss pirates are unconditionally extreme — flee on sight.
+  if (isBoss) level = "extreme";
 
   const weaponDesc = weaponCount === 0
     ? "unarmed"
@@ -134,7 +157,9 @@ export function assessShipThreat(ship: ShipData): ShipThreatAssessment {
       ? "1 weapon"
       : `${weaponCount} weapons`;
 
-  const summary = `${shipClass} (${weaponDesc}) — ${level.toUpperCase()} threat`;
+  const tierTag = isBoss ? " BOSS" : hasTier ? ` ${tier}` : "";
+  const fleeHint = (isBoss || level === "extreme") ? " — FLEE" : "";
+  const summary = `${shipClass}${tierTag} (${weaponDesc}) — ${level.toUpperCase()} threat${fleeHint}`;
 
   return { level, shipClass, weaponCount, weaponTypes, summary };
 }
