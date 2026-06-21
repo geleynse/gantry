@@ -19,6 +19,7 @@
 import { CircuitBreaker } from "./circuit-breaker.js";
 import type { MetricsWindow } from "./instability-metrics.js";
 import { createLogger } from "../lib/logger.js";
+import { checkChangelogForBreaking } from "../services/changelog-watch.js";
 import packageJson from "../../package.json" with { type: "json" };
 import type {
   GameTransport,
@@ -588,6 +589,7 @@ export class HttpGameClientV2 implements GameTransport {
     }
 
     log.debug("login response", { agent: this.label, raw: typeof resp.result === "string" ? resp.result : JSON.stringify(resp.result) });
+    this.watchChangelog(resp.result);
     const parsed = this.parseSessionIdFromGreeting(resp.result);
     if (parsed) {
       if (parsed !== this.mcpSessionId) {
@@ -1028,6 +1030,17 @@ export class HttpGameClientV2 implements GameTransport {
   }
 
   /**
+   * Scan the login/renewal greeting's release notes for breaking-change keywords
+   * and file a deduped alert. Best-effort — never let it disrupt the login path.
+   */
+  private watchChangelog(result: unknown): void {
+    try {
+      const text = typeof result === "string" ? result : JSON.stringify(result);
+      checkChangelogForBreaking(text);
+    } catch { /* non-fatal */ }
+  }
+
+  /**
    * Single-flight session renewal. If a renewal is already in progress, every
    * other caller awaits that same promise rather than starting a second
    * mcpInitialize() — concurrent renewals would each mint a fresh game session
@@ -1065,6 +1078,7 @@ export class HttpGameClientV2 implements GameTransport {
       });
       if (resp.error) return false;
 
+      this.watchChangelog(resp.result);
       this.gameSessionId = this.parseSessionIdFromGreeting(resp.result) ?? this.mcpSessionId;
 
       this.authenticated = true;
