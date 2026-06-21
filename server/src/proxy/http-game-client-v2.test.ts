@@ -926,6 +926,35 @@ describe("HttpGameClientV2", () => {
     expect(inWindow.length).toBe(1);
   });
 
+  it("renewSession login payload omits session_id (game rejects it on login)", async () => {
+    // Regression: the primary login() drops session_id (game returns
+    // 'Unknown parameter(s): session_id'), but _doRenewSession still sent
+    // session_id=mcpSessionId — so EVERY internal renewal was rejected, flooding
+    // agents with session_renewal_failed mid-turn (observed live 2026-06-21).
+    pushLoginSequence();
+    await client.login("bot", "pw");
+
+    pushMcpToolError("session_expired", "Session expired");
+    pushInitSequence("mcp-sess-renew-nosid");
+    pushMcpToolResult("Welcome back! Session ID: renewnosid0000000");
+    pushMcpToolResult(JSON.stringify({ ok: true }));
+
+    const resp = await client.execute("spacemolt", { action: "get_status" }, { skipMetrics: true });
+    expect(resp.error).toBeUndefined();
+
+    // Every spacemolt_auth login call (initial + renewal) must omit session_id.
+    const loginArgs = fetchMock.mock.calls
+      .map((c) => {
+        try { return JSON.parse((c[1] as RequestInit).body as string); } catch { return null; }
+      })
+      .filter((b) => b?.params?.name === "spacemolt_auth" && b?.params?.arguments?.action === "login")
+      .map((b) => b.params.arguments);
+    expect(loginArgs.length).toBeGreaterThanOrEqual(2); // initial + renewal
+    for (const args of loginArgs) {
+      expect(args.session_id).toBeUndefined();
+    }
+  });
+
   it("execute: returns session_renewal_failed (not session_expired) when renewal fails", async () => {
     pushLoginSequence();
     await client.login("bot", "pw");

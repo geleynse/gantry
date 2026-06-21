@@ -1053,11 +1053,15 @@ export class HttpGameClientV2 implements GameTransport {
     if (!this.credentials) return false;
     try {
       await this.mcpInitialize();
+      // Do NOT send session_id on login — the game rejects it with
+      // "Unknown parameter(s): session_id" and the whole renewal fails (matches
+      // the primary login() path; sending it here flooded agents with
+      // session_renewal_failed mid-turn, observed live 2026-06-21). The canonical
+      // session is parsed from the greeting below.
       const resp = await this.mcpToolCall("spacemolt_auth", {
         action: "login",
         username: this.credentials.username,
         password: this.credentials.password,
-        session_id: this.mcpSessionId,
       });
       if (resp.error) return false;
 
