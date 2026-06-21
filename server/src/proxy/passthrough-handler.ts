@@ -546,11 +546,19 @@ export async function handlePassthrough(
   }
 
   // --- 1e. Pre-dock check: block dock at known non-dockable POIs ---
+  // Fail-OPEN on a stale cache: if statusCache froze (e.g. the session-renewal
+  // breaker tripped and refreshStatus stopped firing), current_poi can point at a
+  // location the ship left hours ago. Blocking dock against that frozen POI is the
+  // persistent dock-state wedge. Only trust the cached position to fail-closed when
+  // it is reasonably fresh; otherwise let the game authoritatively decide.
+  const PRE_DOCK_STALE_CEILING_MS = 300_000; // 5 min
   if (v1ToolName === "dock") {
     const cachedPreDock = statusCache.get(agentName);
     const playerPreDock = cachedPreDock?.data?.player as Record<string, unknown> | undefined;
     const preDockPoi = String(playerPreDock?.current_poi ?? "");
-    if (preDockPoi) {
+    const preDockStale = !cachedPreDock
+      || (Date.now() - cachedPreDock.fetchedAt) > PRE_DOCK_STALE_CEILING_MS;
+    if (preDockPoi && !preDockStale) {
       const dockable = isDockable(preDockPoi);
       if (dockable === false) {
         const poi = getPoi(preDockPoi);

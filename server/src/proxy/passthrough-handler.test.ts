@@ -1826,6 +1826,30 @@ describe("pre-dock dockability check", () => {
     expect(String(parsed.message)).toContain("get_system");
   });
 
+  it("does NOT block dock at known non-dockable POI when the cache is stale (fail-open)", async () => {
+    // Regression: when statusCache froze (e.g. session-renewal breaker tripped), the
+    // pre-dock guard kept blocking dock against a days-old frozen current_poi even
+    // after the ship had jumped away — the persistent dock-state wedge. A stale cache
+    // must NOT be trusted to fail-closed; let the game authoritatively decide.
+    registerPoi({ id: "main_belt", name: "Main Belt", system: "sol", type: "belt" });
+    markDockable("main_belt", false);
+
+    const client = createMockClient({ dock: { result: { status: "completed" } } });
+    const statusCache = new Map();
+    statusCache.set("agent1", {
+      data: { player: { current_poi: "main_belt", current_system: "sol", docked_at_base: false } },
+      fetchedAt: Date.now() - 10 * 60_000, // 10 min stale — frozen position
+    });
+    const deps = createMockDeps({
+      statusCache,
+      waitForDockCacheUpdate: mock(async () => true),
+    });
+
+    await handlePassthrough(deps, client, "agent1", "dock", "dock", {}, "dock");
+    // Stale cache → guard fails open → the real dock call goes through.
+    expect(client.execute).toHaveBeenCalled();
+  });
+
   it("allows dock at known dockable POI", async () => {
     registerPoi({ id: "sol_station", name: "Sol Station", system: "sol", type: "station" });
     markDockable("sol_station", true);
