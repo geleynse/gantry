@@ -43,6 +43,18 @@ const ERROR_HINTS: ErrorHint[] = [
   { pattern: "already insured", hint: "Ship already has active insurance. No action needed — skip and continue." },
   { pattern: "no_current_system", hint: "You are in hyperspace transit. Wait for arrival before acting." },
   { pattern: "no_life_support", hint: "Life support is structurally maxed at this location — you cannot expand it here. Build elsewhere or find a location where life support capacity is not at its ceiling." },
+  // v0.360.0/v0.361.1 durable-transaction codes. The write FAILED and was
+  // auto-reverted — credits/cargo are unchanged. Do NOT assume success.
+  { pattern: "persist_failed", hint: "A durable write failed and was auto-reverted — your credits/cargo are unchanged. Call get_status to confirm state, then retry the action ONCE. Do NOT assume it went through." },
+  { pattern: "persist_timeout", hint: "A durable write timed out and was auto-reverted — the action did NOT complete. Call get_status to verify state before retrying. Do NOT repeat blindly." },
+  // v0.342.0 facility idle_reason enum — surfaced when a facility stalls. Each
+  // value is a distinct, actionable cause.
+  { pattern: "no_inputs", hint: "Facility is idle: it has no input materials. Deliver/stock the required inputs (or wire a supplier) so it can resume production." },
+  { pattern: "no_maintenance", hint: "Facility is idle: missing maintenance materials. Stock the maintenance items it consumes." },
+  { pattern: "insufficient_labor_credits", hint: "Facility is idle: not enough labor credits. Top up the facility's labor-credit balance." },
+  { pattern: "no_fuel_bunker", hint: "Facility is idle: no fuel bunker available. Build/stock a fuel bunker at this station." },
+  { pattern: "fuel_tank_full", hint: "Facility is idle: its fuel tank is full — nothing to do until fuel is drawn down. Not an error." },
+  { pattern: "output_storage_full", hint: "Facility is idle: output storage is full. Sell/withdraw the accumulated output so production can resume." },
 ];
 
 function getContextualHint(lower: string, context: HintContext): string | null {

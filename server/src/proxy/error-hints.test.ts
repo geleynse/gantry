@@ -199,3 +199,31 @@ describe("addErrorHint — v0.332 no_life_support", () => {
     expect(result).toContain("structurally maxed");
   });
 });
+
+describe("addErrorHint — v0.360/v0.361 durable-txn codes", () => {
+  it("adds a verify-then-retry hint for persist_failed", () => {
+    const result = addErrorHint("[persist_failed] durable write was reverted");
+    expect(result).toContain("Hint:");
+    expect(result).toContain("get_status");
+    expect(result.toLowerCase()).toContain("revert");
+  });
+
+  it("adds a verify-then-retry hint for persist_timeout", () => {
+    const result = addErrorHint("[persist_timeout] durable write timed out");
+    expect(result).toContain("Hint:");
+    expect(result).toContain("get_status");
+  });
+});
+
+describe("addErrorHint — v0.342 facility idle_reason enum", () => {
+  it("explains no_inputs idle facilities", () => {
+    const result = addErrorHint("facility idle: no_inputs");
+    expect(result).toContain("Hint:");
+    expect(result.toLowerCase()).toContain("input");
+  });
+
+  it("explains output_storage_full idle facilities", () => {
+    const result = addErrorHint("facility idle_reason=output_storage_full");
+    expect(result).toContain("Hint:");
+  });
+});
