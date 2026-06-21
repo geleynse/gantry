@@ -5,6 +5,13 @@ import type { BattleState, AgentCallTracker } from "../shared/types.js";
 
 const log = createLogger("cache");
 
+/**
+ * On restart, don't restore persisted game state older than this. A quick deploy
+ * bounce restores seconds-old state (useful); a multi-hour/day-old snapshot is
+ * phantom-stale and drives nav/cargo thrash until the first refresh overwrites it.
+ */
+const RESTORE_STALENESS_CEILING_MS = 60 * 60_000; // 1 hour
+
 function dbRun(sql: string, args: (string | number | null | undefined)[], errMsg = "cache persist failed (non-fatal)"): void {
   try {
     // bun:sqlite run() accepts a rest spread of bind values
@@ -147,19 +154,33 @@ export async function restoreAllCaches(
     // Restore game state
     try {
       const gameRows = db.prepare('SELECT agent, state_json FROM proxy_game_state').all() as Array<{ agent: string; state_json: string }>;
+      let skippedStale = 0;
+      let restoredCount = 0;
       for (const row of gameRows) {
         try {
           const parsed = JSON.parse(row.state_json);
           const validated = validateStatusCacheEntry(parsed);
           if (validated.success) {
+            // Don't restore a multi-hour-old position/cargo snapshot — serving it
+            // produces phantom-stale nav/cargo on startup (seen live: cache_age_ms
+            // ~5.8 days → dock/sell thrash). A fresh login refreshStatus repopulates
+            // authoritative state, so an aged entry is worse than no entry.
+            if (Date.now() - validated.value.fetchedAt > RESTORE_STALENESS_CEILING_MS) {
+              skippedStale++;
+              continue;
+            }
             statusCache.set(row.agent, validated.value);
+            restoredCount++;
           } else {
             log.warn(`Skipping malformed statusCache entry for agent ${row.agent}: ${validated.error}`);
           }
         } catch { /* skip malformed JSON */ }
       }
-      if (gameRows.length > 0) {
-        log.info(`Restored ${gameRows.length} game state(s) from SQL`);
+      if (skippedStale > 0) {
+        log.info(`Skipped ${skippedStale} stale game state(s) on restore (older than ${RESTORE_STALENESS_CEILING_MS / 60_000}min) — fresh login will repopulate`);
+      }
+      if (restoredCount > 0) {
+        log.info(`Restored ${restoredCount} game state(s) from SQL`);
       }
     } catch { /* table may not exist yet */ }
 

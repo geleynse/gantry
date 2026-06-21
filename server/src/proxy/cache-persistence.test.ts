@@ -86,6 +86,9 @@ describe("cache-persistence", () => {
     });
   });
 
+  // Recent timestamp so restored entries pass the 1h restore-staleness ceiling.
+  const RECENT_FETCHED_AT = Date.now() - 60_000;
+
   // Full state fixture matching the shape produced by onStateUpdate / refreshStatus
   const FULL_STATE = {
     data: {
@@ -116,7 +119,7 @@ describe("cache-persistence", () => {
       },
       in_combat: false,
     },
-    fetchedAt: 1700000000000,
+    fetchedAt: RECENT_FETCHED_AT,
   };
 
   describe("restoreAllCaches", () => {
@@ -166,7 +169,7 @@ describe("cache-persistence", () => {
       // Metadata
       expect(restored.data.tick).toBe(42);
       expect(restored.data.in_combat).toBe(false);
-      expect(restored.fetchedAt).toBe(1700000000000);
+      expect(restored.fetchedAt).toBe(RECENT_FETCHED_AT);
 
       // Battle + call trackers
       expect(battleCache.get("agent-a")?.battle_id).toBe("b1");
@@ -245,9 +248,26 @@ describe("cache-persistence", () => {
       expect(Array.isArray(ship.cargo)).toBe(true);
     });
 
+    it("skips game-state entries older than the restore staleness ceiling", async () => {
+      // Regression: restoring a multi-day-old persisted position on startup serves
+      // phantom-stale nav/cargo (seen live: cache_age_ms ~5.8 days → dock thrash).
+      // Stale entries must NOT be restored — a fresh login refreshStatus repopulates
+      // authoritative state anyway.
+      const fresh = { data: { player: { credits: 1, current_system: "Fresh" }, ship: {} }, fetchedAt: Date.now() - 60_000 };
+      const stale = { data: { player: { credits: 2, current_system: "Stale" }, ship: {} }, fetchedAt: Date.now() - 6 * 60 * 60_000 };
+      await persistGameState("fresh-agent", fresh);
+      await persistGameState("stale-agent", stale);
+
+      const statusCache = new Map();
+      await restoreAllCaches(statusCache, new Map(), new Map());
+
+      expect(statusCache.has("fresh-agent")).toBe(true);
+      expect(statusCache.has("stale-agent")).toBe(false);
+    });
+
     it("restores multiple agents independently", async () => {
-      const state1 = { data: { player: { credits: 100, current_system: "Alpha" }, ship: { fuel: 50 } }, fetchedAt: 1 };
-      const state2 = { data: { player: { credits: 999, current_system: "Beta" }, ship: { fuel: 90 } }, fetchedAt: 2 };
+      const state1 = { data: { player: { credits: 100, current_system: "Alpha" }, ship: { fuel: 50 } }, fetchedAt: Date.now() - 60_000 };
+      const state2 = { data: { player: { credits: 999, current_system: "Beta" }, ship: { fuel: 90 } }, fetchedAt: Date.now() - 30_000 };
       await persistGameState("agent-1", state1);
       await persistGameState("agent-2", state2);
 
