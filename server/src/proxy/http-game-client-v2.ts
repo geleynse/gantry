@@ -220,6 +220,15 @@ export class HttpGameClientV2 implements GameTransport {
   private nextRequestId = 1;
   private lastActionTime = 0;
   private reconnectCount = 0;
+  /**
+   * Timestamps (ms) of recent SUCCESSFUL session renewals, used by a sliding-window
+   * circuit breaker. We trip only when MAX_RECONNECTS renewals land within
+   * RENEWAL_WINDOW_MS — i.e. genuine thrash (renew → still expired → renew …) — not
+   * when legitimate session churn accumulates renewals over a long healthy run.
+   * Counting LIFETIME renewals (the old behavior) wedged agents into
+   * session_renewal_exhausted after ~30-45 min, freezing statusCache (stale nav/cargo).
+   */
+  private renewalTimestamps: number[] = [];
   /** Have we logged the raw get_status text yet? Plan §debug-logging — first call only. */
   private rawStatusLogged = false;
 
@@ -235,8 +244,14 @@ export class HttpGameClientV2 implements GameTransport {
   private sessionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   /** Refresh this many ms before the game session's reported expiry. */
   private static readonly REFRESH_LEAD_MS = 90_000;
-  /** Max consecutive reconnects before giving up and returning an error to the agent. */
+  /** Max renewals within RENEWAL_WINDOW_MS before tripping the breaker. */
   private static readonly MAX_RECONNECTS = 5;
+  /**
+   * Sliding window for the renewal circuit breaker. Healthy renewals are spaced
+   * minutes apart (session TTL), so they never accumulate to MAX_RECONNECTS within
+   * this window; pathological renew-loops fire back-to-back and trip it.
+   */
+  private static readonly RENEWAL_WINDOW_MS = 180_000;
 
   // Event wiring
   onEvent: ((event: GameEvent) => void) | null = null;
@@ -742,8 +757,8 @@ export class HttpGameClientV2 implements GameTransport {
         // Circuit-breaker: after too many reconnects the game server is likely
         // genuinely down. Stop hammering it and return a message that explicitly
         // tells the agent NOT to thrash logout/login itself.
-        if (this.reconnectCount >= HttpGameClientV2.MAX_RECONNECTS) {
-          this.log(`session renewal limit reached (${this.reconnectCount}/${HttpGameClientV2.MAX_RECONNECTS}) — not retrying`);
+        if (this.renewalsInWindow() >= HttpGameClientV2.MAX_RECONNECTS) {
+          this.log(`session renewal limit reached (${this.renewalsInWindow()}/${HttpGameClientV2.MAX_RECONNECTS} in ${HttpGameClientV2.RENEWAL_WINDOW_MS / 1000}s) — not retrying`);
           return {
             error: {
               code: "session_renewal_exhausted",
@@ -1050,6 +1065,7 @@ export class HttpGameClientV2 implements GameTransport {
 
       this.authenticated = true;
       this.reconnectCount++;
+      this.renewalTimestamps.push(Date.now());
       log.info("[proxy] session auto-reconnect succeeded (v2)", {
         agent: this.label,
         reconnectCount: this.reconnectCount,
@@ -1062,6 +1078,17 @@ export class HttpGameClientV2 implements GameTransport {
       this.logError("MCP v2 session renewal failed");
       return false;
     }
+  }
+
+  /**
+   * Prune renewal timestamps older than the sliding window and return how many
+   * remain. The breaker trips when this reaches MAX_RECONNECTS — i.e. only on
+   * rapid renew-thrash, never on legitimate session churn spread over a long run.
+   */
+  private renewalsInWindow(): number {
+    const cutoff = Date.now() - HttpGameClientV2.RENEWAL_WINDOW_MS;
+    this.renewalTimestamps = this.renewalTimestamps.filter((t) => t >= cutoff);
+    return this.renewalTimestamps.length;
   }
 
   /** Cancel any pending proactive refresh timer. Idempotent. */

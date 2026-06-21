@@ -876,13 +876,16 @@ describe("HttpGameClientV2", () => {
     expect(timer).not.toBeNull();
   });
 
-  it("execute: returns session_renewal_exhausted after MAX_RECONNECTS reached (no further re-auth)", async () => {
+  it("execute: returns session_renewal_exhausted after MAX_RECONNECTS reached within the window (no further re-auth)", async () => {
     pushLoginSequence();
     await client.login("bot", "pw");
     const callsAfterLogin = fetchMock.mock.calls.length;
 
-    // Force the circuit-breaker: pretend we've already reconnected 5 times.
-    (client as unknown as { reconnectCount: number }).reconnectCount = 5;
+    // Force the circuit-breaker: 5 renewals all within the recent window (thrash).
+    const now = Date.now();
+    (client as unknown as { renewalTimestamps: number[] }).renewalTimestamps = [
+      now, now, now, now, now,
+    ];
 
     pushMcpToolError("session_expired", "Session expired");
     const resp = await client.execute("spacemolt", { action: "get_status" }, { skipMetrics: true });
@@ -894,6 +897,33 @@ describe("HttpGameClientV2", () => {
       .slice(callsAfterLogin)
       .filter((c) => String(c[0]).endsWith("/api/v1/session"));
     expect(sessionCreatePosts.length).toBe(0);
+  });
+
+  it("execute: does NOT exhaust when prior renewals are OLDER than the window (healthy session churn)", async () => {
+    // Regression: the breaker used to count LIFETIME renewals, so 5 legitimate
+    // renewals spread over ~30-45 min of healthy operation permanently wedged the
+    // agent into session_renewal_exhausted — refreshStatus() then failed forever and
+    // statusCache froze (the "2.88 days stale" / "restart fixes it for 30-45 min" bug).
+    pushLoginSequence();
+    await client.login("bot", "pw");
+
+    // 5 prior renewals, but all OUTSIDE the sliding window (10 min ago).
+    const old = Date.now() - 10 * 60_000;
+    (client as unknown as { renewalTimestamps: number[] }).renewalTimestamps = [
+      old, old, old, old, old,
+    ];
+
+    // A fresh session_expired should still renew cleanly, not exhaust.
+    pushMcpToolError("session_expired", "Session expired");
+    pushInitSequence("mcp-sess-healthy");
+    pushMcpToolResult("Welcome back! Session ID: healthy000000000");
+    pushMcpToolResult(JSON.stringify({ ok: true }));
+
+    const resp = await client.execute("spacemolt", { action: "get_status" }, { skipMetrics: true });
+    expect(resp.error).toBeUndefined();
+    // The stale entries aged out and only the new renewal remains in the window.
+    const inWindow = (client as unknown as { renewalTimestamps: number[] }).renewalTimestamps;
+    expect(inWindow.length).toBe(1);
   });
 
   it("execute: returns session_renewal_failed (not session_expired) when renewal fails", async () => {
