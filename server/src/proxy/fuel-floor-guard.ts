@@ -66,6 +66,19 @@ export const FUEL_PER_JUMP_ESTIMATE = 10;
  */
 export const CARGO_FULL_THRESHOLD = 0.95;
 
+/**
+ * Both guards block from the cached status. If that cache is older than this,
+ * the numbers may be a frozen full-hold / low-fuel reading the ship no longer
+ * has, and blocking would prevent the very jump that resyncs it (the #1 field
+ * footgun). A structural anti-strand block only fires on fresh data.
+ */
+export const GUARD_STALE_CEILING_MS = 300_000; // 5 min
+
+/** True when a cached status entry is older than the staleness ceiling. */
+function isCacheStale(cached: CachedStatus): boolean {
+  return !cached || Date.now() - cached.fetchedAt > GUARD_STALE_CEILING_MS;
+}
+
 /** Outbound, fuel-burning navigation actions the fuel floor applies to. */
 const FUEL_BURNING_NAV = new Set(["jump", "jump_route"]);
 
@@ -169,6 +182,12 @@ export function checkFuelFloorGuard(
 ): GuardError | null {
   if (!FUEL_BURNING_NAV.has(v1ToolName)) return null;
 
+  // Stale cache → the fuel number may be frozen; never block on it.
+  if (isCacheStale(cached)) {
+    log.debug("fuel floor: skipped — cache stale", { action: v1ToolName });
+    return null;
+  }
+
   const { ship, player } = extractShipPlayer(cached);
 
   // Docked ships can refuel where they are — never block.
@@ -248,6 +267,12 @@ export function checkCargoFullDockGuard(
   opts?: { threshold?: number },
 ): GuardError | null {
   if (!FUEL_BURNING_NAV.has(v1ToolName)) return null;
+
+  // Stale cache → the cargo number may be frozen; never block on it.
+  if (isCacheStale(cached)) {
+    log.debug("cargo dock-guard: skipped — cache stale", { action: v1ToolName });
+    return null;
+  }
 
   const { ship, player } = extractShipPlayer(cached);
 

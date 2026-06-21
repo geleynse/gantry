@@ -11,13 +11,14 @@ import {
 function makeCached(
   ship: Record<string, unknown>,
   player: Record<string, unknown> = {},
+  fetchedAt: number = Date.now(),
 ): { data: Record<string, unknown>; fetchedAt: number } {
   return {
     data: {
       ship,
       player: { current_system: "delta_major", docked_at_base: false, ...player },
     },
-    fetchedAt: Date.now(),
+    fetchedAt,
   };
 }
 
@@ -203,6 +204,31 @@ describe("hasPathfinderDrive", () => {
     expect(hasPathfinderDrive(undefined)).toBe(false);
     expect(hasPathfinderDrive({})).toBe(false);
     expect(hasPathfinderDrive({ modules: [] })).toBe(false);
+  });
+});
+
+describe("guards fail open on a stale cache", () => {
+  // The #1 field footgun: a frozen statusCache shows a full hold / low fuel the
+  // ship no longer has, and the guard blocks the very jump that would resync it.
+  // A structural anti-strand block must only fire on FRESH numbers.
+  it("fuel-floor guard ALLOWS when the cached status is stale", () => {
+    const stale = makeCached({ fuel: 0, max_fuel: 160 }, {}, Date.now() - 10 * 60_000);
+    expect(checkFuelFloorGuard("jump", stale)).toBeNull();
+  });
+
+  it("cargo-full guard ALLOWS when the cached status is stale", () => {
+    const stale = makeCached({ cargo_used: 100, cargo_capacity: 100 }, {}, Date.now() - 10 * 60_000);
+    expect(checkCargoFullDockGuard("jump", stale)).toBeNull();
+  });
+
+  it("fuel-floor guard still BLOCKS on a fresh low-fuel reading", () => {
+    const fresh = makeCached({ fuel: 0, max_fuel: 160 });
+    expect(checkFuelFloorGuard("jump", fresh)).not.toBeNull();
+  });
+
+  it("cargo-full guard still BLOCKS on a fresh full reading", () => {
+    const fresh = makeCached({ cargo_used: 100, cargo_capacity: 100 });
+    expect(checkCargoFullDockGuard("jump", fresh)).not.toBeNull();
   });
 });
 
