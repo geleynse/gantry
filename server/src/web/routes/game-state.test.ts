@@ -172,7 +172,7 @@ describe('game-state flatten', () => {
 
   describe('full persist/restore round-trip', () => {
     it('restores full nested format and returns all fields via /api/game-state/all', async () => {
-      const state = { data: FULL_NESTED_DATA, fetchedAt: 12345 };
+      const state = { data: FULL_NESTED_DATA, fetchedAt: Date.now() - 60_000 };
       await persistGameState('drifter-gale', state);
 
       const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
@@ -204,7 +204,7 @@ describe('game-state flatten', () => {
         ship: { hull: 88, max_hull: 100, fuel: 45, max_fuel: 100, cargo_used: 0, cargo_capacity: 50, modules: [], cargo: [] },
         player: { skills: { mining: { name: 'Mining', level: 2, xp: 100, xp_to_next: 900 } } },
       };
-      await persistGameState('null-spark', { data: mixedData, fetchedAt: 99999 });
+      await persistGameState('null-spark', { data: mixedData, fetchedAt: Date.now() - 60_000 });
 
       const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
       await restoreAllCaches(statusCache, new Map(), new Map());
@@ -223,10 +223,11 @@ describe('game-state flatten', () => {
     });
 
     it('fetchedAt is preserved through persist/restore cycle', async () => {
-      await persistGameState('test-agent', { data: { player: { credits: 100 } }, fetchedAt: 42000 });
+      const recentFetchedAt = Date.now() - 60_000; // within the restore staleness ceiling
+      await persistGameState('test-agent', { data: { player: { credits: 100 } }, fetchedAt: recentFetchedAt });
       const statusCache = new Map<string, { data: Record<string, unknown>; fetchedAt: number }>();
       await restoreAllCaches(statusCache, new Map(), new Map());
-      expect(statusCache.get('test-agent')?.fetchedAt).toBe(42000);
+      expect(statusCache.get('test-agent')?.fetchedAt).toBe(recentFetchedAt);
     });
 
     it('returns last-known location for disconnected agent (statusCache not cleared on logout)', async () => {
