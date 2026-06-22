@@ -59,6 +59,7 @@ import { searchCatalog } from "../services/game-catalog.js";
 import { searchCaptainsLogs } from "../services/captains-logs-db.js";
 import { runPrayerScript, loadCheckpoint, saveCheckpoint, clearCheckpoint } from "./prayer/index.js";
 import { queryRecentSnapshot, listSnapshotDates, getSnapshotCoverage } from "../services/external-snapshot-fetcher.js";
+import { getStationsForItem } from "../services/market-history.js";
 import { findCraftChains } from "../services/crafting-profit.js";
 
 // ---------------------------------------------------------------------------
@@ -1085,6 +1086,19 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
           if (!fromStr || !toStr) return textResult({ error: "id (from_system) and text (to_system) are required for find_local_route" });
           const result = handleFindLocalRoute(shared.fleet.galaxyGraphRef.current, fromStr, toStr);
           return textResult(result);
+        }
+        if (action === "find_item_market") {
+          // "Where can I sell/buy X?" — station-level market observations captured
+          // from analyze_market opportunity insights. FREE, no game-action cost.
+          const itemId = String(args.id ?? "");
+          if (!itemId) return textResult({ error: "id (item_id) is required for find_item_market" });
+          const t = typeof args.text === "string" ? args.text.toLowerCase().trim() : "";
+          const type = t === "buy" || t === "sell" ? t : undefined;
+          const stations = getStationsForItem(itemId, { type });
+          if (stations.length === 0) {
+            return textResult({ item_id: itemId, stations: [], hint: "No recent station observations for this item — dock somewhere and run analyze_market to populate it." });
+          }
+          return textResult({ item_id: itemId, stations });
         }
         if (action === "recent_snapshot") {
           const itemId = typeof args.id === "string" ? args.id : undefined;
