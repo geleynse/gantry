@@ -9,7 +9,7 @@ import type { ArbitrageAnalyzer } from "./arbitrage-analyzer.js";
 import type { GalaxyGraph } from "./pathfinder.js";
 import type { EmpireInfoCache } from "./empire-info-cache.js";
 import { getRecipe, getRecipesByOutput } from "../services/recipe-registry.js";
-import { getPriceTrends } from "../services/market-history.js";
+import { getPriceTrends, getStationsForItem } from "../services/market-history.js";
 import { findPoisByService } from "../services/galaxy-poi-registry.js";
 import { getItem } from "../services/game-item-registry.js";
 import { textResult } from "./passthrough-handler.js";
@@ -136,6 +136,25 @@ export function registerPublicTools(deps: PublicToolDeps): void {
     return textResult(trends);
   }));
   registeredTools.push("get_market_trends");
+
+  mcpServer.registerTool("find_item_market", {
+    description:
+      "Find which STATIONS recently had buy/sell orders for an item, with prices. " +
+      "Answers 'where can I sell/buy X?'. type='sell' lists stations buying it from you " +
+      "(best price first); type='buy' lists stations selling it to you (cheapest first). " +
+      "FREE — no game action cost. Built from analyze_market observations (last 72h).",
+    inputSchema: {
+      item_id: z.string().describe("The ID of the item to locate markets for"),
+      type: z.enum(["buy", "sell"]).optional().describe("'sell' = where to sell it; 'buy' = where to buy it; omit for both"),
+    },
+  }, requireLogin(({ item_id, type }) => {
+    const stations = getStationsForItem(item_id, { type });
+    if (stations.length === 0) {
+      return textResult({ item_id, stations: [], hint: "No recent station observations — dock somewhere and call analyze_market to populate this." });
+    }
+    return textResult({ item_id, stations });
+  }));
+  registeredTools.push("find_item_market");
 
   mcpServer.registerTool("find_service", {
     description: "Find the nearest POIs offering a specific service (e.g., 'shipyard', 'refuel', 'repair'). FREE — no game action cost.",

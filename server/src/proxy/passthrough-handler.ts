@@ -15,6 +15,8 @@ import type { EventBuffer } from "./event-buffer.js";
 import { summarizeToolResult } from "./summarizers.js";
 import { addErrorHint, type HintContext } from "./error-hints.js";
 import { enrichWithGlobalContext } from "./market-enrichment.js";
+import { parseMarketInsights } from "../services/market-insights.js";
+import { recordStationObservation } from "../services/market-history.js";
 import type { MarketReservationCache } from "./market-reservations.js";
 import { AnalyzeMarketCache, CACHE_INVALIDATING_TOOLS } from "./analyze-market-cache.js";
 import { cacheSystemPois } from "./poi-resolver.js";
@@ -1504,6 +1506,29 @@ export async function handlePassthrough(
         agent: agentName,
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+
+    // Capture STATION-level market opportunities. analyze_market "opportunity"
+    // rows name a concrete station + buy/sell-order prices in their insight text
+    // (e.g. "X has buy orders at <station>: ~N at ~Pcr"), which the faction-global
+    // market cache cannot express. Persist them so getStationsForItem can answer
+    // "where can I sell/buy X?". Non-fatal — never break the tool call.
+    try {
+      const mktText = typeof result === "string" ? result : JSON.stringify(result);
+      const opportunities = parseMarketInsights(mktText);
+      for (const op of opportunities) {
+        recordStationObservation({
+          item_id: op.item_id,
+          station: op.station,
+          price: op.best_price,
+          type: op.type,
+        });
+      }
+      if (opportunities.length > 0) {
+        log.debug("recorded station market observations", { agent: agentName, count: opportunities.length });
+      }
+    } catch (err) {
+      log.debug("station observation capture failed (non-fatal)", { error: String(err) });
     }
   }
 

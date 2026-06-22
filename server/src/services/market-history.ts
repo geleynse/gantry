@@ -1,4 +1,4 @@
-import { queryOne, queryRun } from './database.js';
+import { queryOne, queryAll, queryRun } from './database.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('market-history');
@@ -27,6 +27,101 @@ export function recordPrice(snapshot: MarketSnapshot): void {
     );
   } catch (e) {
     log.error(`Failed to record price for ${snapshot.item_id}`, { error: e });
+  }
+}
+
+export interface StationObservation {
+  item_id: string;
+  /** Station NAME (as written in the analyze_market insight) or a poi_id. */
+  station: string;
+  price: number;
+  /** 'sell' = a station buys it from you; 'buy' = a station sells it to you. */
+  type: 'buy' | 'sell';
+}
+
+/**
+ * Record a STATION-level market observation (from analyze_market opportunity
+ * insights). The station NAME is resolved to a galaxy poi_id when known, so the
+ * row joins to nav data; otherwise the name is stored as-is (still actionable —
+ * the agent can travel_to a named station). Distinct from the faction-global
+ * `global:<empire>` rows recordPrice writes.
+ */
+export function recordStationObservation(obs: StationObservation): void {
+  try {
+    const poi_id = resolveStationPoiId(obs.station);
+    queryRun(
+      `INSERT INTO market_history (item_id, poi_id, price, type, timestamp)
+       VALUES (?, ?, ?, ?, datetime('now'))`,
+      obs.item_id,
+      poi_id,
+      obs.price,
+      obs.type,
+    );
+  } catch (e) {
+    log.error(`Failed to record station observation for ${obs.item_id}`, { error: e });
+  }
+}
+
+/** Best-effort station NAME → poi_id resolution via galaxy_pois (case-insensitive). */
+function resolveStationPoiId(station: string): string {
+  try {
+    const row = queryOne<{ id: string }>(
+      'SELECT id FROM galaxy_pois WHERE name = ? COLLATE NOCASE LIMIT 1',
+      station,
+    );
+    return row?.id ?? station;
+  } catch {
+    return station;
+  }
+}
+
+export interface StationPrice {
+  poi_id: string;
+  type: 'buy' | 'sell';
+  price: number;
+  last_seen: string;
+}
+
+/**
+ * "Where can I get / sell item X?" — returns the most-recent per-station price
+ * for an item from real-station observations (excludes faction-global rows),
+ * within a freshness window, best-price first (highest bid for sell, lowest ask
+ * for buy).
+ */
+export function getStationsForItem(
+  item_id: string,
+  opts: { type?: 'buy' | 'sell'; maxAgeHours?: number } = {},
+): StationPrice[] {
+  const maxAgeHours = opts.maxAgeHours ?? 72;
+  try {
+    const params: (string | number)[] = [item_id, `-${maxAgeHours} hours`];
+    let typeClause = '';
+    if (opts.type) {
+      typeClause = 'AND mh.type = ?';
+      params.push(opts.type);
+    }
+    // Latest row per (poi_id, type) — keyed on MAX(id), not timestamp, because
+    // datetime('now') is only second-granular so same-second inserts tie. Exclude
+    // the faction-global aggregates.
+    const rows = queryAll<StationPrice>(
+      `SELECT mh.poi_id AS poi_id, mh.type AS type, mh.price AS price, mh.timestamp AS last_seen
+       FROM market_history mh
+       WHERE mh.item_id = ?
+         AND mh.timestamp >= datetime('now', ?)
+         AND mh.poi_id NOT LIKE 'global:%'
+         ${typeClause}
+         AND mh.id = (
+           SELECT MAX(mh2.id) FROM market_history mh2
+           WHERE mh2.item_id = mh.item_id AND mh2.poi_id = mh.poi_id AND mh2.type = mh.type
+         )`,
+      ...params,
+    );
+    return rows.sort((a, b) =>
+      a.type === 'buy' ? a.price - b.price : b.price - a.price,
+    );
+  } catch (e) {
+    log.error(`Failed to query stations for ${item_id}`, { error: e });
+    return [];
   }
 }
 
