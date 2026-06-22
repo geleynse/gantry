@@ -31,7 +31,10 @@ export interface MarketOpportunity {
 
 // "buy orders at <station>: <price list>"  — capture station + the price list up to
 // the trailing parenthetical (the "(~N total fill …)" summary) or end of line.
-const ORDER_RE = /\b(buy|sell) orders at (.+?):\s*([^()]+)/i;
+// The station capture is lazy but the colon must be the one that INTRODUCES the
+// price list (followed by an optional ~ then a digit), so station names that
+// themselves contain a colon aren't truncated at the first colon.
+const ORDER_RE = /\b(buy|sell) orders at (.+?):\s*(~?\d[^()]*)/i;
 // Each per-order price, e.g. "~2300 at ~3,650cr".
 const PRICE_RE = /at\s*~?([\d,]+)\s*cr/gi;
 

@@ -1514,7 +1514,11 @@ export async function handlePassthrough(
     // market cache cannot express. Persist them so getStationsForItem can answer
     // "where can I sell/buy X?". Non-fatal — never break the tool call.
     try {
-      const mktText = typeof result === "string" ? result : JSON.stringify(result);
+      // Only the string TSV form carries the per-station "opportunity" insights.
+      // An object-form result can never JSON.stringify into a parseable TSV (tabs
+      // get escaped), so pass "" rather than stringifying — object-form market
+      // data is handled by the other analyze_market consumers above.
+      const mktText = typeof result === "string" ? result : "";
       const opportunities = parseMarketInsights(mktText);
       for (const op of opportunities) {
         recordStationObservation({

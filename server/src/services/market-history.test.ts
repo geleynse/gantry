@@ -1,6 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createDatabase, closeDb, getDb } from "./database.js";
-import { recordStationObservation, getStationsForItem, recordPrice } from "./market-history.js";
+import { recordStationObservation, getStationsForItem, recordPrice, compareStationPrices, type StationPrice } from "./market-history.js";
+
+describe("compareStationPrices (antisymmetry)", () => {
+  const sp = (poi_id: string, type: "buy" | "sell", price: number): StationPrice => ({ poi_id, type, price, last_seen: "" });
+
+  it("is antisymmetric for a cross-type pair (the old comparator was not)", () => {
+    const a = sp("BuyStn", "buy", 10);
+    const b = sp("SellStn", "sell", 500);
+    expect(Math.sign(compareStationPrices(a, b))).toBe(-Math.sign(compareStationPrices(b, a)));
+  });
+
+  it("sorts sells before buys, sells highest-first, buys lowest-first", () => {
+    const rows = [
+      sp("BuyHigh", "buy", 90), sp("SellLow", "sell", 100),
+      sp("BuyLow", "buy", 10), sp("SellHigh", "sell", 500),
+    ];
+    expect([...rows].sort(compareStationPrices).map((r) => r.poi_id))
+      .toEqual(["SellHigh", "SellLow", "BuyLow", "BuyHigh"]);
+  });
+});
 
 describe("recordStationObservation + getStationsForItem", () => {
   beforeEach(() => {
@@ -64,5 +83,24 @@ describe("recordStationObservation + getStationsForItem", () => {
     const rows = getStationsForItem("x");
     expect(rows.length).toBe(1);
     expect(rows[0].price).toBe(200); // latest wins
+  });
+
+  it("groups SELLS before BUYS even when a buy row sorts first by id (old comparator failed this)", () => {
+    // Minimal discriminator: the old `a.type==='buy' ? a.price-b.price : ...`
+    // comparator returns -490 for cmp(buy@10, sell@500) → keeps [buy, sell].
+    recordStationObservation({ item_id: "d", station: "BuyStn", price: 10, type: "buy" });
+    recordStationObservation({ item_id: "d", station: "SellStn", price: 500, type: "sell" });
+    const rows = getStationsForItem("d");
+    expect(rows.map((r) => r.type)).toEqual(["sell", "buy"]);
+  });
+
+  it("orders mixed buy+sell deterministically when type is omitted (sells best-first, then buys best-first)", () => {
+    recordStationObservation({ item_id: "m", station: "BuyHigh", price: 90, type: "buy" });
+    recordStationObservation({ item_id: "m", station: "BuyLow", price: 10, type: "buy" });
+    recordStationObservation({ item_id: "m", station: "SellHigh", price: 500, type: "sell" });
+    recordStationObservation({ item_id: "m", station: "SellLow", price: 100, type: "sell" });
+    const rows = getStationsForItem("m");
+    // sells first (highest bid first), then buys (lowest ask first)
+    expect(rows.map((r) => r.poi_id)).toEqual(["SellHigh", "SellLow", "BuyLow", "BuyHigh"]);
   });
 });

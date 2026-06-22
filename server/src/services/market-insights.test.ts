@@ -45,6 +45,24 @@ describe("parseMarketInsights", () => {
     expect(ops[0].best_price).toBe(12); // lowest ask is the best buy price
   });
 
+  it("keeps a station name that contains a colon (anchors on the price list, not the first colon)", () => {
+    const text = [
+      "priority\tcategory\titem\titem_id\tinsight",
+      "1\topportunity\tGold\tgold\tGold has buy orders at Outpost: Alpha: ~5 at ~100cr.",
+    ].join("\n");
+    const ops = parseMarketInsights(text);
+    expect(ops.length).toBe(1);
+    expect(ops[0].station).toBe("Outpost: Alpha");
+    expect(ops[0].best_price).toBe(100);
+  });
+
+  it("does not parse a stringified object (the capture path passes '' for object results)", () => {
+    // Documents the passthrough guard: analyze_market object-form results are NOT
+    // JSON.stringify'd into the parser (escaped \\t\\n never form a TSV) — they get "".
+    const objJson = JSON.stringify({ insights: "1\topportunity\tGold\tgold\tGold has buy orders at X: ~5 at ~100cr." });
+    expect(parseMarketInsights(objJson)).toEqual([]);
+  });
+
   it("returns [] for non-string / empty / order-less input", () => {
     expect(parseMarketInsights("")).toEqual([]);
     expect(parseMarketInsights(undefined as unknown as string)).toEqual([]);

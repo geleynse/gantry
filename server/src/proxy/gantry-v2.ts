@@ -1090,9 +1090,10 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
         if (action === "find_item_market") {
           // "Where can I sell/buy X?" — station-level market observations captured
           // from analyze_market opportunity insights. FREE, no game-action cost.
-          const itemId = String(args.id ?? "");
+          const itemId = String(args.id ?? args.item_id ?? "");
           if (!itemId) return textResult({ error: "id (item_id) is required for find_item_market" });
-          const t = typeof args.text === "string" ? args.text.toLowerCase().trim() : "";
+          const rawType = args.text ?? args.type;
+          const t = typeof rawType === "string" ? rawType.toLowerCase().trim() : "";
           const type = t === "buy" || t === "sell" ? t : undefined;
           const stations = getStationsForItem(itemId, { type });
           if (stations.length === 0) {

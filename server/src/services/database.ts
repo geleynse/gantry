@@ -529,6 +529,9 @@ CREATE INDEX IF NOT EXISTS idx_captains_logs_created ON captains_logs(created_at
 CREATE INDEX IF NOT EXISTS idx_market_history_item ON market_history(item_id);
 CREATE INDEX IF NOT EXISTS idx_market_history_timestamp ON market_history(timestamp);
 CREATE INDEX IF NOT EXISTS idx_galaxy_pois_system ON galaxy_pois(system);
+-- NOCASE name index backs the station-name -> poi_id lookup in
+-- recordStationObservation (runs per analyze_market opportunity row).
+CREATE INDEX IF NOT EXISTS idx_galaxy_pois_name_nocase ON galaxy_pois(name COLLATE NOCASE);
 
 CREATE TABLE IF NOT EXISTS sell_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

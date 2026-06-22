@@ -83,6 +83,21 @@ export interface StationPrice {
 }
 
 /**
+ * Deterministic, antisymmetric ordering for station prices. Groups SELL
+ * opportunities (stations buying from you) before BUY ones, sells by highest
+ * bid first, buys by lowest ask first, with a poi_id tiebreaker. The previous
+ * inline comparator inspected only `a.type`, so it was non-antisymmetric for a
+ * mixed buy+sell set (the no-`type` query path) → engine-dependent ordering.
+ */
+export function compareStationPrices(a: StationPrice, b: StationPrice): number {
+  if (a.type !== b.type) return a.type === 'sell' ? -1 : 1;
+  if (a.price !== b.price) {
+    return a.type === 'sell' ? b.price - a.price : a.price - b.price;
+  }
+  return a.poi_id < b.poi_id ? -1 : a.poi_id > b.poi_id ? 1 : 0;
+}
+
+/**
  * "Where can I get / sell item X?" — returns the most-recent per-station price
  * for an item from real-station observations (excludes faction-global rows),
  * within a freshness window, best-price first (highest bid for sell, lowest ask
@@ -116,9 +131,7 @@ export function getStationsForItem(
          )`,
       ...params,
     );
-    return rows.sort((a, b) =>
-      a.type === 'buy' ? a.price - b.price : b.price - a.price,
-    );
+    return rows.sort(compareStationPrices);
   } catch (e) {
     log.error(`Failed to query stations for ${item_id}`, { error: e });
     return [];
