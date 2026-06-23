@@ -42,11 +42,35 @@ export async function multiSell(
       // Read it here so a single get_status call settles dock state — avoids the
       // extra waitForTick→refreshStatus get_location round-trip (3 game calls →
       // 1), whose rate-limit failures were false-blocking legit sells.
-      const dockedAt = typeof freshStatus.result === "string"
-        ? parseGetStatusText(freshStatus.result).dockedAt
+      const parsedStatus = typeof freshStatus.result === "string"
+        ? parseGetStatusText(freshStatus.result)
         : undefined;
-      if (dockedAt) {
-        playerData = { ...(playerData ?? {}), docked_at_base: dockedAt, current_poi: dockedAt };
+      if (parsedStatus?.dockedAt) {
+        // Harvest the fresh data we already paid for (credits + cargo) rather than
+        // trusting the known-stale cache that sent us here. NOTE: do NOT set
+        // current_poi from dockedAt — dockedAt is the BASE/station id, current_poi
+        // is the POI id (different identifiers); overwriting it would split the
+        // sellLog station-keying. Preserve the prior current_poi.
+        const prevShip = (cachedStatus?.data?.ship as Record<string, unknown> | undefined) ?? {};
+        playerData = {
+          ...(playerData ?? {}),
+          docked_at_base: parsedStatus.dockedAt,
+          ...(parsedStatus.credits !== undefined ? { credits: parsedStatus.credits } : {}),
+        };
+        cachedStatus = {
+          data: {
+            ...(cachedStatus?.data ?? {}),
+            player: playerData,
+            ship: {
+              ...prevShip,
+              ...(parsedStatus.cargoUsed !== undefined ? { cargo_used: parsedStatus.cargoUsed } : {}),
+              // cargo as [{name, quantity}] — the ALL-resolution map keys by item_id
+              // or name-slug, so this fresh name-keyed cargo works there.
+              ...(parsedStatus.cargo.length > 0 ? { cargo: parsedStatus.cargo } : {}),
+            },
+          },
+          fetchedAt: Date.now(),
+        };
       } else {
         // Text was inconclusive (non-string, or no "Docked at:" line) — fall back
         // to the full refresh (get_status + get_location) via waitForTick.

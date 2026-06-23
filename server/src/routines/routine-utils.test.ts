@@ -108,6 +108,18 @@ describe("routine-utils: extractDemandItems (v0.417.3 text)", () => {
     expect(demand.has("iron_ore")).toBe(true);
     expect(demand.has("gold_ore")).toBe(true);
   });
+
+  it("aliases demand by name-slug so cargo with a non-canonical id still joins", () => {
+    // Market row: real id "mining_laser_1" but name "Mining Laser I" → slug
+    // "mining_laser_i". Cargo (parsed from name) would carry "mining_laser_i".
+    const text =
+      "Trading insights at X:\n" +
+      "priority\tcategory\titem\titem_id\tinsight\n" +
+      "100\tdemand\tMining Laser I\tmining_laser_1\twants to buy";
+    const demand = extractDemandItems(text);
+    expect(demand.has("mining_laser_1")).toBe(true);  // real id
+    expect(demand.has("mining_laser_i")).toBe(true);  // name-slug alias → matches cargo slug
+  });
 });
 
 describe("routine-utils: getCargoUtilization", () => {

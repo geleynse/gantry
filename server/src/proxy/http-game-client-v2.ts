@@ -1198,8 +1198,10 @@ export function parseGetStatusText(text: string): ParsedGetStatus {
   // "Docked at: <station_id>" appears only when docked (absent in space/transit).
   // This is the authoritative dock signal from the get_status dashboard itself —
   // more reliable than the separate get_location field and avoids that extra call.
+  // Guard against a future "Docked at: none/-/null" placeholder being read as a
+  // real station id (which would wrongly report docked).
   const dockMatch = text.match(/^Docked at:\s*(\S+)/m);
-  if (dockMatch) out.dockedAt = dockMatch[1];
+  if (dockMatch && !/^(none|null|-|n\/a)$/i.test(dockMatch[1])) out.dockedAt = dockMatch[1];
 
   // Section parser helper: extracts tab-delimited rows from named sections.
   // Stops at the next section header (Word (N): or Word:) or end of text.
