@@ -873,13 +873,28 @@ export class HttpGameClientV2 implements GameTransport {
       return null;
     }
 
-    if (statusResp.error || locationResp.error) {
-      log.debug("refreshStatus got error from get_status/get_location", {
+    // get_status is the primary source (ship stats, cargo, dock, credits). If IT
+    // failed we can't build a useful update. But if ONLY get_location failed
+    // (common under the shared-IP -32029 rate cap — the two fan-out calls race
+    // the cap), we still emit a PARTIAL update from the get_status text: cargo /
+    // fuel / hull / dock all refresh, and current_system/current_poi are omitted
+    // so onStateUpdate preserves the prior values. This stops a single
+    // rate-limited get_location from freezing the WHOLE cache for days
+    // (refreshStatus was all-or-nothing → caches stuck stale for a week).
+    if (statusResp.error) {
+      log.debug("refreshStatus got error from get_status", {
         agent: this.label,
         statusError: statusResp.error?.code,
         locationError: locationResp.error?.code,
       });
       return null;
+    }
+    const locationFailed = !!locationResp.error;
+    if (locationFailed) {
+      log.debug("refreshStatus: get_location failed, emitting partial from get_status text", {
+        agent: this.label,
+        locationError: locationResp.error?.code,
+      });
     }
 
     const statusText = typeof statusResp.result === "string"
@@ -931,8 +946,10 @@ export class HttpGameClientV2 implements GameTransport {
       username: parsed.username,
       empire: parsed.empire,
       credits: parsed.credits,
-      current_system: locInner.system_id,
-      current_poi: locInner.poi_id,
+      // current_system/current_poi come from get_location. When it failed, OMIT
+      // them so onStateUpdate preserves the prior values (rather than nulling
+      // position). When it succeeded, set them as usual.
+      ...(locationFailed ? {} : { current_system: locInner.system_id, current_poi: locInner.poi_id }),
       // Prefer the get_status text's "Docked at:" line (always present in the
       // status fan-out call) over get_location's field, which is easier to miss
       // on a partial/renamed response. Falls back to get_location.
@@ -977,9 +994,12 @@ export class HttpGameClientV2 implements GameTransport {
     };
 
     // Critical-field validation. Plan §A: warn + return null if any missing.
+    // current_system/current_poi are required only when get_location succeeded;
+    // on a partial (location-failed) update they're intentionally omitted and
+    // onStateUpdate preserves the prior position.
     const missing: string[] = [];
-    if (player.current_system === undefined) missing.push("player.current_system");
-    if (player.current_poi === undefined) missing.push("player.current_poi");
+    if (!locationFailed && player.current_system === undefined) missing.push("player.current_system");
+    if (!locationFailed && player.current_poi === undefined) missing.push("player.current_poi");
     if (ship.fuel === undefined) missing.push("ship.fuel");
     if (ship.hull === undefined) missing.push("ship.hull");
     if (ship.cargo_used === undefined) missing.push("ship.cargo_used");
