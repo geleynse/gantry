@@ -124,8 +124,8 @@ function parseCargoItemsFromText(text: string): CargoItem[] {
 const SELL_TARGET_CATEGORIES = new Set(["demand", "sell_here", "supply_imbalance"]);
 
 /** Parse analyze_market's formatted text table for items the station demands. */
-function extractDemandItemsFromText(text: string): Set<string> {
-  const demandItems = new Set<string>();
+function extractDemandItemsFromText(text: string): Map<string, string> {
+  const demandItems = new Map<string, string>();
   const { headers, rows } = parseTextTable(text);
   const idIdx = headers.findIndex((h) => h === "item_id" || h === "id");
   const catIdx = headers.findIndex((h) => h === "category");
@@ -138,13 +138,14 @@ function extractDemandItemsFromText(text: string): Set<string> {
     // No category column → can't tell direction; include (better to attempt
     // the sell, which no-ops at the game, than to skip a real buyer).
     if (catIdx === -1 || SELL_TARGET_CATEGORIES.has(cat) || cat.includes("demand")) {
-      demandItems.add(id);
-      // Also add the name→id slug as an alias. parseCargoItems derives a cargo
-      // item's id by slugging its display NAME (the cargo table has no id column),
-      // so for items whose real id isn't the literal slug (e.g. mining_laser_1 vs
-      // "Mining Laser I" → mining_laser_i) the cargo↔demand join would miss. The
-      // alias makes the join name-space-robust regardless of id convention.
-      if (nameIdx >= 0 && cols[nameIdx]) demandItems.add(itemNameToId(cols[nameIdx]));
+      demandItems.set(id, id);
+      // Also key by the name→id slug as an alias → the CANONICAL id. parseCargoItems
+      // derives a cargo item's id by slugging its display NAME (the cargo table has
+      // no id column), so for items whose real id isn't the literal slug (e.g.
+      // mining_laser_1 vs "Mining Laser I" → mining_laser_i) the cargo↔demand join
+      // would miss. Mapping the slug → canonical id lets callers both match AND
+      // resolve the cargo item to the real game id for the sell command.
+      if (nameIdx >= 0 && cols[nameIdx]) demandItems.set(itemNameToId(cols[nameIdx]), id);
     }
   }
   return demandItems;
@@ -154,9 +155,14 @@ function extractDemandItemsFromText(text: string): Set<string> {
  * Extract items with market demand from analyze_market results.
  * Handles multiple response shapes (demand/buyers/buy_orders, market/items),
  * plus the v0.417.3 formatted-text table.
+ *
+ * Returns a Map keyed by item_id AND (for the text format) the display-name slug,
+ * each mapped to the CANONICAL item_id. Callers filter with `.has(c.item_id)` and
+ * should resolve the cargo item to the canonical id with `.get(c.item_id)` before
+ * selling — the cargo id may be a name-slug that isn't the real game id.
  */
-export function extractDemandItems(marketData: unknown): Set<string> {
-  const demandItems = new Set<string>();
+export function extractDemandItems(marketData: unknown): Map<string, string> {
+  const demandItems = new Map<string, string>();
   if (typeof marketData === "string") return extractDemandItemsFromText(marketData);
   if (!marketData || typeof marketData !== "object") return demandItems;
 
@@ -166,7 +172,7 @@ export function extractDemandItems(marketData: unknown): Set<string> {
   if (Array.isArray(demand)) {
     for (const d of demand) {
       const itemId = (d as Record<string, unknown>).item_id ?? (d as Record<string, unknown>).id;
-      if (typeof itemId === "string") demandItems.add(itemId);
+      if (typeof itemId === "string") demandItems.set(itemId, itemId);
     }
   }
 
@@ -176,12 +182,28 @@ export function extractDemandItems(marketData: unknown): Set<string> {
       const entry = m as Record<string, unknown>;
       const hasDemand = entry.demand_quantity ?? entry.demand ?? entry.buyers;
       if (hasDemand && typeof (entry.item_id ?? entry.id) === "string") {
-        demandItems.add(String(entry.item_id ?? entry.id));
+        const id = String(entry.item_id ?? entry.id);
+        demandItems.set(id, id);
       }
     }
   }
 
   return demandItems;
+}
+
+/**
+ * Resolve cargo items (whose ids may be display-name slugs from the text cargo
+ * table) against a demand map: keep only items the station buys, and rewrite each
+ * to the CANONICAL item_id from the market so the sell/order command uses the real
+ * game id rather than a slug alias. See extractDemandItems.
+ */
+export function resolveSellable<T extends { item_id: string }>(
+  items: T[],
+  demand: Map<string, string>,
+): T[] {
+  return items
+    .filter((c) => demand.has(c.item_id))
+    .map((c) => ({ ...c, item_id: demand.get(c.item_id) ?? c.item_id }));
 }
 
 /** Extract mission array from API result — handles both array and { missions: [...] } shapes */

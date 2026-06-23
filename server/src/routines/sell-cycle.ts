@@ -16,7 +16,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { done, handoff, phase, completePhase, extractDemandItems, travelAndDock, parseCargoItems } from "./routine-utils.js";
+import { done, handoff, phase, completePhase, extractDemandItems, resolveSellable, travelAndDock, parseCargoItems } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -135,7 +135,7 @@ async function run(ctx: RoutineContext, params: SellCycleParams): Promise<Routin
           phases,
         );
       }
-      itemsToSell = allCargo.filter((c) => demandItems.has(c.item_id));
+      itemsToSell = resolveSellable(allCargo, demandItems);
     }
   }
 

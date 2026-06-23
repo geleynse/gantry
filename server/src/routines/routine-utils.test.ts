@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { getCargoUtilization, parseCargoItems, extractDemandItems, parseTextTable, itemNameToId } from "./routine-utils.js";
+import { getCargoUtilization, parseCargoItems, extractDemandItems, resolveSellable, parseTextTable, itemNameToId } from "./routine-utils.js";
 
 // Live formats captured from game v0.426.5 (v0.417.3 formatted-output change).
 const GET_CARGO_TEXT =
@@ -109,7 +109,7 @@ describe("routine-utils: extractDemandItems (v0.417.3 text)", () => {
     expect(demand.has("gold_ore")).toBe(true);
   });
 
-  it("aliases demand by name-slug so cargo with a non-canonical id still joins", () => {
+  it("aliases demand by name-slug → canonical id so cargo with a non-canonical id joins AND sells with the real id", () => {
     // Market row: real id "mining_laser_1" but name "Mining Laser I" → slug
     // "mining_laser_i". Cargo (parsed from name) would carry "mining_laser_i".
     const text =
@@ -117,8 +117,15 @@ describe("routine-utils: extractDemandItems (v0.417.3 text)", () => {
       "priority\tcategory\titem\titem_id\tinsight\n" +
       "100\tdemand\tMining Laser I\tmining_laser_1\twants to buy";
     const demand = extractDemandItems(text);
-    expect(demand.has("mining_laser_1")).toBe(true);  // real id
-    expect(demand.has("mining_laser_i")).toBe(true);  // name-slug alias → matches cargo slug
+    expect(demand.has("mining_laser_1")).toBe(true);          // real id
+    expect(demand.has("mining_laser_i")).toBe(true);          // name-slug alias → matches cargo slug
+    expect(demand.get("mining_laser_i")).toBe("mining_laser_1"); // alias resolves to CANONICAL id
+
+    // resolveSellable rewrites the slugged cargo id to the canonical market id,
+    // so the multi_sell/create_sell_order payload uses the real game id.
+    const cargo = [{ item_id: "mining_laser_i", quantity: 2 }, { item_id: "not_wanted", quantity: 1 }];
+    const sellable = resolveSellable(cargo, demand);
+    expect(sellable).toEqual([{ item_id: "mining_laser_1", quantity: 2 }]);
   });
 });
 

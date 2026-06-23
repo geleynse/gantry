@@ -6,7 +6,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { done, handoff, phase, completePhase, checkCombat, extractDemandItems, getCargoUtilization, travelAndDock, parseCargoItems } from "./routine-utils.js";
+import { done, handoff, phase, completePhase, checkCombat, extractDemandItems, resolveSellable, getCargoUtilization, travelAndDock, parseCargoItems } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -138,7 +138,7 @@ async function run(ctx: RoutineContext, params: SalvageLoopParams): Promise<Rout
   const cargoResp = await ctx.client.execute("get_cargo");
   const allCargo = parseCargoItems(cargoResp.result);
   const demandItems = extractDemandItems(marketData);
-  const itemsToSell = demandItems.size === 0 ? allCargo : allCargo.filter(c => demandItems.has(c.item_id));
+  const itemsToSell = demandItems.size === 0 ? allCargo : resolveSellable(allCargo, demandItems);
 
   let itemsSold = 0;
   let creditsEarned = 0;
