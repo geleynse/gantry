@@ -303,6 +303,20 @@ export async function handleLogin(
       const prev = statusCache.get(agentName);
       if (prev?.data) {
         const prevPlayer = prev.data.player as Record<string, unknown> | undefined;
+        // Preserve prior position on a partial update — refreshStatus omits
+        // current_system/current_poi when get_location was rate-limited (so a
+        // single failed location call doesn't null the whole position). Without
+        // this the partial would blank position; with it, cargo/fuel/dock stay
+        // fresh while position carries forward until get_location succeeds again.
+        const newPlayer = data.player as Record<string, unknown> | undefined;
+        if (newPlayer && prevPlayer) {
+          if (newPlayer.current_system === undefined && prevPlayer.current_system !== undefined) {
+            newPlayer.current_system = prevPlayer.current_system;
+          }
+          if (newPlayer.current_poi === undefined && prevPlayer.current_poi !== undefined) {
+            newPlayer.current_poi = prevPlayer.current_poi;
+          }
+        }
         const prevSkills = prevPlayer?.skills ?? (prev.data as Record<string, unknown>).skills;
         if (prevSkills) {
           // Clone prevSkills to avoid propagating frozen references from previous cache

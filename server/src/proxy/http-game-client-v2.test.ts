@@ -590,6 +590,28 @@ describe("HttpGameClientV2", () => {
     expect(player.docked_at_base).toBeNull();
   });
 
+  it("refreshStatus emits a partial update (ship+dock fresh, position omitted) when get_location fails", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+
+    // get_status OK (with a Docked at: line), get_location rate-limited.
+    pushMcpToolResult(SAMPLE_GET_STATUS + "\nDocked at: sirius_station\n");
+    pushMcpToolError("-32029", "rate limited");
+
+    const status = await client.refreshStatus();
+    expect(status).not.toBeNull(); // not all-or-nothing anymore
+    const player = status!.player as Record<string, unknown>;
+    const ship = status!.ship as Record<string, unknown>;
+
+    // Position omitted so onStateUpdate preserves the prior values.
+    expect("current_system" in player).toBe(false);
+    expect("current_poi" in player).toBe(false);
+    // Ship stats + dock state still refresh from the get_status text.
+    expect(ship.fuel).toBe(80);
+    expect(ship.cargo_used).toBe(14);
+    expect(player.docked_at_base).toBe("sirius_station");
+  });
+
   it("refreshStatus returns null when get_status is missing critical fields", async () => {
     pushLoginSequence();
     await client.login("bot", "pw");
@@ -604,15 +626,21 @@ describe("HttpGameClientV2", () => {
     expect(status).toBeNull();
   });
 
-  it("refreshStatus returns null when get_location errors", async () => {
+  it("refreshStatus still emits a partial (ship fresh, position omitted) when get_location errors and ship is undocked", async () => {
     pushLoginSequence();
     await client.login("bot", "pw");
 
+    // SAMPLE_GET_STATUS has no "Docked at:" line (in space). get_location errors.
     pushMcpToolResult(SAMPLE_GET_STATUS);
     pushMcpToolResult("Error: not_logged_in: ohno", true);
 
     const status = await client.refreshStatus();
-    expect(status).toBeNull();
+    expect(status).not.toBeNull();
+    const player = status!.player as Record<string, unknown>;
+    const ship = status!.ship as Record<string, unknown>;
+    expect("current_system" in player).toBe(false); // omitted → onStateUpdate preserves prior
+    expect(player.docked_at_base).toBeUndefined();   // no Docked at: line → not docked
+    expect(ship.fuel).toBe(80);                       // ship data still refreshed
   });
 
   // -------------------------------------------------------------------------
