@@ -48,12 +48,102 @@ export async function withRetry<T>(
   throw lastError;
 }
 
+// ---------------------------------------------------------------------------
+// Formatted-text table parsing (v0.417.3)
+//
+// v0.417.3 switched get_cargo, analyze_market, get_base, facility list and
+// salvage_wreck from JSON to human-readable tab-separated TEXT tables. The proxy
+// passes that text straight through (http-game-client-v2 parseToolCallResponse
+// JSON.parse fails → returns the raw string), so routines that previously read
+// structured fields now receive a string. These helpers parse the table back
+// into structure. See docs/proxy-todos.md (2026-06-23 sweep) in the fleet repo.
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the first tab-separated table out of a text dashboard.
+ * Skips any preamble lines (e.g. "Cargo: 0/0 used…" / "Trading insights at …:")
+ * before the header row, then collects rows until the table ends (first
+ * non-tab line, e.g. a blank line or a trailing "Credits: …cr").
+ * Returns lowercased header columns + the data rows (trimmed cells).
+ */
+export function parseTextTable(text: string): { headers: string[]; rows: string[][] } {
+  let headers: string[] | null = null;
+  const rows: string[][] = [];
+  for (const line of text.split("\n")) {
+    if (!line.includes("\t")) {
+      if (headers) break;   // table started and now ended
+      continue;             // still in preamble
+    }
+    const cols = line.split("\t").map((c) => c.trim());
+    if (!headers) headers = cols.map((c) => c.toLowerCase());
+    else rows.push(cols);
+  }
+  return { headers: headers ?? [], rows };
+}
+
+/**
+ * Convert a display name to its item_id slug — the inverse of the generic
+ * id→name transform in lib/utils.ts getItemDisplayName ("Power Cell" →
+ * "power_cell", "Shield Booster II" → "shield_booster_ii"). Used when the
+ * formatted table gives only a name column (get_cargo) and a caller needs an id.
+ */
+export function itemNameToId(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+/** Parse get_cargo's formatted text table (header "item\tqty\tsize") into cargo items. */
+function parseCargoItemsFromText(text: string): CargoItem[] {
+  const { headers, rows } = parseTextTable(text);
+  if (headers.length === 0) return [];
+  const nameIdx = headers.findIndex((h) => h === "item" || h === "name");
+  const qtyIdx = headers.findIndex((h) => h === "qty" || h === "quantity");
+  const idIdx = headers.findIndex((h) => h === "item_id" || h === "id");
+  if (nameIdx === -1 && idIdx === -1) return [];
+  const out: CargoItem[] = [];
+  for (const cols of rows) {
+    const name = nameIdx >= 0 ? (cols[nameIdx] ?? "") : "";
+    // Prefer an explicit id column if the game ever adds one; else slug the name.
+    const item_id = (idIdx >= 0 && cols[idIdx]) ? cols[idIdx] : itemNameToId(name);
+    const quantity = qtyIdx >= 0 ? parseInt(cols[qtyIdx], 10) : NaN;
+    if (item_id && !isNaN(quantity) && quantity > 0) out.push({ item_id, quantity });
+  }
+  return out;
+}
+
+// analyze_market insight categories (observed live, v0.426.5) that mean the
+// station BUYS the item from us — i.e. a valid sell target. Other categories
+// (supply_imbalance, opportunity, arbitrage, depth_warning, manager_activity)
+// are not buy-demand and are excluded so we don't attempt 0-credit sells.
+const SELL_TARGET_CATEGORIES = new Set(["demand", "sell_here"]);
+
+/** Parse analyze_market's formatted text table for items the station demands. */
+function extractDemandItemsFromText(text: string): Set<string> {
+  const demandItems = new Set<string>();
+  const { headers, rows } = parseTextTable(text);
+  const idIdx = headers.findIndex((h) => h === "item_id" || h === "id");
+  const catIdx = headers.findIndex((h) => h === "category");
+  if (idIdx === -1) return demandItems;
+  for (const cols of rows) {
+    const id = cols[idIdx];
+    if (!id) continue;
+    const cat = catIdx >= 0 ? (cols[catIdx] ?? "").toLowerCase() : "";
+    // No category column → can't tell direction; include (better to attempt
+    // the sell, which no-ops at the game, than to skip a real buyer).
+    if (catIdx === -1 || SELL_TARGET_CATEGORIES.has(cat) || cat.includes("demand")) {
+      demandItems.add(id);
+    }
+  }
+  return demandItems;
+}
+
 /**
  * Extract items with market demand from analyze_market results.
- * Handles multiple response shapes (demand/buyers/buy_orders, market/items).
+ * Handles multiple response shapes (demand/buyers/buy_orders, market/items),
+ * plus the v0.417.3 formatted-text table.
  */
 export function extractDemandItems(marketData: unknown): Set<string> {
   const demandItems = new Set<string>();
+  if (typeof marketData === "string") return extractDemandItemsFromText(marketData);
   if (!marketData || typeof marketData !== "object") return demandItems;
 
   const data = marketData as Record<string, unknown>;
@@ -168,10 +258,13 @@ export interface CargoItem {
 
 /**
  * Parse cargo items from a get_cargo response.
- * Handles 3 response shapes: raw array, { items: [...] }, { cargo: [...] }.
- * Returns normalized { item_id, quantity }[] with qty > 0.
+ * Handles 4 response shapes: the v0.417.3 formatted-text table, raw array,
+ * { items: [...] }, { cargo: [...] }. Returns normalized { item_id, quantity }[]
+ * with qty > 0.
  */
 export function parseCargoItems(cargoResult: unknown): CargoItem[] {
+  // v0.417.3: get_cargo now returns a formatted text table instead of JSON.
+  if (typeof cargoResult === "string") return parseCargoItemsFromText(cargoResult);
   if (!cargoResult || typeof cargoResult !== "object") return [];
   const data = cargoResult as Record<string, unknown>;
   const raw = Array.isArray(data) ? data
