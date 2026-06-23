@@ -284,6 +284,33 @@ describe("multi-sell (direct import)", () => {
     expect(dockRefreshGetLocation).toBe(false);
   });
 
+  it("resolves quantity=ALL from name-keyed cargo cache (slug match)", async () => {
+    // refreshStatus stores cargo as { name, quantity } (no item_id). ALL-resolution
+    // must slug the name to match the requested item_id, else it false-errors
+    // "No <item> in cargo to sell".
+    const cache = makeStatusCache("agent", {
+      player: { current_poi: "sol_station", credits: 1000, docked_at_base: "sol_station" },
+      ship: { cargo_used: 14, cargo: [{ name: "Iron Ore", quantity: 7 }] },
+    });
+    let soldQty: number | undefined;
+    const client = makeClient({
+      execute: async (tool, args) => {
+        if (tool === "sell") { soldQty = args?.quantity as number; return { result: { credits_earned: 70 } }; }
+        return { result: {} };
+      },
+    }, { cache, agentName: "agent" });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await multiSell(
+      deps,
+      [{ item_id: "iron_ore", quantity: "ALL" as unknown as number }],
+      new Set(["analyze_market"]),
+    );
+
+    expect(result.status).toBe("completed");
+    expect(soldQty).toBe(7); // resolved from "Iron Ore" → iron_ore
+  });
+
   it("adds cargo_warning when cargo is unchanged after sells", async () => {
     const cache = makeStatusCache("agent", {
       player: { current_poi: "sol_station", credits: 1000, docked_at_base: "sol_station" },
