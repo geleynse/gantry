@@ -364,6 +364,12 @@ export function getStatPct(
 /**
  * Utility to parse cargo data from game tool results and calculate utilization.
  * Handles the nested result shape from ctx.client.execute().
+ *
+ * v0.417.3: get_status / get_cargo can be formatted TEXT. Callers should pass a
+ * get_status result here — its "Cargo: U/C" line carries the true used/capacity.
+ * (get_cargo's own header reports an unreliable "0/0", so it can't drive
+ * utilization — this returns null for it, which callers already treat as
+ * "unknown" and degrade to the game's own cargo_full error.)
  */
 export function getCargoUtilization(cargoResult: unknown): {
   used: number;
@@ -371,20 +377,42 @@ export function getCargoUtilization(cargoResult: unknown): {
   freeSpace: number;
   pctFull: number;
 } | null {
-  if (!cargoResult || typeof cargoResult !== "object") return null;
+  // Unwrap { result: ... } from ctx.client.execute(); keep a string result as-is.
+  let data: unknown = cargoResult;
+  if (cargoResult && typeof cargoResult === "object" && "result" in (cargoResult as Record<string, unknown>)) {
+    data = (cargoResult as Record<string, unknown>).result;
+  }
 
-  // Sometimes we get the raw tool response { result: { ... }, error: ... }
-  // or just the result object itself.
-  const obj = cargoResult as Record<string, unknown>;
-  const unwrapped = typeof obj.result === "object" && obj.result !== null ? obj.result : cargoResult;
-  if (typeof unwrapped !== "object" || unwrapped === null) return null;
-  const data = unwrapped as Record<string, unknown>;
+  // Formatted text dashboard: read the "Cargo: <used>/<capacity>" line.
+  if (typeof data === "string") {
+    const m = data.match(/Cargo:\s*(\d+)\s*\/\s*(\d+)/);
+    if (m) {
+      const used = parseInt(m[1], 10);
+      const capacity = parseInt(m[2], 10);
+      if (!isNaN(used) && !isNaN(capacity) && capacity > 0) {
+        return { used, capacity, freeSpace: Math.max(0, capacity - used), pctFull: (used / capacity) * 100 };
+      }
+    }
+    return null;
+  }
+
+  if (!data || typeof data !== "object") return null;
+  const data2 = data as Record<string, unknown>;
 
   // SpaceMolt 'get_cargo' returns { used, capacity, cargo: [...] }
   // Some mining tools return { cargo_after: { used, max } } or similar.
-  const cargoAfter = typeof data.cargo_after === "object" && data.cargo_after !== null ? data.cargo_after as Record<string, unknown> : undefined;
-  const used = typeof data.used === "number" ? data.used : (typeof cargoAfter?.used === "number" ? cargoAfter.used : null);
-  const capacity = typeof data.capacity === "number" ? data.capacity : (typeof data.max === "number" ? data.max : (typeof cargoAfter?.max === "number" ? cargoAfter.max : null));
+  // The canonical parsed get_status shape nests it under ship.cargo_used/_capacity.
+  const cargoAfter = typeof data2.cargo_after === "object" && data2.cargo_after !== null ? data2.cargo_after as Record<string, unknown> : undefined;
+  const ship = typeof data2.ship === "object" && data2.ship !== null ? data2.ship as Record<string, unknown> : undefined;
+  const used = typeof data2.used === "number" ? data2.used
+    : typeof cargoAfter?.used === "number" ? cargoAfter.used
+    : typeof ship?.cargo_used === "number" ? ship.cargo_used as number
+    : null;
+  const capacity = typeof data2.capacity === "number" ? data2.capacity
+    : typeof data2.max === "number" ? data2.max
+    : typeof cargoAfter?.max === "number" ? cargoAfter.max
+    : typeof ship?.cargo_capacity === "number" ? ship.cargo_capacity as number
+    : null;
 
   if (used === null || capacity === null || capacity <= 0) {
     return null;

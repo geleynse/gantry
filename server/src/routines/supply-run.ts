@@ -85,7 +85,7 @@ async function run(ctx: RoutineContext, params: SupplyRunParams): Promise<Routin
   let totalCost = 0;
   
   // Check cargo utilization before starting acquisition
-  const cargoBefore = await ctx.client.execute("get_cargo");
+  const cargoBefore = await ctx.client.execute("get_status");
   const utilBefore = getCargoUtilization(cargoBefore);
   ctx.log("info", `supply_run: cargo at start: ${utilBefore ? `${utilBefore.used}/${utilBefore.capacity} (${utilBefore.pctFull.toFixed(1)}% full)` : "unknown"}`);
 
@@ -111,7 +111,7 @@ async function run(ctx: RoutineContext, params: SupplyRunParams): Promise<Routin
       totalCost += cost;
 
       // Check cargo after each buy to handle item sizes
-      const cargoAfter = await ctx.client.execute("get_cargo");
+      const cargoAfter = await ctx.client.execute("get_status");
       const utilAfter = getCargoUtilization(cargoAfter);
       if (utilAfter && utilAfter.pctFull >= 100) {
         ctx.log("info", "supply_run: cargo reached capacity after buy, stopping acquisition.");

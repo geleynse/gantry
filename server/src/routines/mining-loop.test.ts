@@ -175,7 +175,7 @@ describe("mining_loop routine", () => {
       let callCount = 0;
       const ctx = mockContext(
         async (tool) => {
-          if (tool === "get_cargo") {
+          if (tool === "get_status") {
             callCount++;
             if (callCount === 2) {
               return { result: { used: 91, capacity: 100 } };

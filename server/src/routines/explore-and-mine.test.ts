@@ -36,7 +36,7 @@ describe("explore_and_mine routine", () => {
       const ctx = mockContext(async (tool, args) => {
         toolsCalled.push(tool);
         if (tool === "get_status") return {
-          result: { player: { current_system: "sol", current_poi: "sol_station" } },
+          result: { player: { current_system: "sol", current_poi: "sol_station" }, ship: { cargo_used: 20, cargo_capacity: 50 } },
         };
         if (tool === "jump_route") return { result: { status: "arrived" } };
         if (tool === "get_system") return {
@@ -125,7 +125,7 @@ describe("explore_and_mine routine", () => {
       let mineCount = 0;
       const ctx = mockContext(async (tool) => {
         if (tool === "get_status") return {
-          result: { player: { current_system: "sol" } },
+          result: { player: { current_system: "sol" }, ship: { cargo_used: 48, cargo_capacity: 50 } }, // 96% full
         };
         if (tool === "jump_route") return { result: { status: "arrived" } };
         if (tool === "get_system") return {

@@ -58,7 +58,7 @@ describe("navigate_home routine", () => {
               docked_at_base: traveled ? "nexus_base" : null,
               credits: 1000,
             },
-            ship: { fuel: 50, fuel_max: 100, hull: 70, hull_max: 100 },
+            ship: { fuel: 50, fuel_max: 100, hull: 70, hull_max: 100, cargo_used: 10, cargo_capacity: 50 },
           },
         };
         if (tool === "travel_to") { traveled = true; return { result: { status: "completed" } }; }

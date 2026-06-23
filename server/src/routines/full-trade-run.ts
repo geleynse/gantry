@@ -108,7 +108,7 @@ async function run(ctx: RoutineContext, params: FullTradeRunParams): Promise<Rou
   // Total count = maxCycles * 10. Each batch = 10 units.
   for (let i = 0; i < maxCycles; i++) {
     // Check utilization BEFORE each batch
-    const cargoCheck = await ctx.client.execute("get_cargo");
+    const cargoCheck = await ctx.client.execute("get_status");
     const util = getCargoUtilization(cargoCheck);
     if (util) {
       cargoUtil = util;

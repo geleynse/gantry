@@ -86,7 +86,7 @@ async function run(ctx: RoutineContext, params: MiningLoopParams): Promise<Routi
     const minePhase = phase(`mine_cycle_${i + 1}`);
 
     // BEFORE EACH CYCLE: Check utilization
-    const cargoCheck = await ctx.client.execute("get_cargo");
+    const cargoCheck = await ctx.client.execute("get_status");
     const util = getCargoUtilization(cargoCheck);
     if (util) {
       lastCargoUsed = util.used;

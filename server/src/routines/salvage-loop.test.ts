@@ -69,10 +69,10 @@ describe("salvage_loop routine", () => {
             lootCount++;
             return { result: {} };
           }
-          if (tool === "get_cargo") {
+          if (tool === "get_status") {
             // Full after 1st loot
-            if (lootCount === 1) return { result: { used: 95, max: 100 } };
-            return { result: { used: 10, max: 100 } };
+            if (lootCount === 1) return { result: { used: 95, capacity: 100 } };
+            return { result: { used: 10, capacity: 100 } };
           }
           if (tool === "analyze_market") return { result: { demand: [] } };
           return { result: {} };
@@ -126,6 +126,7 @@ describe("salvage_loop routine", () => {
         async (tool) => {
           toolsCalled.push(tool);
           if (tool === "get_wrecks") return { result: [] };
+          if (tool === "get_status") return { result: { used: 10, capacity: 100 } };
           if (tool === "get_cargo") return { result: { used: 10, capacity: 100, items: [{ item_id: "scrap", quantity: 5 }] } };
           if (tool === "travel_to") return { result: { status: "arrived" } };
           if (tool === "dock") return { result: { docked: true } };
