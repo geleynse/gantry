@@ -95,12 +95,12 @@ describe("routine-utils: getCargoUtilization (v0.417.3 text)", () => {
 });
 
 describe("routine-utils: extractDemandItems (v0.417.3 text)", () => {
-  it("includes demand + sell_here, excludes supply/opportunity", () => {
+  it("includes demand + sell_here + supply_imbalance, excludes opportunity", () => {
     const demand = extractDemandItems(ANALYZE_MARKET_TEXT);
     expect(demand.has("liquid_hydrogen")).toBe(true);  // demand
     expect(demand.has("shield_emitter")).toBe(true);   // sell_here
-    expect(demand.has("power_cell")).toBe(false);      // supply_imbalance
-    expect(demand.has("titanium_alloy")).toBe(false);  // opportunity
+    expect(demand.has("power_cell")).toBe(true);       // supply_imbalance = unfilled buy orders (sell target)
+    expect(demand.has("titanium_alloy")).toBe(false);  // opportunity (cross-station hint, not buy-demand)
   });
 
   it("still parses legacy JSON demand array", () => {

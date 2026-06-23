@@ -110,11 +110,18 @@ function parseCargoItemsFromText(text: string): CargoItem[] {
   return out;
 }
 
-// analyze_market insight categories (observed live, v0.426.5) that mean the
-// station BUYS the item from us — i.e. a valid sell target. Other categories
-// (supply_imbalance, opportunity, arbitrage, depth_warning, manager_activity)
-// are not buy-demand and are excluded so we don't attempt 0-credit sells.
-const SELL_TARGET_CATEGORIES = new Set(["demand", "sell_here"]);
+// analyze_market insight categories (observed live, v0.427.x) that mean the
+// station BUYS the item from us — i.e. a valid sell target:
+//   demand          — station has buy demand for the item
+//   sell_here       — explicitly flagged as a good place to sell
+//   supply_imbalance — captured live: "<item> has N units of unfilled buy orders
+//                      here at <price> with nothing for sale — potential
+//                      opportunity." i.e. a supply SHORTAGE = strong buy demand,
+//                      often the highest-value sell target. (Excluding it made
+//                      agents skip premium shortage stations / leave cargo.)
+// Excluded (not direct buy-demand): opportunity/arbitrage (cross-station hints),
+// depth_warning, manager_activity.
+const SELL_TARGET_CATEGORIES = new Set(["demand", "sell_here", "supply_imbalance"]);
 
 /** Parse analyze_market's formatted text table for items the station demands. */
 function extractDemandItemsFromText(text: string): Set<string> {
