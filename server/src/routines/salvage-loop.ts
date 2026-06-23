@@ -59,7 +59,11 @@ async function run(ctx: RoutineContext, params: SalvageLoopParams): Promise<Rout
     phases.push(completePhase(getWrecksPhase, { error: wrecksResp.error }));
     return handoff("Could not get wrecks", { error: wrecksResp.error }, phases);
   }
-  const allWrecks = (wrecksResp.result as unknown[] | undefined) ?? [];
+  // Defensive: only an array is a wreck list. v0.417.3 moved several tools to
+  // formatted text; if get_wrecks ever returns a string, `as unknown[]` would
+  // let the loop iterate its characters as wreck IDs. Treat non-arrays as "no
+  // wrecks" (the routine then falls through to its sell-existing-cargo path).
+  const allWrecks = Array.isArray(wrecksResp.result) ? wrecksResp.result : [];
   phases.push(completePhase(getWrecksPhase, allWrecks));
   ctx.log("info", `salvage_loop: found ${allWrecks.length} wrecks`);
 
