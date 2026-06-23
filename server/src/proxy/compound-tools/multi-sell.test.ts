@@ -284,6 +284,41 @@ describe("multi-sell (direct import)", () => {
     expect(dockRefreshGetLocation).toBe(false);
   });
 
+  it("dock fast-path harvests FRESH cargo from the get_status text for ALL-resolution (not the stale cache)", async () => {
+    // Cache is stale: not docked, NO cargo. The fresh get_status text shows docked
+    // + Iron Ore x7. ALL must resolve from the fresh text cargo, not the empty cache.
+    const cache = makeStatusCache("agent", {
+      player: { docked_at_base: null, credits: 1 },
+      ship: { cargo_used: 0, cargo: [] },
+    });
+    let soldQty: number | undefined;
+    const client = makeClient({
+      execute: async (tool, args) => {
+        if (tool === "get_status") {
+          return {
+            result:
+              "Agent [solarian] | 999cr | Sirius\n" +
+              "Fuel: 50/100 | Cargo: 14/50 | CPU: 4/16 | Power: 10/28\n" +
+              "Docked at: sirius_observatory_station\n" +
+              "Cargo (1 items):\nitem\tqty\tsize\nIron Ore\t7\t2\n\nCredits: 999cr",
+          };
+        }
+        if (tool === "sell") { soldQty = args?.quantity as number; return { result: { credits_earned: 70 } }; }
+        return { result: {} };
+      },
+    }, { cache, agentName: "agent" });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await multiSell(
+      deps,
+      [{ item_id: "iron_ore", quantity: "ALL" as unknown as number }],
+      new Set(["analyze_market"]),
+    );
+
+    expect(result.status).toBe("completed");
+    expect(soldQty).toBe(7); // resolved from the fresh text cargo, not the empty cache
+  });
+
   it("resolves quantity=ALL from name-keyed cargo cache (slug match)", async () => {
     // refreshStatus stores cargo as { name, quantity } (no item_id). ALL-resolution
     // must slug the name to match the requested item_id, else it false-errors

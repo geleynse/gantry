@@ -129,6 +129,7 @@ function extractDemandItemsFromText(text: string): Set<string> {
   const { headers, rows } = parseTextTable(text);
   const idIdx = headers.findIndex((h) => h === "item_id" || h === "id");
   const catIdx = headers.findIndex((h) => h === "category");
+  const nameIdx = headers.findIndex((h) => h === "item" || h === "name");
   if (idIdx === -1) return demandItems;
   for (const cols of rows) {
     const id = cols[idIdx];
@@ -138,6 +139,12 @@ function extractDemandItemsFromText(text: string): Set<string> {
     // the sell, which no-ops at the game, than to skip a real buyer).
     if (catIdx === -1 || SELL_TARGET_CATEGORIES.has(cat) || cat.includes("demand")) {
       demandItems.add(id);
+      // Also add the name→id slug as an alias. parseCargoItems derives a cargo
+      // item's id by slugging its display NAME (the cargo table has no id column),
+      // so for items whose real id isn't the literal slug (e.g. mining_laser_1 vs
+      // "Mining Laser I" → mining_laser_i) the cargo↔demand join would miss. The
+      // alias makes the join name-space-robust regardless of id convention.
+      if (nameIdx >= 0 && cols[nameIdx]) demandItems.add(itemNameToId(cols[nameIdx]));
     }
   }
   return demandItems;
