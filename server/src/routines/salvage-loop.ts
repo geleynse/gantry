@@ -65,7 +65,7 @@ async function run(ctx: RoutineContext, params: SalvageLoopParams): Promise<Rout
 
   if (allWrecks.length === 0) {
     // Check if we have cargo to sell — if not, nothing to do
-    const earlyCargoResp = await ctx.client.execute("get_cargo");
+    const earlyCargoResp = await ctx.client.execute("get_status");
     const earlyUtil = getCargoUtilization(earlyCargoResp);
     if (!earlyUtil || earlyUtil.used === 0) {
       ctx.log("info", "salvage_loop: no wrecks found and cargo empty — nothing to do");
@@ -102,7 +102,7 @@ async function run(ctx: RoutineContext, params: SalvageLoopParams): Promise<Rout
       return handoff("Combat detected during looting", { looted: lootedWrecks }, phases);
     }
 
-    const cargoResp = await ctx.client.execute("get_cargo");
+    const cargoResp = await ctx.client.execute("get_status");
     const util = getCargoUtilization(cargoResp);
     if (util && util.pctFull > 90) {
       cargoFull = true;

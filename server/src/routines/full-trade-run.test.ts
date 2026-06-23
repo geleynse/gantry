@@ -132,7 +132,7 @@ describe("full_trade_run routine", () => {
     it("stops mining early when cargo exceeds 90% threshold", async () => {
         let getCargoCount = 0;
         const toolHandler = async (tool: string, args: any) => {
-            if (tool === "get_cargo") {
+            if (tool === "get_status") {
               getCargoCount++;
               if (getCargoCount === 2) return { result: { used: 95, capacity: 100 } };
               return { result: { used: 10, capacity: 100 } };

@@ -154,7 +154,7 @@ async function run(ctx: RoutineContext, rawParams: ExploreAndMineParams): Promis
     ctx.log("info", `explore_and_mine: mined ${oresCompleted} at ${beltId}`);
 
     // Check cargo — stop mining if near full
-    const cargoResp = await ctx.client.execute("get_cargo");
+    const cargoResp = await ctx.client.execute("get_status");
     const cargo = getCargoUtilization(cargoResp);
     if (cargo && cargo.pctFull > 90) {
       ctx.log("info", "explore_and_mine: cargo near full, stopping mining");
@@ -175,7 +175,7 @@ async function run(ctx: RoutineContext, rawParams: ExploreAndMineParams): Promis
 
   // Sell
   let itemsSold = 0;
-  const cargoCheck = await ctx.client.execute("get_cargo");
+  const cargoCheck = await ctx.client.execute("get_status");
   const cargo = getCargoUtilization(cargoCheck);
   if (cargo && cargo.used > 0) {
     await ctx.client.execute("analyze_market");

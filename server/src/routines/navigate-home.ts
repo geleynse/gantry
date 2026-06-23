@@ -153,7 +153,7 @@ async function run(ctx: RoutineContext, params: NavigateHomeParams): Promise<Rou
   let creditsEarned = 0;
   if (params.sell !== false) {
     // Check cargo first
-    const cargoResp = await ctx.client.execute("get_cargo");
+    const cargoResp = await ctx.client.execute("get_status");
     const cargo = getCargoUtilization(cargoResp);
 
     if (cargo && cargo.used > 0) {

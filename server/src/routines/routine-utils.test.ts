@@ -64,6 +64,36 @@ describe("routine-utils: parseCargoItems (v0.417.3 text)", () => {
   });
 });
 
+const GET_STATUS_TEXT =
+  "Rust Vane [solarian] | 54,877,005cr | Sirius\n" +
+  "Ship: Compendium (compendium) | Hull: 480/480 | Shield: 225/225 | Armor: 22 | Speed: 1\n" +
+  "Fuel: 253/350 | Cargo: 629/655 | CPU: 27/32 | Power: 49/80\n" +
+  "Docked at: sirius_observatory_station";
+
+describe("routine-utils: getCargoUtilization (v0.417.3 text)", () => {
+  it("reads Cargo: U/C from a get_status dashboard string", () => {
+    const util = getCargoUtilization(GET_STATUS_TEXT);
+    expect(util).not.toBeNull();
+    expect(util?.used).toBe(629);
+    expect(util?.capacity).toBe(655);
+    expect(util?.freeSpace).toBe(26);
+    expect(util?.pctFull).toBeCloseTo(96.03, 1);
+  });
+
+  it("reads it through the {result: string} execute() wrapper", () => {
+    expect(getCargoUtilization({ result: GET_STATUS_TEXT })?.used).toBe(629);
+  });
+
+  it("returns null for get_cargo's unreliable 0/0 header", () => {
+    expect(getCargoUtilization(GET_CARGO_TEXT)).toBeNull();
+  });
+
+  it("still reads legacy JSON shapes", () => {
+    expect(getCargoUtilization({ used: 110, capacity: 100 })?.freeSpace).toBe(0);
+    expect(getCargoUtilization({ result: { used: 10, capacity: 40 } })?.pctFull).toBeCloseTo(25);
+  });
+});
+
 describe("routine-utils: extractDemandItems (v0.417.3 text)", () => {
   it("includes demand + sell_here, excludes supply/opportunity", () => {
     const demand = extractDemandItems(ANALYZE_MARKET_TEXT);

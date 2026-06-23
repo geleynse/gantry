@@ -113,7 +113,7 @@ describe("supply_run routine", () => {
         const items = [{ item_id: "A", quantity: 1 }, { item_id: "B", quantity: 1 }];
         let getCargoCount = 0;
         const toolHandler = async (tool: string, args: any) => {
-            if (tool === "get_cargo") {
+            if (tool === "get_status") {
               getCargoCount++;
               // 1: before loop (50/100)
               // 2: after buy A (100/100)
