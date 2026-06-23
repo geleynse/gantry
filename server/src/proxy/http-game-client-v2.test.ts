@@ -166,6 +166,28 @@ describe("parseGetStatusText (parser)", () => {
     expect(p.powerCapacity).toBe(10);
   });
 
+  it("extracts dockedAt from a 'Docked at:' line", () => {
+    const docked = [
+      "Rust Vane [solarian] | 54,877,005cr | Sirius",
+      "Ship: Compendium (compendium) | Hull: 480/480 | Shield: 225/225 | Armor: 22 | Speed: 1",
+      "Fuel: 253/350 | Cargo: 629/655 | CPU: 27/32 | Power: 49/80",
+      "Docked at: sirius_observatory_station",
+      "Security: High Security (active police)",
+    ].join("\n");
+    expect(parseGetStatusText(docked).dockedAt).toBe("sirius_observatory_station");
+  });
+
+  it("leaves dockedAt undefined when not docked (no 'Docked at:' line)", () => {
+    const inSpace = [
+      "Rust Vane [solarian] | 55,541,553cr | Proxima Centauri",
+      "Ship: Compendium (compendium) | Hull: 480/480 | Shield: 225/225 | Armor: 22 | Speed: 1",
+      "Fuel: 328/350 | Cargo: 21/655 | CPU: 27/32 | Power: 49/80",
+      "Security: Lawless (no police protection)",
+      "Connections: procyon, dheneb",
+    ].join("\n");
+    expect(parseGetStatusText(inSpace).dockedAt).toBeUndefined();
+  });
+
   it("parses module rows (skipping header)", () => {
     const p = parseGetStatusText(SAMPLE_GET_STATUS);
     expect(p.modules).toHaveLength(2);

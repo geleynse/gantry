@@ -9,6 +9,7 @@ import { createLogger } from "../../lib/logger.js";
 import type { SellEntry } from "../sell-log.js";
 import type { CompoundToolDeps, CompoundResult, MultiSellItem } from "./types.js";
 import { stripPendingFields, refreshStatusOrFlag } from "./utils.js";
+import { parseGetStatusText } from "../http-game-client-v2.js";
 
 const log = createLogger("compound-tools");
 
@@ -37,10 +38,22 @@ export async function multiSell(
       ? await client.execute("spacemolt", { action: "get_status" })
       : await client.execute("get_status", {});
     if (!freshStatus.error && freshStatus.result) {
-      // Re-read from cache (get_status triggers onStateUpdate which populates statusCache)
-      await client.waitForTick();
-      cachedStatus = statusCache.get(agentName);
-      playerData = cachedStatus?.data?.player as Record<string, unknown> | undefined;
+      // The get_status text dashboard carries "Docked at: <station>" directly.
+      // Read it here so a single get_status call settles dock state — avoids the
+      // extra waitForTick→refreshStatus get_location round-trip (3 game calls →
+      // 1), whose rate-limit failures were false-blocking legit sells.
+      const dockedAt = typeof freshStatus.result === "string"
+        ? parseGetStatusText(freshStatus.result).dockedAt
+        : undefined;
+      if (dockedAt) {
+        playerData = { ...(playerData ?? {}), docked_at_base: dockedAt, current_poi: dockedAt };
+      } else {
+        // Text was inconclusive (non-string, or no "Docked at:" line) — fall back
+        // to the full refresh (get_status + get_location) via waitForTick.
+        await client.waitForTick();
+        cachedStatus = statusCache.get(agentName);
+        playerData = cachedStatus?.data?.player as Record<string, unknown> | undefined;
+      }
     }
   }
 

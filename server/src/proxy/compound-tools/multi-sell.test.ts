@@ -245,6 +245,45 @@ describe("multi-sell (direct import)", () => {
     expect(String(result.error)).toContain("docked");
   });
 
+  it("confirms dock from the get_status TEXT dashboard when cache is stale (no extra refresh round-trip)", async () => {
+    // Cache stale (says not docked); the agent actually just docked. The fresh
+    // get_status text carries "Docked at:" — multi_sell should read it directly
+    // and proceed, instead of false-blocking. Guards the v0.417.3 dock fix.
+    const cache = makeStatusCache("agent", {
+      player: { docked_at_base: null, credits: 1000 },
+    });
+    let dockRefreshGetLocation = false;
+    const client = makeClient({
+      execute: async (tool, args) => {
+        if (tool === "get_status") {
+          return {
+            result:
+              "Agent [solarian] | 1,000cr | Sirius\n" +
+              "Fuel: 50/100 | Cargo: 10/50 | CPU: 4/16 | Power: 10/28\n" +
+              "Docked at: sirius_observatory_station\n" +
+              "Security: High Security (active police)",
+          };
+        }
+        // The dock check must NOT need get_location — text alone settles it.
+        if (tool === "get_location" || args?.action === "get_location") dockRefreshGetLocation = true;
+        if (tool === "sell") return { result: { credits_earned: 100 } };
+        return { result: {} };
+      },
+    }, { cache, agentName: "agent" });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await multiSell(
+      deps,
+      [{ item_id: "iron_ore", quantity: 5 }],
+      new Set(["analyze_market"]),
+    );
+
+    // Dock confirmed from the get_status text → sell proceeds instead of false-blocking.
+    expect(result.error).toBeFalsy();
+    expect(result.status).toBe("completed");
+    expect(dockRefreshGetLocation).toBe(false);
+  });
+
   it("adds cargo_warning when cargo is unchanged after sells", async () => {
     const cache = makeStatusCache("agent", {
       player: { current_poi: "sol_station", credits: 1000, docked_at_base: "sol_station" },

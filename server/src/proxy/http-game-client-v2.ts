@@ -916,7 +916,10 @@ export class HttpGameClientV2 implements GameTransport {
       credits: parsed.credits,
       current_system: locInner.system_id,
       current_poi: locInner.poi_id,
-      docked_at_base: locInner.docked_at,
+      // Prefer the get_status text's "Docked at:" line (always present in the
+      // status fan-out call) over get_location's field, which is easier to miss
+      // on a partial/renamed response. Falls back to get_location.
+      docked_at_base: parsed.dockedAt ?? locInner.docked_at,
       // Include skills from the status text so they update on every status refresh.
       // This supplements (and can replace) the separate get_skills fetch at login.
       ...(parsed.skills.length > 0 ? { skills: skillsFromText } : {}),
@@ -1114,6 +1117,8 @@ export interface ParsedGetStatus {
   maxShield?: number;
   armor?: number;
   speed?: number;
+  /** Station id from the "Docked at: <id>" line; undefined when not docked. */
+  dockedAt?: string;
   fuel?: number;
   maxFuel?: number;
   cargoUsed?: number;
@@ -1169,6 +1174,12 @@ export function parseGetStatusText(text: string): ParsedGetStatus {
   [out.cargoUsed, out.cargoCapacity] = numPair(/Cargo:\s*(\d+)\/(\d+)/);
   [out.cpuUsed, out.cpuCapacity] = numPair(/CPU:\s*(\d+)\/(\d+)/);
   [out.powerUsed, out.powerCapacity] = numPair(/Power:\s*(\d+)\/(\d+)/);
+
+  // "Docked at: <station_id>" appears only when docked (absent in space/transit).
+  // This is the authoritative dock signal from the get_status dashboard itself —
+  // more reliable than the separate get_location field and avoids that extra call.
+  const dockMatch = text.match(/^Docked at:\s*(\S+)/m);
+  if (dockMatch) out.dockedAt = dockMatch[1];
 
   // Section parser helper: extracts tab-delimited rows from named sections.
   // Stops at the next section header (Word (N): or Word:) or end of text.
