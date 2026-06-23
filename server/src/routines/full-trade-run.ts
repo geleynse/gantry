@@ -8,7 +8,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, getCargoUtilization, done, handoff, phase, completePhase, checkCombat, extractDemandItems, parseCargoItems, travelAndDock } from "./routine-utils.js";
+import { withRetry, getCargoUtilization, done, handoff, phase, completePhase, checkCombat, extractDemandItems, resolveSellable, parseCargoItems, travelAndDock } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -169,7 +169,7 @@ async function run(ctx: RoutineContext, params: FullTradeRunParams): Promise<Rou
   // --- Multi-sell ---
   const cargoResp = await ctx.client.execute("get_cargo");
   const cargoItems = parseCargoItems(cargoResp.result);
-  const itemsToSell = cargoItems.filter(c => demandItems.has(c.item_id));
+  const itemsToSell = resolveSellable(cargoItems, demandItems);
   if (itemsToSell.length > 0) {
     const sellPhase = phase("multi_sell");
     const sellResp = await ctx.client.execute("multi_sell", { items: itemsToSell });

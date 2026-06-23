@@ -8,7 +8,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { getCargoUtilization, done, handoff, phase, completePhase, extractDemandItems, travelAndDock } from "./routine-utils.js";
+import { getCargoUtilization, done, handoff, phase, completePhase, extractDemandItems, resolveSellable, travelAndDock } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -129,7 +129,7 @@ async function run(ctx: RoutineContext, params: SupplyRunParams): Promise<Routin
   // --- Analyze Market & Sell ---
   const marketResp = await ctx.client.execute("analyze_market");
   const demandItems = extractDemandItems(marketResp.result);
-  const itemsToSell = itemsAcquired.filter(i => demandItems.has(i.item_id));
+  const itemsToSell = resolveSellable(itemsAcquired, demandItems);
   const itemsToOrder = itemsAcquired.filter(i => !demandItems.has(i.item_id));
 
   let itemsSold = 0;

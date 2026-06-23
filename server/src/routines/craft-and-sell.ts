@@ -11,7 +11,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { done, handoff, phase, completePhase, extractDemandItems, travelAndDock, parseCargoItems } from "./routine-utils.js";
+import { done, handoff, phase, completePhase, extractDemandItems, resolveSellable, travelAndDock, parseCargoItems } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -142,7 +142,7 @@ async function run(ctx: RoutineContext, params: CraftAndSellParams): Promise<Rou
   let itemsWithoutDemand: typeof allCargoItems;
   if (!marketResp.error) {
     itemsWithDemand = demandItems.size > 0
-      ? allCargoItems.filter((c) => demandItems.has(c.item_id))
+      ? resolveSellable(allCargoItems, demandItems)
       : [];
     itemsWithoutDemand = demandItems.size > 0
       ? allCargoItems.filter((c) => !demandItems.has(c.item_id))
