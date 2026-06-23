@@ -118,9 +118,20 @@ export async function multiSell(
   // so long-running multi_sell causes the client to time out and receive "".
   // Only a single final tick wait is used to let credits settle in cache.
 
-  // Resolve "ALL" quantities from cargo cache before selling
-  const cargo = (cachedStatus?.data?.ship as any)?.cargo as Array<{ item_id: string; quantity: number }> | undefined;
-  const cargoMap = new Map(cargo?.map(c => [c.item_id, c.quantity]) ?? []);
+  // Resolve "ALL" quantities from cargo cache before selling.
+  // refreshStatus parses status-dashboard cargo as { name, quantity } (no
+  // item_id), so key the map by item_id when present else by a name→id slug
+  // (matches routine-utils.itemNameToId / the inverse of getItemDisplayName).
+  // Without this, every entry collapsed to an `undefined` key and ALL/unspecified
+  // quantities always failed with "No <item> in cargo to sell".
+  const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const cargo = (cachedStatus?.data?.ship as any)?.cargo as Array<{ item_id?: string; name?: string; quantity: number }> | undefined;
+  const cargoMap = new Map(
+    cargo?.flatMap(c => {
+      const key = c.item_id ?? (c.name ? slug(c.name) : undefined);
+      return key ? [[key, c.quantity] as [string, number]] : [];
+    }) ?? [],
+  );
 
   for (let i = 0; i < items.length; i++) {
     const { item_id } = items[i];
