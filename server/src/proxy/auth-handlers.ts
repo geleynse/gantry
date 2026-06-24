@@ -299,6 +299,12 @@ export async function handleLogin(
     // Preserve skills from previous cache entry — get_status doesn't return skills,
     // but get_skills merges them in on login. Without this, the next status update
     // overwrites the merged data and skills disappear from the UI.
+    // Did THIS update actually carry fresh position? (captured before the
+    // preservation block below overwrites an omitted current_system from prev).
+    // Used to stamp _position_fetched_at so position staleness is tracked
+    // separately from overall cache freshness — a partial update keeps cargo/
+    // fuel/dock fresh but its position is only as new as the last full refresh.
+    const positionFresh = (data.player as Record<string, unknown> | undefined)?.current_system !== undefined;
     try {
       const prev = statusCache.get(agentName);
       if (prev?.data) {
@@ -332,7 +338,20 @@ export async function handleLogin(
     } catch (skillErr) {
       log.error("onStateUpdate skill preservation failed", { agent: agentName, error: String(skillErr) });
     }
-    const stateEntry = { data, fetchedAt: Date.now() };
+    // Stamp when position was last genuinely fresh. On a full update that's now;
+    // on a partial (position carried forward) it's the prior stamp, falling back
+    // to the prior cache time, then now. Stored inside `data` so it persists +
+    // restores with the cache and doesn't require widening the entry type.
+    const now = Date.now();
+    if (positionFresh) {
+      (data as Record<string, unknown>)._position_fetched_at = now;
+    } else {
+      const prev = statusCache.get(agentName);
+      const prevPos = prev?.data?._position_fetched_at;
+      (data as Record<string, unknown>)._position_fetched_at =
+        typeof prevPos === "number" ? prevPos : (prev?.fetchedAt ?? now);
+    }
+    const stateEntry = { data, fetchedAt: now };
     try {
       statusCache.set(agentName, stateEntry);
     } catch (cacheErr) {
