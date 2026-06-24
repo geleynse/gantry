@@ -341,6 +341,30 @@ describe("handleLogin", () => {
     expect((cached?.data.player as Record<string, unknown> | undefined)?.["current_system"]).toBe("Sol");
   });
 
+  it("stamps _position_fetched_at fresh on full updates, carries it forward on partials", async () => {
+    const deps = makeDeps();
+    await handleLogin(deps, "sess-pos", "test-agent", "pass");
+    const onUpdate = deps._client.onStateUpdate!;
+
+    // Full update with position → _position_fetched_at is ~now (== fetchedAt).
+    onUpdate({ player: { current_system: "Sol", current_poi: "earth", credits: 100 }, ship: { fuel: 50, cargo_used: 10 } });
+    const full = deps.statusCache.get("test-agent")!;
+    const fullPosStamp = full.data._position_fetched_at as number;
+    expect(typeof fullPosStamp).toBe("number");
+    expect(Math.abs(fullPosStamp - full.fetchedAt)).toBeLessThanOrEqual(2);
+
+    // Partial update (get_location failed → no current_system) with FRESH cargo.
+    // Position carries forward (system preserved) AND its stamp stays the OLD one,
+    // even though fetchedAt advances.
+    await new Promise((r) => setTimeout(r, 12));
+    onUpdate({ player: { credits: 200 }, ship: { fuel: 40, cargo_used: 30 } });
+    const partial = deps.statusCache.get("test-agent")!;
+    expect((partial.data.player as Record<string, unknown>).current_system).toBe("Sol"); // preserved
+    expect((partial.data.ship as Record<string, unknown>).cargo_used).toBe(30);          // fresh
+    expect(partial.data._position_fetched_at).toBe(fullPosStamp);                        // position stamp unchanged
+    expect(partial.fetchedAt).toBeGreaterThan(fullPosStamp);                             // but cache time advanced
+  });
+
   it("undefined sessionId is handled gracefully", async () => {
     const deps = makeDeps();
     const result = await handleLogin(deps, undefined, "test-agent", "pass");

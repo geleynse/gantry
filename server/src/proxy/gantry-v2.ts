@@ -1038,8 +1038,22 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
         const extracted = STATUS_SLICE_EXTRACTORS[action](cached.data);
         const staleness_seconds = Math.round((Date.now() - cached.fetchedAt) / 1000);
         const tick = cached.data.tick;
+        // For position-bearing slices, also report how stale the POSITION
+        // specifically is. A partial refresh (get_location rate-limited) keeps
+        // cargo/fuel/dock fresh while position is carried forward, so overall
+        // staleness_seconds can read ~0 while position is much older. Surface
+        // position_staleness_seconds only when it meaningfully exceeds overall
+        // staleness, so consumers/agents can distinguish the two.
+        const posFetchedAt = cached.data._position_fetched_at;
+        const cacheMeta: Record<string, unknown> = { tick, staleness_seconds };
+        if ((action === "get_location" || action === "get_status") && typeof posFetchedAt === "number") {
+          const position_staleness_seconds = Math.round((Date.now() - posFetchedAt) / 1000);
+          if (position_staleness_seconds > staleness_seconds + 5) {
+            cacheMeta.position_staleness_seconds = position_staleness_seconds;
+          }
+        }
         let withRecency = typeof extracted === "object" && extracted !== null
-          ? { ...extracted as Record<string, unknown>, _cache: { tick, staleness_seconds } }
+          ? { ...extracted as Record<string, unknown>, _cache: cacheMeta }
           : extracted;
 
         // Transit stuck detection for get_location and get_status
