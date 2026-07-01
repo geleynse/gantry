@@ -178,6 +178,38 @@ export function sessionCreateWaitMs(nowMs: number, randomFuzzMs: number): number
   return Math.max(0, blockWait, spacingWait);
 }
 
+/** Keys of the game's standard response envelope (see OpenAPI `APIResponse`). */
+const ENVELOPE_KEYS = new Set(["result", "notifications", "session", "error"]);
+
+/**
+ * Pure, idempotent defensive unwrap of the game's standard response envelope.
+ *
+ * The game's documented `APIResponse` is `{ result, notifications?, session?, error? }`
+ * with the command payload under `result`. Historically the MCP transport handed
+ * gantry the BARE payload as tool-call text, so parseToolCallResponse just JSON-parsed
+ * it and returned it as `result`. If the game (or MCP layer) instead wraps the payload
+ * in the full envelope — the "delta-wrapped mutation response envelope" that peer
+ * clients (SpaceMolt/www play client, SpaceMolt/admiral) began unwrapping 2026-07-01 —
+ * the bare-payload assumption double-nests it (`resp.result.result.total_cost`), and
+ * every downstream field read silently misses.
+ *
+ * This unwraps ONLY when `data` is unmistakably that envelope: a plain object that owns
+ * a `result` key and whose keys are all envelope keys (notifications/session/error) —
+ * a shape no command payload has (they all carry command-specific fields). So it is a
+ * no-op on today's bare payloads and self-heals if the envelope shows up. Notifications
+ * are intentionally dropped here: gantry receives events via the EventBuffer's separate
+ * MCP notification channel, not this synchronous return path.
+ */
+export function unwrapGameEnvelope(data: unknown): unknown {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return data;
+  const obj = data as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(obj, "result")) return data;
+  for (const k of Object.keys(obj)) {
+    if (!ENVELOPE_KEYS.has(k)) return data; // has a non-envelope key → a real payload, leave it
+  }
+  return obj.result;
+}
+
 /**
  * Wait until the global session-create slot is available, then claim it.
  *
@@ -496,7 +528,7 @@ export class HttpGameClientV2 implements GameTransport {
 
     try {
       const data = JSON.parse(text);
-      return { result: data };
+      return { result: unwrapGameEnvelope(data) };
     } catch {
       return { result: text };
     }

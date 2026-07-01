@@ -115,7 +115,10 @@ export const PASSENGER_SUMMARIZERS: Record<string, Summarizer> = {
     // Delivered (paid) vs stranded (unpaid, costs standing) breakdown.
     if (d.delivered !== undefined) out.delivered = d.delivered;
     if (d.stranded !== undefined) out.stranded = d.stranded;
-    if (d.fare_earned !== undefined) out.fare_earned = d.fare_earned;
+    // v0.441.9 renamed the delivered-fare field to fare_collected (was fare_paid);
+    // keep fare_earned for older shapes so we surface the amount regardless.
+    const fareEarned = d.fare_earned ?? d.fare_collected ?? d.fare_paid;
+    if (fareEarned !== undefined) out.fare_earned = fareEarned;
     if (d.standing_change !== undefined) out.standing_change = d.standing_change;
     if (d.name !== undefined) out.name = d.name;
     if (d.message !== undefined) out.message = d.message;
