@@ -81,6 +81,12 @@ export const INTENTIONALLY_SKIPPED = new Set([
   "repair_module",
   "captains_log_get",
   "scrap_ship",
+  // v0.449.0 removed in-field salvage_wreck (get_wrecks/loot_wreck/tow_wreck/
+  // release_tow/scrap_wreck/sell_wreck remain). Kept as a denied alias, skipped here.
+  "salvage_wreck",
+  // v0.444.0 faction ship garages / v0.424.0 subscribe_observation push — not proxied.
+  "faction_garages",
+  "subscribe_observation",
   "get_empire_info",
   "faction_propose_ally",
   "faction_accept_ally",

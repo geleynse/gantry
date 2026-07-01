@@ -28,7 +28,7 @@ const V1_PROXIED_TOOLS = new Set([
   "decline_mission", "abandon_mission",
   "view_market", "view_storage", "estimate_purchase",
   "scan", "survey_system", "search_systems", "get_nearby", "get_map", "get_poi", "find_route",
-  "attack", "battle", "get_battle_status", "get_wrecks", "loot_wreck", "salvage_wreck",
+  "attack", "battle", "get_battle_status", "get_wrecks", "loot_wreck",
   "sell_wreck", "scrap_wreck", "tow_wreck", "release_tow",
   "cloak",
   // Rescue action: jettison fuel cells → stranded ship loots wreck → refuels from cargo cells.
@@ -144,6 +144,22 @@ const INTENTIONALLY_SKIPPED = new Set([
   // v0.300.0 — scrap_ship permanently deletes a docked hull. Denied
   // in proxy/schema.ts; listed here so the drift test stays quiet.
   "scrap_ship",
+
+  // v0.449.0 — in-field salvage_wreck REMOVED from the game. Wreck surface is
+  // now get_wrecks/loot_wreck/tow_wreck/release_tow/scrap_wreck/sell_wreck
+  // (verified live via openapi.json 2026-07-01). loot_wrecks compound + the
+  // salvage_loop routine both use loot_wreck now. salvage_wreck stays as a
+  // denied alias→loot_wrecks in schema.ts/proxy-constants.ts (harmless), so
+  // it's skipped here rather than proxied — otherwise the STALE test hard-fails.
+  "salvage_wreck",
+
+  // v0.444.0 — faction ship garages. Faction surface is intentionally narrow
+  // (see the faction_* block above); not proxied.
+  "faction_garages",
+
+  // v0.424.0 — subscribe_observation push command (arrival/departure updates).
+  // Not proxied — agents stay on get_nearby polling for now.
+  "subscribe_observation",
 
   // v0.291 citizenship preset — not proxied until empires open applications and
   // operator-approval workflow is in place. See docs/research/tax-citizenship-bundle-plan-2026-05-30.md.
