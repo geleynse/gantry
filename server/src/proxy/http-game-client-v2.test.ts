@@ -7,7 +7,7 @@
 //   3. login() falls back to mcpSessionId when greeting has no Session ID line
 //   4. execute() injects session_id for spacemolt/spacemolt_battle but not spacemolt_catalog
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
-import { HttpGameClientV2, parseGetStatusText, SessionCreateSpacing, noteSessionRateLimited, sessionCreateWaitMs } from "./http-game-client-v2.js";
+import { HttpGameClientV2, parseGetStatusText, SessionCreateSpacing, noteSessionRateLimited, sessionCreateWaitMs, unwrapGameEnvelope } from "./http-game-client-v2.js";
 
 let fetchMock: ReturnType<typeof mock>;
 let fetchResponses: Array<{ status: number; body: string; headers?: Record<string, string> }>;
@@ -367,6 +367,41 @@ describe("parseGetStatusText (parser)", () => {
     expect(p.standings.solarian.reputation).toBe(20);
     expect(p.standings.pirates.reputation).toBe(-30);
     expect(p.standings.outerrim.bounty).toBe(0);
+  });
+});
+
+describe("unwrapGameEnvelope (defensive envelope unwrap)", () => {
+  it("no-ops on a bare command payload (today's shape)", () => {
+    const buy = { action: "buy", item_id: "iron", quantity: 5, total_cost: 500, fills: [], level_up: false };
+    expect(unwrapGameEnvelope(buy)).toBe(buy);
+  });
+
+  it("no-ops on a payload that happens to carry a `result` field but also command fields", () => {
+    const payload = { result: "ok", item_id: "iron", quantity: 5 };
+    expect(unwrapGameEnvelope(payload)).toBe(payload);
+  });
+
+  it("unwraps the full envelope {result, notifications, session} to the payload", () => {
+    const inner = { action: "buy", item_id: "iron", total_cost: 500 };
+    const enveloped = { result: inner, notifications: [{ msg_type: "market_update", data: {} }], session: { id: "s1" } };
+    expect(unwrapGameEnvelope(enveloped)).toBe(inner);
+  });
+
+  it("unwraps an envelope with only {result}", () => {
+    const inner = { docked: true };
+    expect(unwrapGameEnvelope({ result: inner })).toBe(inner);
+  });
+
+  it("is idempotent — unwrapping the already-unwrapped payload is a no-op", () => {
+    const inner = { action: "mine", yield: 3 };
+    expect(unwrapGameEnvelope(unwrapGameEnvelope({ result: inner, session: {} }))).toBe(inner);
+  });
+
+  it("leaves primitives, arrays, and null untouched", () => {
+    expect(unwrapGameEnvelope("Cargo: 0/0")).toBe("Cargo: 0/0");
+    expect(unwrapGameEnvelope(null)).toBe(null);
+    const arr = [{ result: 1 }];
+    expect(unwrapGameEnvelope(arr)).toBe(arr);
   });
 });
 
