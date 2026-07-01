@@ -1178,7 +1178,7 @@ describe("scanAndAttack", () => {
         if (tool === "get_wrecks") {
           return { result: { wrecks: [{ id: "wreck_1" }] } };
         }
-        if (tool === "salvage_wreck") {
+        if (tool === "loot_wreck") {
           return { result: { loot: ["iron"] } };
         }
         return { result: {} };
@@ -1564,7 +1564,7 @@ describe("lootWrecks", () => {
             },
           };
         }
-        if (tool === "salvage_wreck") {
+        if (tool === "loot_wreck") {
           salvageCalls.push(String(args?.wreck_id));
           return { result: { loot: ["iron"] } };
         }
@@ -1588,7 +1588,7 @@ describe("lootWrecks", () => {
     const client = makeClient({
       execute: async (tool, args) => {
         if (tool === "get_wrecks") return { result: { wrecks } };
-        if (tool === "salvage_wreck") {
+        if (tool === "loot_wreck") {
           salvageCalls.push(String(args?.wreck_id));
           return { result: {} };
         }
@@ -1609,7 +1609,7 @@ describe("lootWrecks", () => {
       execute: async (tool) => {
         if (tool === "get_wrecks")
           return { result: { wrecks: [{ id: "w1" }, { id: "w2" }, { id: "w3" }] } };
-        if (tool === "salvage_wreck") {
+        if (tool === "loot_wreck") {
           salvageIdx++;
           if (salvageIdx === 2) return { error: { code: "already_looted" } };
           return { result: { loot: ["iron"] } };
@@ -1633,8 +1633,8 @@ describe("lootWrecks", () => {
     const client = makeClient({
       execute: async (tool) => {
         if (tool === "get_wrecks") return { result: { wrecks: [{ id: "w1" }] } };
-        if (tool === "salvage_wreck")
-          return { result: { pending: true, command: "salvage_wreck" } };
+        if (tool === "loot_wreck")
+          return { result: { pending: true, command: "loot_wreck" } };
         if (tool === "get_cargo") return { result: {} };
         return { result: {} };
       },
@@ -1651,7 +1651,7 @@ describe("lootWrecks", () => {
       execute: async (tool) => {
         if (tool === "get_wrecks")
           return { result: [{ id: "w1" }, { id: "w2" }] }; // array, not {wrecks:[...]}
-        if (tool === "salvage_wreck") return { result: { loot: [] } };
+        if (tool === "loot_wreck") return { result: { loot: [] } };
         if (tool === "get_cargo") return { result: {} };
         return { result: {} };
       },

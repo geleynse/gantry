@@ -1100,7 +1100,7 @@ export function registerCompoundTools(deps: ToolRegistryDeps): void {
   // --- loot_wrecks ---
 
   mcpServer.registerTool("loot_wrecks", {
-    description: "Salvage up to N wrecks in your area. Calls get_wrecks, then salvage_wreck on each. Returns loot per wreck and final cargo.",
+    description: "Loot up to N wrecks in your area. Calls get_wrecks, then loot_wreck on each (grabs all cargo + modules that fit; does not destroy the wreck). Returns loot per wreck and final cargo.",
     inputSchema: {
       count: z.number().int().min(1).max(10).optional().describe("Max wrecks to salvage (default 5, max 10)"),
     },

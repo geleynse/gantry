@@ -53,9 +53,12 @@ export async function lootWrecks(
     const wreckId = String(wreck.id ?? wreck.wreck_id ?? "");
     if (!wreckId) continue;
 
+    // v0.449.0 removed salvage_wreck; loot_wreck loots all cargo+modules that
+    // fit (and no longer destroys the wreck, so high-value hulls can still be
+    // towed afterward). Maps to spacemolt_salvage/loot in v2.
     const salvageResp = isV2
-      ? await client.execute("spacemolt_salvage", { action: "salvage", id: wreckId })
-      : await client.execute("salvage_wreck", { wreck_id: wreckId });
+      ? await client.execute("spacemolt_salvage", { action: "loot", id: wreckId })
+      : await client.execute("loot_wreck", { wreck_id: wreckId });
     if (salvageResp.error) {
       results.push({ wreck_id: wreckId, status: "failed", error: salvageResp.error });
     } else {
