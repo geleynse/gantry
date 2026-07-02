@@ -161,7 +161,11 @@ async function run(ctx: RoutineContext, params: FullTradeRunParams): Promise<Rou
   const craftPhase = phase("craft");
   const craftResp = await ctx.client.execute("craft", { count: "ALL" });
   if(craftResp.result) {
-    const crafted = (craftResp.result as any).items_crafted as any[];
+    // The craft action_result carries the crafted items under `outputs`
+    // (see passthrough-handler waitForActionResult + summarizers.ts craft).
+    // Older shape used `items_crafted`; keep it as a fallback.
+    const r = craftResp.result as any;
+    const crafted = (r.outputs ?? r.items_crafted) as any[];
     if(crafted) itemsCrafted = crafted.map(c => c.item_id || c.id);
   }
   phases.push(completePhase(craftPhase, craftResp.result ?? craftResp.error));

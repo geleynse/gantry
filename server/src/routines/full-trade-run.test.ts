@@ -55,7 +55,7 @@ describe("full_trade_run routine", () => {
         if (tool === "travel_to" && args.destination === "STATION-1") return { result: { status: "arrived" } };
         if (tool === "dock") return { result: { status: "docked" } };
         if (tool === "analyze_market") return { result: { demand: [{ item_id: "STEEL" }] } };
-        if (tool === "craft") return { result: { items_crafted: [{ item_id: "STEEL" }] } };
+        if (tool === "craft") return { result: { outputs: [{ item_id: "STEEL" }] } }; // canonical craft shape
         if (tool === "get_cargo") return { result: { cargo: [{ item_id: "STEEL", quantity: 10 }, { item_id: "JUNK", quantity: 5 }] } };
         if (tool === "multi_sell") return { result: { items_sold: 1, credits_after: 1100 } };
         if (tool === "create_sell_order") return { result: { order_created: true } };
