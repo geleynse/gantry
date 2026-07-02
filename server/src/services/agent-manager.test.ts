@@ -194,7 +194,8 @@ describe('agent-manager', () => {
       expect(result.ok).toBe(true);
       expect(result.message).toContain('gracefully');
       expect(mockedCreateSignal).toHaveBeenCalledTimes(3); // inject + shutdown + stopped_gracefully
-      expect(mockedClearSignal).toHaveBeenCalledTimes(1); // clear shutdown
+      expect(mockedClearSignal).toHaveBeenCalledTimes(2); // clear shutdown + inject
+      expect(mockedClearSignal).toHaveBeenCalledWith('drifter-gale', 'inject');
     });
 
     it('sets stopped_gracefully signal on clean exit', async () => {
@@ -225,6 +226,7 @@ describe('agent-manager', () => {
       expect(result.message).toContain('force-stopped after timeout');
       expect(mockedKillSession).toHaveBeenCalledWith('drifter-gale');
       expect(mockedClearSignal).toHaveBeenCalledWith('drifter-gale', 'shutdown');
+      expect(mockedClearSignal).toHaveBeenCalledWith('drifter-gale', 'inject');
     });
 
     it('fails for unknown agent', async () => {
@@ -252,8 +254,8 @@ describe('agent-manager', () => {
       expect(result.ok).toBe(true);
       // inject + shutdown + stopped_gracefully
       expect(mockedCreateSignal).toHaveBeenCalledTimes(3);
-      // clearSignal: shutdown on stop + stopped_gracefully/shutdown/inject on start
-      expect(mockedClearSignal).toHaveBeenCalledTimes(4);
+      // clearSignal: shutdown+inject on stop + stopped_gracefully/shutdown/inject on start
+      expect(mockedClearSignal).toHaveBeenCalledTimes(5);
       expect(mockedNewSession).toHaveBeenCalledTimes(1);
     });
   });

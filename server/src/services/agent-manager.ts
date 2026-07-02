@@ -292,6 +292,11 @@ export async function softStopAgent(name: string, reason?: string): Promise<{ ok
     const stillRunning = await proc.hasSession(name);
     if (!stillRunning) {
       clearSignal(name, 'shutdown');
+      // Don't leave the SHUTDOWN_MESSAGE lingering in the operator-inject slot:
+      // the runner breaks on the 'shutdown' signal before it ever consumes this
+      // inject, so it would otherwise sit unconsumed forever and could later be
+      // delivered to a resumed agent as a stale priority instruction.
+      clearSignal(name, 'inject');
       // Mark as gracefully stopped so status can distinguish from a crash
       createSignal(name, 'stopped_gracefully');
       for (const hook of onStoppedHooks) hook(name, 'soft');
@@ -302,6 +307,7 @@ export async function softStopAgent(name: string, reason?: string): Promise<{ ok
   // Timeout — hard kill (not graceful)
   await proc.killSession(name);
   clearSignal(name, 'shutdown');
+  clearSignal(name, 'inject'); // don't leave the SHUTDOWN wrap-up inject lingering
   for (const hook of onStoppedHooks) hook(name, 'timeout');
   return { ok: true, message: `${name} force-stopped after timeout (${Math.floor(SOFT_STOP_TIMEOUT / 1000)}s)` };
 }
