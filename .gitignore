@@ -48,4 +48,5 @@ tsconfig.tsbuildinfo
 # Dev screenshots & tool scratch dirs (not source)
 *.png
 .playwright-mcp/
-.claude/
+.claude/*
+!.claude/skills/
