@@ -11,7 +11,16 @@ Thanks for your interest in contributing. This document covers the workflow, cod
 git clone https://github.com/your-username/gantry.git
 cd gantry
 bun install
+./scripts/install-hooks.sh
 ```
+
+`install-hooks.sh` points this clone's git hooks at `.githooks/` (`core.hooksPath` is
+per-clone, so every clone/worktree needs to run it once). The `pre-commit` hook
+guards against accidentally committing runtime-mutated data files (e.g.
+`server/src/data/sessions.json`, which the running server rewrites) — it
+unstages and restores them automatically, then lets the rest of the commit
+through. To deliberately commit a change to one of those files, set
+`GANTRY_ALLOW_DATA_COMMIT=1`.
 
 ### Build
 

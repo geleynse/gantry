@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Pre-commit hook: keep runtime-mutated data files out of commits by default.
+#
+# server/src/data/sessions.json is git-tracked (agents/tests read it at
+# startup) but gets rewritten by the running server, so it churns on nearly
+# every commit with unrelated diffs. Unless a commit is deliberately
+# updating one of these files, unstage it and restore the working-tree
+# content so it doesn't ride along.
+#
+# Override: GANTRY_ALLOW_DATA_COMMIT=1 git commit ...
+#
+# Installed via scripts/install-hooks.sh (sets core.hooksPath=.githooks).
+
+set -euo pipefail
+
+RUNTIME_DATA_FILES=(
+  "server/src/data/sessions.json"
+)
+
+if [ "${GANTRY_ALLOW_DATA_COMMIT:-0}" = "1" ]; then
+  exit 0
+fi
+
+staged_runtime_files=()
+for f in "${RUNTIME_DATA_FILES[@]}"; do
+  if git diff --cached --name-only -- "$f" | grep -qx "$f"; then
+    staged_runtime_files+=("$f")
+  fi
+done
+
+if [ "${#staged_runtime_files[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+git restore --staged -- "${staged_runtime_files[@]}"
+git checkout -- "${staged_runtime_files[@]}"
+
+echo "pre-commit: unstaged + restored runtime data file(s): ${staged_runtime_files[*]} (set GANTRY_ALLOW_DATA_COMMIT=1 to commit them deliberately)"
+
+if git diff --cached --quiet; then
+  echo "pre-commit: aborting — nothing left staged after removing runtime data file(s)" >&2
+  exit 1
+fi
+
+exit 0
