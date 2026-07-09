@@ -163,6 +163,7 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
     shutdownWarningMs,
     coordinator: fleetConfig.coordinator,
     overseer: fleetConfig.overseer,
+    survivability: fleetConfig.survivability,
     outbound: fleetConfig.outbound,
     mcpPresets: fleetConfig.mcpPresets,
     forumUrl: fleetConfig.forumUrl,

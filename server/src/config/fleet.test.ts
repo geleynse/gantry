@@ -232,6 +232,77 @@ describe("Config Loading (loadConfig)", () => {
     cleanup();
   });
 
+  test("loadConfig preserves survivability config", () => {
+    const survivability = {
+      autoCloakEnabled: true,
+      agentOverrides: { "agent-a": false },
+      thresholds: { default: "high" as const },
+    };
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [{ name: "agent-a" }],
+      survivability,
+    });
+    const config = loadConfig(tmpDir);
+    // Regression: survivability was in the schema and read by auto-cloak.ts /
+    // survivability.ts, but never copied out of loadConfig — so autoCloakEnabled
+    // was always undefined at runtime and auto-cloak never armed.
+    expect(config.survivability?.autoCloakEnabled).toBe(true);
+    expect(config.survivability?.agentOverrides).toEqual(survivability.agentOverrides);
+    // Unset roles get CloakThresholdsSchema's zod defaults; the set one survives.
+    expect(config.survivability?.thresholds?.default).toBe("high");
+    cleanup();
+  });
+
+  test("loadConfig does not silently drop any pass-through schema field", () => {
+    // Fields loadConfig deliberately renames, normalizes, or derives.
+    const transformed = new Set([
+      "mcpGameUrl", // -> gameUrl / gameApiUrl
+      "agents", // per-agent socksPort/mcpPreset derivation
+      "turnInterval", // deprecated alias, folded into turnSleepMs
+      "mockMode", // boolean shorthand -> MockModeConfig
+      "accountPool", // relative path resolved against fleetDir
+      "mcpToolSet", // accepted by the schema but absent from GantryConfig by design
+    ]);
+
+    const passThrough: Record<string, unknown> = {
+      turnSleepMs: 1234,
+      staggerDelay: 56,
+      agentDeniedTools: { "agent-a": { jump: "denied for testing" } },
+      callLimits: { jump: 3 },
+      prayer: { fuzzyMatchThreshold: 0.5 },
+      mcpPresets: { standard: ["get_status"] },
+      auth: { adapter: "loopback" },
+      fleetName: "test-fleet",
+      credentialsPath: "/tmp/creds.json",
+      maxIterationsPerSession: 42,
+      maxTurnDurationMs: 60_000,
+      idleTimeoutMs: 30_000,
+      shutdownWarningMs: 5_000,
+      coordinator: { enabled: true },
+      overseer: { enabled: true },
+      survivability: { autoCloakEnabled: true },
+      outbound: { forum: "disabled" as const },
+      forumUrl: "https://forum.example.com",
+      validateCredentialsOnStartup: true,
+      cargoSaturationGuard: true,
+    };
+
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [{ name: "agent-a" }],
+      ...passThrough,
+    });
+    const config = loadConfig(tmpDir) as unknown as Record<string, unknown>;
+
+    const dropped = Object.keys(FleetConfigSchema.shape)
+      .filter((k) => !transformed.has(k))
+      .filter((k) => config[k] === undefined);
+
+    expect({ dropped }).toEqual({ dropped: [] });
+    cleanup();
+  });
+
   test("loadConfig loads minimal config without errors", () => {
     writeConfig({
       mcpGameUrl: "https://game.example.com/mcp",
