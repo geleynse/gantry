@@ -10,7 +10,11 @@ import {
   getLogLevel,
   parseLogLevel,
   setDevelopmentMode,
+  enableFileLogging,
+  disableFileLogging,
 } from "./logger";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 
 describe("logger utility", () => {
   // Store original console methods to restore after tests
@@ -316,6 +320,65 @@ describe("logger utility", () => {
       const logger = createLogger("cache");
       logger.debug("hit", { age: "45ms" });
       expect(consoleLogOutput[0]).toContain(" | ");
+    });
+  });
+
+  describe("file logging", () => {
+    const tmpDir = join(import.meta.dir, "__test_logs__");
+    const logPath = join(tmpDir, "test.log");
+
+    beforeEach(() => {
+      mkdirSync(tmpDir, { recursive: true });
+    });
+
+    afterEach(() => {
+      disableFileLogging();
+      try { rmSync(tmpDir, { recursive: true }); } catch {}
+    });
+
+    async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+      const start = Date.now();
+      while (!predicate() && Date.now() - start < timeoutMs) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    }
+
+    test("writes log lines to the file", async () => {
+      await enableFileLogging(logPath);
+      const logger = createLogger("file-test");
+      logger.info("hello file");
+      await waitFor(() => existsSync(logPath) && readFileSync(logPath, "utf-8").includes("hello file"));
+      expect(readFileSync(logPath, "utf-8")).toContain("hello file");
+    });
+
+    test("rotates the log file to .1 once it exceeds the size cap", async () => {
+      await enableFileLogging(logPath, 200);
+      const logger = createLogger("rotation-test");
+      // Wait for the async stream open so the file exists before rotation renames it
+      logger.info("first line");
+      await waitFor(() => existsSync(logPath));
+      for (let i = 0; i < 10; i++) {
+        logger.info(`line ${i} padding padding padding padding padding`);
+      }
+      // Rotation renames synchronously once the byte counter passes the cap
+      expect(existsSync(`${logPath}.1`)).toBe(true);
+      // Logging continues into a fresh file after rotation
+      logger.info("after rotation");
+      await waitFor(() => existsSync(logPath) && readFileSync(logPath, "utf-8").includes("after rotation"));
+      expect(readFileSync(logPath, "utf-8")).toContain("after rotation");
+    });
+
+    test("stream open error disables file logging instead of crashing (regression)", async () => {
+      // Point file logging at a directory: open fails asynchronously with EISDIR.
+      // Without an 'error' listener this becomes an uncaughtException and kills the process.
+      const dirAsFile = join(tmpDir, "im-a-directory");
+      mkdirSync(dirAsFile, { recursive: true });
+      await enableFileLogging(dirAsFile);
+      await waitFor(() => consoleErrorOutput.some((l) => l.includes("Log file stream error")));
+      expect(consoleErrorOutput.some((l) => l.includes("Log file stream error"))).toBe(true);
+      // Subsequent logging must not throw
+      const logger = createLogger("error-test");
+      logger.info("still alive");
     });
   });
 });

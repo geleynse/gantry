@@ -114,11 +114,20 @@ export async function createApp(config: GantryConfig, options?: { bindHost?: str
   const app: Express = express();
 
   // Trust proxy headers for IP extraction (needed for auth adapters to work correctly with proxies/containers)
-  // Configure via TRUST_PROXY env var: false (default, safe), 1 (Cloudflare tunnel), or true (trust all)
+  // Configure via TRUST_PROXY env var: false (default, safe), a hop count ("1" for
+  // Cloudflare tunnel), "true" (trust all), or an IP/CIDR/named-subnet list which
+  // Express supports natively (e.g. "127.0.0.1", "loopback", "10.0.0.0/8").
   const trustProxy = process.env.TRUST_PROXY;
-  const trustProxyValue = trustProxy === "true" ? true : trustProxy === "1" ? 1 : false;
+  let trustProxyValue: boolean | number | string = false;
+  if (trustProxy === "true") {
+    trustProxyValue = true;
+  } else if (trustProxy && /^\d+$/.test(trustProxy)) {
+    trustProxyValue = parseInt(trustProxy, 10);
+  } else if (trustProxy && trustProxy !== "false") {
+    trustProxyValue = trustProxy;
+  }
   app.set("trust proxy", trustProxyValue);
-  if (trustProxyValue) {
+  if (trustProxyValue === true) {
     log.warn("TRUST_PROXY is broadly set — consider using specific proxy IP/CIDR for production");
   }
 

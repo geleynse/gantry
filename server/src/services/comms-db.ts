@@ -25,7 +25,56 @@ interface CommsLogEntry {
   created_at: string;
 }
 
+/** Orders whose expiry passed more than this many days ago are pruned (along
+ * with their delivery rows). Recently-expired orders are kept so listOrders
+ * still shows meaningful history on the dashboard. Orders without an
+ * expires_at are never pruned. */
+const EXPIRED_ORDER_RETENTION_DAYS = 7;
+
+/** Prune long-expired fleet_orders and their fleet_order_deliveries rows.
+ * Returns the number of orders deleted. The market scanner recreates its
+ * 30-min-expiry broadcast orders every cycle, so without pruning both tables
+ * grow forever — and getPendingOrders scans deliveries on every tool call. */
+export function pruneExpiredOrders(retentionDays = EXPIRED_ORDER_RETENTION_DAYS): number {
+  const db = getDb();
+  const cutoff = `-${retentionDays} days`;
+  let deleted = 0;
+  db.transaction(() => {
+    // Delete delivery rows first — fleet_order_deliveries references fleet_orders(id).
+    queryRun(
+      `DELETE FROM fleet_order_deliveries WHERE order_id IN (
+         SELECT id FROM fleet_orders
+         WHERE expires_at IS NOT NULL AND expires_at < datetime('now', ?)
+       )`,
+      cutoff,
+    );
+    deleted = queryRun(
+      `DELETE FROM fleet_orders WHERE expires_at IS NOT NULL AND expires_at < datetime('now', ?)`,
+      cutoff,
+    );
+  })();
+  return deleted;
+}
+
+// Opportunistic prune throttle: run at most once per hour, piggybacked on
+// createOrder (the market scanner calls it every few minutes when it finds
+// opportunities) — no dedicated scheduler needed.
+const PRUNE_MIN_INTERVAL_MS = 60 * 60 * 1000;
+let lastOrderPruneAt = 0;
+
+function maybePruneExpiredOrders(): void {
+  const now = Date.now();
+  if (now - lastOrderPruneAt < PRUNE_MIN_INTERVAL_MS) return;
+  lastOrderPruneAt = now;
+  try {
+    pruneExpiredOrders();
+  } catch {
+    // Non-fatal — pruning is best-effort
+  }
+}
+
 export function createOrder(input: CreateOrderInput): number {
+  maybePruneExpiredOrders();
   const db = getDb();
   let orderId = 0;
   db.transaction(() => {

@@ -6,6 +6,11 @@ import { FileWatcher } from '../../services/file-watcher.js';
 import { initSSE, writeSSE } from '../sse.js';
 import { queryString, queryInt } from '../middleware/query-helpers.js';
 
+/** Max lines the search endpoint scans (from the end of the file). Keeps the
+ * per-request read bounded (~5 MB via readTail's ~200-byte/line budget)
+ * instead of loading the whole unrotated log into memory. */
+const SEARCH_MAX_LINES = 25_000;
+
 export function createLogsRouter(fleetDir: string, config: GantryConfig): Router {
   const router: Router = Router();
 
@@ -56,13 +61,16 @@ export function createLogsRouter(fleetDir: string, config: GantryConfig): Router
 
       let currentOffset = initial.offset;
 
+      // 1s poll: each idle iteration still costs an open/fstat/close cycle per
+      // connected viewer, so keep the cadence modest — logs are line-buffered
+      // agent output, not interactive terminals.
       while (!aborted) {
         const result = await watcher.readFrom(currentOffset);
         if (result.lines.length > 0) {
           writeSSE(res, 'log', { lines: result.lines, offset: result.offset });
           currentOffset = result.offset;
         }
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 1000));
       }
     } finally {
       watcher.close();
@@ -103,8 +111,13 @@ export function createLogsRouter(fleetDir: string, config: GantryConfig): Router
       return;
     }
 
+    // Search only the recent tail of the log. Agent logs are append-only and
+    // never rotated, so readFrom(0) would buffer the entire (potentially
+    // hundreds-of-MB) file in memory on every request. readTail budgets
+    // ~200 bytes/line, so this caps the read at ~5 MB / 25k lines.
+    // Line numbers are relative to the searched window, not the whole file.
     const watcher = new FileWatcher(logPath(name));
-    const { lines } = await watcher.readFrom(0);
+    const { lines } = await watcher.readTail(SEARCH_MAX_LINES);
     watcher.close();
 
     const results: Array<{ line: string; lineNumber: number }> = [];

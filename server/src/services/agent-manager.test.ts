@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, spyOn, beforeEach } from 'bun:test';
+import { describe, it, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { setConfigForTesting, setSoftStopTimingForTesting } from '../config.js';
 import type { GantryConfig } from '../config.js';
 
@@ -29,6 +29,8 @@ import * as proc from './process-manager.js';
 import * as signalsDb from './signals-db.js';
 import { clearCredentialHealthForTesting, recordCredentialAuthFailure } from './credential-health.js';
 import { startAgent, stopAgent, forceStopAgent, softStopAgent, softRestartAgent, startAll, validateSpawnSpec } from './agent-manager.js';
+import { createDatabase, closeDb } from './database.js';
+import { markStrandedHold, getAllCooldowns } from './overseer-stop-cooldown.js';
 
 describe('agent-manager', () => {
   let mockedHasSession: ReturnType<typeof spyOn>;
@@ -134,6 +136,36 @@ describe('agent-manager', () => {
           args: expect.arrayContaining(['--agent', 'rust-vane']),
         })
       );
+    });
+  });
+
+  describe('startAgent — operator-only hold_offline flag', () => {
+    // These tests need a real DB so the cooldown/hold rows persist.
+    beforeEach(() => {
+      createDatabase(':memory:');
+      mockedHasSession.mockResolvedValue(false);
+      mockedNewSession.mockResolvedValue(undefined);
+    });
+    afterEach(closeDb);
+
+    it('operator start clears the hold_offline escalation flag', async () => {
+      markStrandedHold('rust-vane', 'stranded', Date.now());
+      expect(getAllCooldowns()[0].hold_offline).toBe(1);
+
+      const result = await startAgent('rust-vane'); // default: operator-initiated
+      expect(result.ok).toBe(true);
+      expect(getAllCooldowns()[0].hold_offline).toBe(0);
+    });
+
+    it('automated start does NOT clear the hold_offline flag', async () => {
+      markStrandedHold('rust-vane', 'stranded', Date.now());
+      expect(getAllCooldowns()[0].hold_offline).toBe(1);
+
+      const result = await startAgent('rust-vane', { operatorInitiated: false });
+      expect(result.ok).toBe(true);
+      // The agent still starts, but the operator hold remains set for review.
+      expect(getAllCooldowns()[0].hold_offline).toBe(1);
+      expect(mockedNewSession).toHaveBeenCalledTimes(1);
     });
   });
 

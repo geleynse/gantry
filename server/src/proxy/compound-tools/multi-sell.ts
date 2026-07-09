@@ -6,6 +6,7 @@
  */
 
 import { createLogger } from "../../lib/logger.js";
+import { getItemDisplayName } from "../../lib/utils.js";
 import type { SellEntry } from "../sell-log.js";
 import type { CompoundToolDeps, CompoundResult, MultiSellItem } from "./types.js";
 import { stripPendingFields, refreshStatusOrFlag } from "./utils.js";
@@ -157,12 +158,32 @@ export async function multiSell(
     }) ?? [],
   );
 
+  // Status-dashboard cargo carries only { name, quantity }, so cargoMap keys are
+  // effectively always name-slugs — but agents pass CANONICAL game ids, which can
+  // differ from the name slug (mining_laser_1 vs "Mining Laser I" → mining_laser_i;
+  // the known name-vs-item_id gotcha, see routine-utils itemNameToId). On a miss,
+  // retry with derived aliases: the slug of the id, the slug of its display name
+  // (covers ITEM_MAPPING), and a trailing arabic→roman tier conversion.
+  const ROMAN_TIERS = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
+  const lookupCargoQty = (itemId: string): number | undefined => {
+    const direct = cargoMap.get(itemId)
+      ?? cargoMap.get(slug(itemId))
+      ?? cargoMap.get(slug(getItemDisplayName(itemId)));
+    if (direct !== undefined) return direct;
+    const m = slug(itemId).match(/^(.*)_(\d+)$/);
+    if (m) {
+      const tier = Number(m[2]);
+      if (tier >= 1 && tier <= ROMAN_TIERS.length) return cargoMap.get(`${m[1]}_${ROMAN_TIERS[tier - 1]}`);
+    }
+    return undefined;
+  };
+
   for (let i = 0; i < items.length; i++) {
     const { item_id } = items[i];
     let { quantity } = items[i];
     // Resolve "ALL" or non-numeric quantities to actual cargo amount
     if (quantity === ("ALL" as any) || typeof quantity !== "number" || quantity <= 0) {
-      const cargoQty = cargoMap.get(item_id);
+      const cargoQty = lookupCargoQty(item_id);
       if (cargoQty && cargoQty > 0) {
         quantity = cargoQty;
         log.debug("multi_sell resolved ALL quantity", { agent: agentName, item_id, quantity });
@@ -176,7 +197,10 @@ export async function multiSell(
       : await client.execute("sell", { item_id, quantity }, { noRetry: true });
 
     if (resp.error) {
-      results.push({ item_id, quantity, result: resp.error });
+      // Wrap under an `error` key (same shape as the no-cargo entry above) —
+      // the game client's error is { code, message } with no `error` key, and
+      // both the sell-log filter below and items_sold counting key off it.
+      results.push({ item_id, quantity, result: { error: resp.error } });
       log.warn("multi_sell item failed", {
         agent: agentName,
         item_index: i,
@@ -281,10 +305,16 @@ export async function multiSell(
     // Case: creditDelta === "unknown" — refresh failed (rate-limited path below handles it)
   }
 
+  // Only count entries that actually sold — failed sells and "No <item> in
+  // cargo" entries carry an `error` key in their result and must not inflate
+  // items_sold (routines report "Sold N items" from this value verbatim).
+  const successfulSells = results.filter(
+    (r) => !(r.result && typeof r.result === "object" && "error" in (r.result as Record<string, unknown>)),
+  );
   const sellResult: Record<string, unknown> = {
     status: "completed",
     sells: results,
-    items_sold: results.length,
+    items_sold: successfulSells.length,
   };
 
   if (!refreshOutcome.updated && results.length > 0) {

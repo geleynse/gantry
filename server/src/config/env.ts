@@ -3,11 +3,25 @@
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { createLogger } from "../lib/logger.js";
 
-/** Parse an integer from an env var, returning fallback if missing/invalid. */
-function envInt(key: string, fallback: number): number {
+const log = createLogger("env");
+
+/**
+ * Parse an integer from an env var, returning `fallback` if missing/invalid or
+ * below `min` (default 1). The floor guards setInterval consumers: a negative
+ * or zero interval is clamped to ~1ms by the runtime, turning a poll loop into
+ * a hot loop that hammers the game API. Pass `min: 0` for callers where zero is
+ * a legitimate value.
+ */
+export function envInt(key: string, fallback: number, min = 1): number {
   const v = parseInt(process.env[key] ?? "", 10);
-  return isNaN(v) ? fallback : v;
+  if (isNaN(v)) return fallback;
+  if (v < min) {
+    log.warn(`${key}=${v} is below minimum ${min}; using default ${fallback}`);
+    return fallback;
+  }
+  return v;
 }
 
 /**
@@ -79,7 +93,7 @@ export const LOG_LEVEL = process.env.LOG_LEVEL || "DEBUG"; // Default to DEBUG f
  */
 export const GANTRY_MOCK = process.env.GANTRY_MOCK === "1";
 
-// Timing intervals (envInt handles NaN and correctly allows 0)
+// Timing intervals (envInt rejects NaN and clamps values below 1ms to the default)
 export const MARKET_SCAN_INTERVAL_MS = envInt("MARKET_SCAN_INTERVAL_MS", 300000);
 export const MARKET_PRUNE_INTERVAL_MS = envInt("MARKET_PRUNE_INTERVAL_MS", 600000);
 export const SCHEMA_TTL_MS = envInt("SCHEMA_TTL_MS", 3600000);

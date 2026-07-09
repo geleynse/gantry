@@ -399,7 +399,7 @@ describe("Gantry Smoke Tests", () => {
     const sessionId = await initSession();
     await loginAgent(sessionId);
 
-    const result = await callTool(sessionId, "jettison", {}, 6);
+    const result = await callTool(sessionId, "jettison", { item_id: "iron_ore" }, 6);
 
     expect(result.error).toBeDefined();
     expect(result.error).toContain("not available");

@@ -428,11 +428,12 @@ export function ToolUsageChart({ hours }: ToolUsageChartProps) {
           const cleanName = entry.toolName.replace(/^(mcp__gantry__)+/, "mcp__gantry__");
           const existing = collapsed.get(cleanName);
           if (existing) {
+            // Weighted average for success rate — capture the old count
+            // before mutating so each side is weighted correctly
+            const oldCount = existing.count;
             existing.count += entry.count;
-            // Weighted average for success rate
-            const total = existing.count + entry.count;
-            existing.avgSuccess = total > 0
-              ? (existing.avgSuccess * existing.count + entry.avgSuccess * entry.count) / total
+            existing.avgSuccess = existing.count > 0
+              ? (existing.avgSuccess * oldCount + entry.avgSuccess * entry.count) / existing.count
               : 0;
           } else {
             collapsed.set(cleanName, { ...entry, toolName: cleanName });

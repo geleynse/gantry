@@ -375,7 +375,7 @@ describe("Concurrent Load", () => {
 
     // agent-3 calling jettison should be blocked
     const [blockedResult, ...otherResults] = await Promise.all([
-      callTool(agent3.sessionId, "jettison", {}, 20),
+      callTool(agent3.sessionId, "jettison", { item_id: "iron_ore" }, 20),
       ...others.map(({ sessionId }, i) =>
         callTool(sessionId, "mine", {}, 21 + i),
       ),

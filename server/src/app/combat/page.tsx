@@ -8,6 +8,7 @@ import type { Encounter, CombatEvent } from "@/components/encounter-card";
 import { groupEncounters } from "@/lib/combat-grouping";
 import type { GroupBy } from "@/lib/combat-grouping";
 import { formatDate } from "@/lib/time";
+import { apiFetch } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -439,6 +440,7 @@ function BattleLogTab({ summary, systems }: { summary: AgentSummary[]; systems: 
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // Expanded + cached events
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -482,6 +484,7 @@ function BattleLogTab({ summary, systems }: { summary: AgentSummary[]; systems: 
 
   const fetchEncounters = useCallback(async (off = 0) => {
     setLoading(true);
+    setFetchError(null);
     try {
       const params = new URLSearchParams({ limit: String(ENCOUNTER_LIMIT), offset: String(off) });
       if (agentFilter) params.set("agent", agentFilter);
@@ -490,10 +493,13 @@ function BattleLogTab({ summary, systems }: { summary: AgentSummary[]; systems: 
       if (tierFilter) params.set("pirate_tier", tierFilter);
       const from = dateRangeToFrom(dateRange);
       if (from) params.set("from", from);
-      const res = await fetch(`/api/combat/encounters?${params}`);
-      const data = await res.json();
+      const data = await apiFetch<{ encounters?: Encounter[]; total?: number }>(
+        `/combat/encounters?${params}`
+      );
       setEncounters(data.encounters ?? []);
       setTotal(data.total ?? 0);
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -613,6 +619,14 @@ function BattleLogTab({ summary, systems }: { summary: AgentSummary[]; systems: 
         {/* GroupBy toggle */}
         <GroupByToggle value={groupBy} onChange={setGroupBy} />
       </div>
+
+      {/* Fetch error */}
+      {fetchError && (
+        <div className="flex items-center gap-1.5 text-xs text-error border border-error/30 bg-error/5 px-3 py-2">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          Failed to load encounters: {fetchError}
+        </div>
+      )}
 
       {/* Encounter list / groups */}
       {loading ? (

@@ -232,6 +232,26 @@ describe("useRealtimeUpdates", () => {
     expect(es.url).toBe("/api/custom/stream");
   });
 
+  it("opens exactly one EventSource when WS open times out (no leaked ES)", async () => {
+    const { unmount } = renderHook(() =>
+      useRealtimeUpdates<unknown>({ ...DEFAULT_OPTIONS, wsOpenTimeoutMs: 10 })
+    );
+    expect(MockWebSocket.instances).toHaveLength(1);
+
+    // WS never opens; the open timeout closes it and onclose falls back to SSE
+    await waitFor(() =>
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(1)
+    );
+    // Give an erroneous second connectSSE a chance to fire before asserting
+    await new Promise((r) => setTimeout(r, 30));
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(MockWebSocket.instances[0].readyState).toBe(MockWebSocket.CLOSED);
+
+    // The single ES is tracked by esRef, so unmount closes it
+    unmount();
+    expect(MockEventSource.instances[0].readyState).toBe(MockEventSource.CLOSED);
+  });
+
   // ---------------------------------------------------------------------------
   // Cleanup
   // ---------------------------------------------------------------------------

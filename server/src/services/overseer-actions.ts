@@ -7,7 +7,7 @@ const LIFECYCLE_COOLDOWN_MS = 5 * 60 * 1000;
 
 export interface ActionExecutorDeps {
   agentManager: {
-    startAgent: (name: string) => Promise<{ ok: boolean; message: string }>;
+    startAgent: (name: string, opts?: { operatorInitiated?: boolean }) => Promise<{ ok: boolean; message: string }>;
     stopAgent: (name: string, reason?: string) => Promise<{ ok: boolean; message: string }>;
   };
   commsDb: {
@@ -74,7 +74,8 @@ export function createActionExecutor(deps: ActionExecutorDeps) {
           const overseerReason = (params.reason as string | undefined) ?? "no reason given";
           const result =
             type === "start_agent"
-              ? await deps.agentManager.startAgent(agent)
+              // Automated start: must NOT clear the operator-only hold_offline flag.
+              ? await deps.agentManager.startAgent(agent, { operatorInitiated: false })
               : await deps.agentManager.stopAgent(agent, `overseer: ${overseerReason}`);
           // Record overseer-initiated stops for cooldown + escalation tracking.
           if (type === "stop_agent" && result.ok) {

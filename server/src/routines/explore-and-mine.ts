@@ -12,7 +12,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, done, handoff, phase, completePhase, checkCombat, getCargoUtilization, travelAndDock } from "./routine-utils.js";
+import { withRetry, done, handoff, phase, completePhase, checkCombat, getCargoUtilization, travelAndDock, extractDemandItems, parseCargoItems, resolveSellable } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -137,8 +137,8 @@ async function run(ctx: RoutineContext, rawParams: ExploreAndMineParams): Promis
       return handoff("Combat detected during travel to belt", { belt: beltId }, phases);
     }
 
-    // Mine
-    const mineResp = await ctx.client.execute("batch_mine", { cycles });
+    // Mine — the batch_mine compound handler reads args.count (not cycles)
+    const mineResp = await ctx.client.execute("batch_mine", { count: cycles });
     if (mineResp.error) {
       ctx.log("warn", `explore_and_mine: mining at ${beltId} failed`, { error: mineResp.error });
       phases.push(completePhase(beltPhase, { error: mineResp.error }));
@@ -148,7 +148,7 @@ async function run(ctx: RoutineContext, rawParams: ExploreAndMineParams): Promis
     const mineResult = mineResp.result as Record<string, unknown> | undefined;
     const oresCompleted = typeof mineResult?.mines_completed === "number" ? mineResult.mines_completed : 0;
     totalOre += oresCompleted;
-    totalCycles += cycles;
+    totalCycles += oresCompleted; // actual mines completed, not the requested count
     beltsMined.push(beltId);
     phases.push(completePhase(beltPhase, mineResult));
     ctx.log("info", `explore_and_mine: mined ${oresCompleted} at ${beltId}`);
@@ -173,19 +173,35 @@ async function run(ctx: RoutineContext, rawParams: ExploreAndMineParams): Promis
     );
   }
 
-  // Sell
+  // Sell — multi_sell requires an explicit items list, so build it from cargo
+  // filtered to what this station demands (same pattern as sell_cycle).
   let itemsSold = 0;
   const cargoCheck = await ctx.client.execute("get_status");
   const cargo = getCargoUtilization(cargoCheck);
   if (cargo && cargo.used > 0) {
-    await ctx.client.execute("analyze_market");
+    const marketResp = await ctx.client.execute("analyze_market");
+    const demandItems = extractDemandItems(marketResp.result);
+    const cargoResp = await ctx.client.execute("get_cargo");
+    const cargoItems = parseCargoItems(cargoResp.result);
+    const itemsToSell = resolveSellable(cargoItems, demandItems);
     const sellPhase = phase("sell");
-    const sellResp = await ctx.client.execute("multi_sell");
-    if (!sellResp.error) {
+    if (itemsToSell.length === 0) {
+      ctx.log("info", `explore_and_mine: no demand at ${rawParams.returnStation} for cargo, skipping sell`);
+      phases.push(completePhase(sellPhase, { skipped: "no_demand", cargo_items: cargoItems.map((c) => c.item_id) }));
+    } else {
+      const sellResp = await ctx.client.execute("multi_sell", { items: itemsToSell });
+      if (sellResp.error) {
+        phases.push(completePhase(sellPhase, { error: sellResp.error }));
+        return handoff(
+          `Mined ${totalOre} ore at ${beltsMined.length} belt(s) but selling at ${rawParams.returnStation} failed: ${JSON.stringify(sellResp.error)}`,
+          { belts_mined: beltsMined, total_ore: totalOre, station: rawParams.returnStation },
+          phases,
+        );
+      }
       const sellResult = sellResp.result as Record<string, unknown> | undefined;
       itemsSold = typeof sellResult?.items_sold === "number" ? sellResult.items_sold : 0;
+      phases.push(completePhase(sellPhase, sellResult));
     }
-    phases.push(completePhase(sellPhase, sellResp.result ?? sellResp.error));
   }
 
   const summary = `Explored ${rawParams.system}: mined ${totalOre} ore at ${beltsMined.length} belt(s), sold ${itemsSold} items at ${rawParams.returnStation}`;

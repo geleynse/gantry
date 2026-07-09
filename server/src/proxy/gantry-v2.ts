@@ -120,6 +120,31 @@ function makeTrackedClient(
   };
 }
 
+/**
+ * Normalize a compound-action result into the routine client's
+ * { result, error } envelope.
+ *
+ * Compound tools report failures IN-BAND — { error: "..." } (multi_sell,
+ * batch_mine) and/or { status: "error", error: "..." } (travel_to, jump_route,
+ * flee) — rather than throwing. Routines only check the top-level `resp.error`,
+ * so lift in-band failures to a top-level error (mirroring what the
+ * STATE_CHANGING_TOOLS passthrough branch does with parsed.error). The full
+ * result stays attached so routines can still read details (jumps_completed,
+ * steps, hint, ...).
+ *
+ * Success shapes never carry a top-level `error` key: partial batch_mine uses
+ * `last_error`, loot_wrecks nests per-wreck errors inside `results`.
+ */
+export function normalizeCompoundResult(result: unknown): { result?: unknown; error?: unknown } {
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const r = result as Record<string, unknown>;
+    if (r.error !== undefined || r.status === "error") {
+      return { error: r.error ?? r.message ?? r, result };
+    }
+  }
+  return { result };
+}
+
 // ---------------------------------------------------------------------------
 // V2SharedState
 // ---------------------------------------------------------------------------
@@ -282,6 +307,9 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
 
   // Resource knowledge — persisted cross-session resource location tracking
   const resourceKnowledge = new ResourceKnowledge();
+  // Shared per-turn shutdown-warning guard: same Set is read by the injection
+  // pipeline and cleared on login (auth-handlers) so the warning re-fires per turn.
+  const shutdownWarningFired = new Set<string>();
   const pipelineCtx: PipelineContext = {
     config,
     sessionAgentMap,
@@ -307,7 +335,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
     // Use shared transit throttle from SharedState so it persists across agent turns/sessions.
     // Fall back to a new instance only in standalone mode (no shared state, e.g. tests).
     transitThrottle: shared?.proxy.transitThrottle ?? new TransitThrottle(),
-    shutdownWarningFired: new Set<string>(),
+    shutdownWarningFired,
   };
 
   // Use shared transit stuck detector from SharedState so counter persists across sessions.
@@ -401,6 +429,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
     marketReservations: shared.fleet.marketReservations,
     overseerEventLog: shared.fleet.overseerEventLog ?? null,
     closeStaleTransportsForAgent: shared.sessions.closeStaleTransportsForAgent,
+    shutdownWarningFired,
   };
 
   mcpServer.registerTool("login", {
@@ -918,7 +947,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
                   agentName,
                   args ?? {},
                 );
-                return { result };
+                return normalizeCompoundResult(result);
               }
               // Route state-changing game tools through handlePassthrough so they get
               // tick-waits, dock verification, and other post-execution logic.

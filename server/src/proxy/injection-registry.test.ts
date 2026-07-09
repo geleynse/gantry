@@ -581,6 +581,28 @@ describe("default injection: shutdown-warning", () => {
     expect(r2.has("_shutdown_warning")).toBe(false);
   });
 
+  it("re-fires on a new turn once the agent's guard entry is cleared (login reset)", () => {
+    const turnStartedAt = new Date(Date.now() - 1200 * 1000).toISOString();
+    const sessionAgentMap = new Map([["sess-1", "alpha"]]);
+    const shutdownWarningFired = new Set<string>();
+    const ctx = makeCtx({
+      sessionAgentMap,
+      sessionStore: makeSessionStoreMock(turnStartedAt),
+      shutdownWarningFired,
+    });
+
+    const r1 = ctx.injectionRegistry.run(ctx, "alpha");
+    expect(r1.has("_shutdown_warning")).toBe(true);
+    expect(shutdownWarningFired.has("alpha")).toBe(true);
+
+    // Login clears the per-turn guard (auth-handlers deps.shutdownWarningFired.delete).
+    shutdownWarningFired.delete("alpha");
+
+    // Next long turn — warning must fire again, not stay suppressed forever.
+    const r2 = ctx.injectionRegistry.run(ctx, "alpha");
+    expect(r2.has("_shutdown_warning")).toBe(true);
+  });
+
   it("respects custom shutdownWarningMs from config", () => {
     // Elapsed 600s, threshold set to 500s → should fire
     const turnStartedAt = new Date(Date.now() - 600 * 1000).toISOString();

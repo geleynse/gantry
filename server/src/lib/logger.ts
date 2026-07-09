@@ -3,7 +3,7 @@
  * Zero external dependencies, human-readable output format.
  */
 
-import { createWriteStream, type WriteStream } from "node:fs";
+import { createWriteStream, renameSync, statSync, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -135,27 +135,88 @@ if (envLogLevel) {
  * active for the entire server process.
  */
 let logFileStream: WriteStream | null = null;
+let logFilePath: string | null = null;
+let logFileBytes = 0;
+let logFileMaxBytes = 0;
+
+/** Rotate the log file once it grows past this size (rename to .1 and reopen). */
+const DEFAULT_MAX_LOG_FILE_BYTES = 50 * 1024 * 1024; // 50MB
+
+/**
+ * Open the log write stream with an error handler attached.
+ * Without a listener, an async stream error (ENOSPC, EACCES) is emitted as
+ * an unhandled 'error' event and crashes the whole server via uncaughtException.
+ */
+function openLogStream(filePath: string): WriteStream {
+  const stream = createWriteStream(filePath, { flags: "a" });
+  stream.on("error", (err) => {
+    console.error("Log file stream error — disabling file logging:", err);
+    logFileStream = null;
+  });
+  return stream;
+}
+
+/**
+ * Rename the current log file to <path>.1 (replacing any previous rotation)
+ * and reopen a fresh stream. Best-effort: on rename failure, keep appending.
+ */
+function rotateLogFile(): void {
+  if (!logFileStream || !logFilePath) return;
+  logFileStream.end();
+  logFileStream = null;
+  try {
+    renameSync(logFilePath, `${logFilePath}.1`);
+  } catch {
+    // Rotation is best-effort — keep appending to the existing file.
+  }
+  logFileBytes = 0;
+  logFileStream = openLogStream(logFilePath);
+}
 
 /**
  * Enable logging to a file in addition to console.
  * Used by the server to capture logs for the web UI.
+ * When the file exceeds maxBytes it is rotated to <filePath>.1 (one generation kept).
  */
-export async function enableFileLogging(filePath: string): Promise<void> {
+export async function enableFileLogging(
+  filePath: string,
+  maxBytes: number = DEFAULT_MAX_LOG_FILE_BYTES,
+): Promise<void> {
   try {
     // Ensure the directory exists
     await mkdir(dirname(filePath), { recursive: true });
-    // Create write stream
-    logFileStream = createWriteStream(filePath, { flags: "a" });
+    logFilePath = filePath;
+    logFileMaxBytes = maxBytes;
+    try {
+      logFileBytes = statSync(filePath).size;
+    } catch {
+      logFileBytes = 0;
+    }
+    logFileStream = openLogStream(filePath);
   } catch (err) {
     console.error("Failed to open log file:", err);
   }
 }
 
 /**
+ * Disable file logging and close the stream (used by tests).
+ */
+export function disableFileLogging(): void {
+  logFileStream?.end();
+  logFileStream = null;
+  logFilePath = null;
+  logFileBytes = 0;
+}
+
+/**
  * Write a formatted log line to file if file logging is enabled.
  */
 function writeToFile(message: string): void {
-  if (logFileStream) {
-    logFileStream.write(message + "\n");
+  if (!logFileStream) return;
+  const line = message + "\n";
+  logFileStream.write(line);
+  logFileBytes += Buffer.byteLength(line);
+  if (logFileMaxBytes > 0 && logFileBytes >= logFileMaxBytes) {
+    rotateLogFile();
   }
 }

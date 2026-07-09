@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { createGantryServerV2, withPrayerScriptSchema, type V2SharedState } from "./gantry-v2.js";
+import { createGantryServerV2, withPrayerScriptSchema, normalizeCompoundResult, type V2SharedState } from "./gantry-v2.js";
 import { serverSchemaToZod, type ServerTool } from "./schema.js";
 import type { GantryConfig } from "../config.js";
 import { SessionManager } from "./session-manager.js";
@@ -369,3 +369,59 @@ describe("createGantryServerV2 - STATE_CHANGING_TOOLS and CONTAMINATION_WORDS ex
 // mapV2ToV1 + V2_ACTION_TO_V1_NAME tests removed in Chunk F2 — the v1 dispatch
 // path is gone. v2-action validation now happens at the MCP Zod layer (action
 // enum on the consolidated tool schema) plus the gameTools guard in mcp-factory.
+
+describe("normalizeCompoundResult — routine client compound envelope", () => {
+  // Regression: the routineClient used to wrap EVERY compound-action result as
+  // { result }, so routines' `if (resp.error)` checks were dead code for
+  // compound sub-calls (failed travel reported as arrival, blocked sells as
+  // "Sold N items"). These are the REAL in-band failure shapes the compound
+  // tools return — see multi-sell.ts, travel-to.ts, batch-mine.ts, jump-route.ts.
+
+  it("lifts a multi_sell/batch_mine style { error } to a top-level error", () => {
+    const compound = { error: "You must be docked at a station to use multi_sell. (Verified with fresh get_status — you are not docked.)" };
+    const resp = normalizeCompoundResult(compound);
+    expect(resp.error).toBe(compound.error);
+    expect(resp.result).toBe(compound); // details stay attached
+  });
+
+  it("lifts a travel_to style { status: 'error', error, message } to a top-level error", () => {
+    const compound = { status: "error", error: "travel_failed", message: "No route to POI", steps: [] };
+    const resp = normalizeCompoundResult(compound);
+    expect(resp.error).toBe("travel_failed");
+    expect(resp.result).toBe(compound);
+  });
+
+  it("lifts a jump_route style { status: 'error', error: 'jump_failed', ... } to a top-level error", () => {
+    const compound = {
+      status: "error",
+      jumps_completed: 1,
+      jumps_total: 3,
+      error: "jump_failed",
+      message: "jump_failed at sirius",
+      hint: "Refuel before retrying the remaining hops.",
+    };
+    const resp = normalizeCompoundResult(compound);
+    expect(resp.error).toBe("jump_failed");
+    expect((resp.result as Record<string, unknown>).jumps_completed).toBe(1);
+  });
+
+  it("uses message, then the whole object, as error fallback when error key is absent", () => {
+    expect(normalizeCompoundResult({ status: "error", message: "boom" }).error).toBe("boom");
+    const bare = { status: "error" };
+    expect(normalizeCompoundResult(bare).error).toBe(bare);
+  });
+
+  it("passes successful compound results through as { result } with no error", () => {
+    // Partial batch_mine success reports its last failure as `last_error`, not `error`.
+    const success = { status: "completed", mines_completed: 5, mined: [], last_error: { code: "429" } };
+    const resp = normalizeCompoundResult(success);
+    expect(resp.error).toBeUndefined();
+    expect(resp.result).toBe(success);
+  });
+
+  it("passes non-object results through untouched", () => {
+    expect(normalizeCompoundResult("Sold 5 for 100cr")).toEqual({ result: "Sold 5 for 100cr" });
+    expect(normalizeCompoundResult(undefined)).toEqual({ result: undefined });
+    expect(normalizeCompoundResult([1, 2])).toEqual({ result: [1, 2] });
+  });
+});

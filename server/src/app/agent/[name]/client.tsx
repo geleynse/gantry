@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Play, Square, RotateCw, Power, Settings, Save, Loader2 } from "lucide-react";
+import { Play, Square, RotateCw, Power, Settings, Save, Loader2, AlertCircle } from "lucide-react";
 import { cn, formatModuleName } from "@/lib/utils";
 import { formatNumber, formatCredits } from "@/lib/format";
 import { getAgentDisplayState } from "@/lib/agent-display-state";
@@ -563,6 +563,7 @@ function ThoughtsPanel({ agentName }: { agentName: string }) {
 
 function AgentControls({ name, agent }: { name: string; agent: import("@/hooks/use-fleet-status").AgentStatus | null }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   // Explicit confirmation before initiating shutdown. Previously the red
   // SHUTDOWN button fired immediately on click, with only the color as a
   // visual hint — easy to click by accident.
@@ -574,13 +575,14 @@ function AgentControls({ name, agent }: { name: string; agent: import("@/hooks/u
 
   async function doAction(action: string, method: string = "POST", body?: unknown) {
     setBusy(action);
+    setError(null);
     try {
       await apiFetch(`/agents/${name}/${action}`, {
         method,
         ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
       });
     } catch (err) {
-      console.error(`Failed to ${action}:`, err);
+      setError(`Failed to ${action}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setBusy(null);
     }
@@ -628,6 +630,13 @@ function AgentControls({ name, agent }: { name: string; agent: import("@/hooks/u
           </button>
         )}
       </div>
+
+      {error && (
+        <div className="flex items-center gap-1.5 text-[11px] text-error">
+          <AlertCircle className="w-3 h-3" />
+          {error}
+        </div>
+      )}
 
       {shutdownConfirmOpen && (
         <div

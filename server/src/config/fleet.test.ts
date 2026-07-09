@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { writeFileSync, mkdirSync, rmSync } from "fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { FleetConfigSchema, AgentConfigSchema } from "./schemas.js";
-import { loadConfig } from "./fleet.js";
+import { loadConfig, saveConfig } from "./fleet.js";
 import type { AgentConfig, GantryConfig } from "./types.js";
 
 describe("Config Schemas", () => {
@@ -67,6 +67,18 @@ describe("Config Schemas", () => {
       expect(result.data?.skillModules).toEqual(["exploration", "mining"]);
       expect(result.data?.factionNote).toBe("Scout for Solarian faction");
       expect(result.data?.operatingZone).toBe("sol-sirius");
+    });
+
+    test("preserves per-agent turnSleepMs and turnInterval (regression: zod strips unknown keys)", () => {
+      const agent = {
+        name: "slow-agent",
+        turnSleepMs: 300,
+        turnInterval: 250,
+      };
+      const result = AgentConfigSchema.safeParse(agent);
+      expect(result.success).toBe(true);
+      expect(result.data?.turnSleepMs).toBe(300);
+      expect(result.data?.turnInterval).toBe(250);
     });
 
     test("rejects invalid roleType", () => {
@@ -240,6 +252,81 @@ describe("Config Loading (loadConfig)", () => {
     const config = loadConfig(tmpDir);
     expect(config.agents).toHaveLength(1);
     expect(config.agents[0].name).toBe("minimal");
+    cleanup();
+  });
+
+  test("loadConfig preserves per-agent turnSleepMs override", () => {
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [
+        { name: "overseer", turnSleepMs: 300 },
+        { name: "worker" },
+      ],
+      turnSleepMs: 150,
+    });
+    const config = loadConfig(tmpDir);
+    expect(config.agents[0].turnSleepMs).toBe(300);
+    expect(config.agents[1].turnSleepMs).toBeUndefined();
+    expect(config.turnSleepMs).toBe(150);
+    cleanup();
+  });
+
+  test("loadConfig preserves the survivability block (auto-cloak gate)", () => {
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [{ name: "agent1" }],
+      survivability: {
+        autoCloakEnabled: true,
+        agentOverrides: { "agent1": false },
+      },
+    });
+    const config = loadConfig(tmpDir);
+    expect(config.survivability).toBeDefined();
+    expect(config.survivability?.autoCloakEnabled).toBe(true);
+    expect(config.survivability?.agentOverrides).toEqual({ "agent1": false });
+    cleanup();
+  });
+
+  test("loadConfig derives gameApiUrl from a /mcp suffix, tolerating a trailing slash", () => {
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp/",
+      agents: [{ name: "agent1" }],
+    });
+    const config = loadConfig(tmpDir);
+    expect(config.gameApiUrl).toBe("https://game.example.com/api/v1");
+    expect(config.gameMcpUrl).toBe("https://game.example.com/mcp");
+    cleanup();
+  });
+
+  test("saveConfig rejects schema-invalid config and leaves the file untouched", () => {
+    const validConfig = {
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [{ name: "agent1" }],
+    };
+    writeConfig(validConfig);
+
+    const invalid = {
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [{ name: "agent1", mcpPreset: "not-a-preset" }],
+    };
+    expect(() => saveConfig(invalid, tmpDir)).toThrow(/Refusing to save invalid config/);
+    expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual(validConfig);
+    cleanup();
+  });
+
+  test("saveConfig writes valid config verbatim, preserving unknown top-level keys", () => {
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [{ name: "agent1" }],
+    });
+
+    const updated = {
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [{ name: "agent1" }, { name: "agent2" }],
+      someUnknownKey: { keep: true },
+    };
+    saveConfig(updated, tmpDir);
+    expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual(updated);
     cleanup();
   });
 

@@ -231,10 +231,28 @@ export async function newSession(name: string, spec: SessionLaunchSpec): Promise
 
 /** Send SIGTERM to a pid with a SIGKILL fallback after 2s. */
 function killWithFallback(killFn: (sig: NodeJS.Signals) => void): void {
-  killFn('SIGTERM');
+  try { killFn('SIGTERM'); } catch { /* already dead */ }
   setTimeout(() => {
     try { killFn('SIGKILL'); } catch { /* already dead */ }
   }, 2000);
+}
+
+/**
+ * Signal a runner's whole process group, falling back to the single PID.
+ *
+ * Runners are spawned with detached:true, so pgid == pid. Signalling only the
+ * runner PID leaks its children on the SIGKILL fallback path: SIGKILL can't be
+ * trapped, so the runner never gets to reap the CLI process it launched and
+ * the orphan keeps running (and burning tokens).
+ */
+function killProcessGroup(pid: number, sig: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, sig);
+    return;
+  } catch {
+    // Not a group leader / group already gone — fall back to the single PID
+  }
+  process.kill(pid, sig);
 }
 
 export async function killSession(name: string): Promise<void> {
@@ -242,7 +260,11 @@ export async function killSession(name: string): Promise<void> {
 
   const child = trackedProcesses.get(name);
   if (child && isProcessAlive(child)) {
-    killWithFallback((sig) => child.kill(sig));
+    const pid = child.pid;
+    killWithFallback((sig) => {
+      if (pid !== undefined) killProcessGroup(pid, sig);
+      else child.kill(sig);
+    });
     return;
   }
 
@@ -259,7 +281,7 @@ export async function killSession(name: string): Promise<void> {
       const pidStr = readFileSync(pidFile, 'utf-8').trim();
       const pid = parseInt(pidStr, 10);
       if (!isNaN(pid) && pid > 0) {
-        killWithFallback((sig) => process.kill(pid, sig));
+        killWithFallback((sig) => killProcessGroup(pid, sig));
       }
     } catch (err) {
       log.warn(`killSession: failed to kill ${name} via PID file: ${err instanceof Error ? err.message : String(err)}`);

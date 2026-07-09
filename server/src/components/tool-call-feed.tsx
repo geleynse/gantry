@@ -425,7 +425,15 @@ function RoutineGroupRow({
   return (
     <div>
       <div
+        role="button"
+        tabIndex={0}
         onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
         className={cn(
           "px-3 py-2 border-b border-border text-xs font-mono flex items-center gap-2",
           "hover:bg-primary/5 cursor-pointer",
@@ -695,7 +703,15 @@ function CompoundToolRow({
     <div>
       {/* Header row */}
       <div
+        role="button"
+        tabIndex={0}
         onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
         className={cn(
           "px-3 py-2 border-b border-border text-xs font-mono flex items-center gap-2",
           "cursor-pointer",
@@ -887,7 +903,6 @@ export function ToolCallFeed({ agentName }: { agentName: string }) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
   const [turnCosts, setTurnCosts] = useState<TurnCost[]>([]);
-  const [shownCostTurns, setShownCostTurns] = useState<Set<number>>(new Set());
 
   // Turn history navigation (#224)
   const [page, setPage] = useState(0);
@@ -1020,6 +1035,26 @@ export function ToolCallFeed({ agentName }: { agentName: string }) {
 
   // Group execute_routine parents with their routine:* sub-calls by trace_id
   const displayEntries: DisplayRecord[] = groupRoutineCalls(baseDisplayEntries);
+
+  // Cost badges (#329) — map record.id -> badge for the first plain tool-call
+  // row of each turn. Computed as a render-time pass over displayEntries;
+  // marking "shown" turns via setState during render never commits the badge
+  // (React re-renders immediately and the guard then hides it).
+  const costBadgeByRecordId = new Map<number, string>();
+  const seenCostTurns = new Set<number>();
+  for (const { record, count, isRoutineGroup } of displayEntries) {
+    // Only plain rows render badges — skip rows handled by dedicated components
+    // (assistant text, reasoning, routine groups, pray, compound) and collapsed groups.
+    if (count > 1 || isRoutineGroup) continue;
+    if (isAssistantText(record) || isReasoning(record)) continue;
+    if (record.tool_name === "pray" || isCompoundTool(record)) continue;
+    const turn = findTurnForToolCall(record, turnCosts);
+    if (!turn || seenCostTurns.has(turn.turnNumber)) continue;
+    const badge = formatCostBadge(turn.costUsd, turn.inputTokens, turn.outputTokens);
+    if (!badge) continue;
+    seenCostTurns.add(turn.turnNumber);
+    costBadgeByRecordId.set(record.id, badge);
+  }
 
   return (
     <div className="bg-card border border-border">
@@ -1182,7 +1217,16 @@ export function ToolCallFeed({ agentName }: { agentName: string }) {
             <div key={record.id}>
               {/* Row */}
               <div
+                role="button"
+                tabIndex={0}
                 onClick={() => isCollapsedGroup ? toggleGroupExpand(record.id) : toggleExpand(record.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    if (isCollapsedGroup) toggleGroupExpand(record.id);
+                    else toggleExpand(record.id);
+                  }
+                }}
                 className={cn(
                   "px-3 py-2 border-b border-border text-xs font-mono flex items-center gap-2",
                   isCollapsedGroup
@@ -1252,22 +1296,11 @@ export function ToolCallFeed({ agentName }: { agentName: string }) {
                 )}
 
                 {/* Cost badge — show only on first tool call of turn (#329) */}
-                {!isCollapsedGroup && (() => {
-                  const turn = findTurnForToolCall(record, turnCosts);
-                  if (!turn || shownCostTurns.has(turn.turnNumber)) return null;
-
-                  const costBadge = formatCostBadge(turn.costUsd, turn.inputTokens, turn.outputTokens);
-                  if (!costBadge) return null;
-
-                  // Mark this turn as shown
-                  setShownCostTurns(prev => new Set([...prev, turn.turnNumber]));
-
-                  return (
-                    <span className="text-muted-foreground/60 text-[9px] shrink-0 px-2 py-0.5 rounded bg-secondary/30">
-                      {costBadge}
-                    </span>
-                  );
-                })()}
+                {costBadgeByRecordId.has(record.id) && (
+                  <span className="text-muted-foreground/60 text-[9px] shrink-0 px-2 py-0.5 rounded bg-secondary/30">
+                    {costBadgeByRecordId.get(record.id)}
+                  </span>
+                )}
 
                 {/* Task B: link to matching session by timestamp — no session ID on records,
                     so we navigate with ?sessionTime= and let AgentSessionsPanel find the match */}

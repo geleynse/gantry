@@ -66,20 +66,25 @@ export function createFleetWatchdog(deps: FleetWatchdogDeps): FleetWatchdog {
 
   function canAlert(condition: string): boolean {
     const lastAlert = cooldowns.get(condition);
-    if (lastAlert && Date.now() - lastAlert < COOLDOWN_MS) return false;
-    cooldowns.set(condition, Date.now());
-    return true;
+    return !(lastAlert && Date.now() - lastAlert < COOLDOWN_MS);
   }
 
-  async function sendAlert(condition: AlertCondition, title: string, message: string): Promise<void> {
+  /**
+   * Send a webhook alert. Returns true when the alert was handled (delivered,
+   * or no webhook configured) so the caller can start the cooldown — a failed
+   * or hung delivery must NOT consume the cooldown, or the alert is lost for
+   * 30 minutes.
+   */
+  async function sendAlert(condition: AlertCondition, title: string, message: string): Promise<boolean> {
     if (!deps.webhookUrl) {
       log.warn("watchdog alert (no webhook configured)", { condition, title, message });
-      return;
+      return true;
     }
 
     try {
       const resp = await fetch(deps.webhookUrl, {
         method: "POST",
+        signal: AbortSignal.timeout(10_000),
         headers: {
           "Content-Type": "application/json",
           // ntfy.sh compatible headers
@@ -92,14 +97,16 @@ export function createFleetWatchdog(deps: FleetWatchdogDeps): FleetWatchdog {
 
       if (resp.ok) {
         log.info("watchdog alert sent", { condition, title });
-      } else {
-        log.error("watchdog alert failed", { condition, status: resp.status });
+        return true;
       }
+      log.error("watchdog alert failed", { condition, status: resp.status });
+      return false;
     } catch (err) {
       log.error("watchdog alert exception", {
         condition,
         error: err instanceof Error ? err.message : String(err),
       });
+      return false;
     }
   }
 
@@ -108,37 +115,41 @@ export function createFleetWatchdog(deps: FleetWatchdogDeps): FleetWatchdog {
     const errorRate = deps.getErrorRate();
 
     if (errorRate > ERROR_RATE_WARN_THRESHOLD && canAlert("high_error_rate")) {
-      await sendAlert(
+      const sent = await sendAlert(
         "high_error_rate",
         "Fleet Error Rate Warning",
         `Error rate at ${(errorRate * 100).toFixed(1)}% (threshold: ${(ERROR_RATE_WARN_THRESHOLD * 100).toFixed(0)}%). Auto-stop triggers at 30%.`,
       );
+      if (sent) cooldowns.set("high_error_rate", Date.now());
     }
 
     for (const [agent, rpm] of Object.entries(snapshot.reconnects_per_minute)) {
       if (rpm > RECONNECT_STORM_THRESHOLD && canAlert(`reconnect_storm:${agent}`)) {
-        await sendAlert(
+        const sent = await sendAlert(
           "reconnect_storm",
           `Reconnect Storm: ${agent}`,
           `${agent} at ${rpm.toFixed(1)} reconnects/min (threshold: ${RECONNECT_STORM_THRESHOLD}).`,
         );
+        if (sent) cooldowns.set(`reconnect_storm:${agent}`, Date.now());
       }
     }
 
     if (snapshot.session_leak && canAlert("session_leak")) {
-      await sendAlert(
+      const sent = await sendAlert(
         "session_leak",
         "Session Leak Detected",
         "Transport count exceeds 3x active agents. Possible MCP session leak.",
       );
+      if (sent) cooldowns.set("session_leak", Date.now());
     }
 
     if (snapshot.auto_shutdown_reason && canAlert("fleet_auto_stopped")) {
-      await sendAlert(
+      const sent = await sendAlert(
         "fleet_auto_stopped",
         "Fleet Auto-Stopped",
         snapshot.auto_shutdown_reason,
       );
+      if (sent) cooldowns.set("fleet_auto_stopped", Date.now());
     }
   }
 

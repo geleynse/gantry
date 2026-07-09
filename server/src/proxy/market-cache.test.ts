@@ -1,5 +1,6 @@
 import { describe, it, expect, mock, afterEach } from "bun:test";
-import { MarketCache, abortSignalAny, type MarketData } from "./market-cache.js";
+import { MarketCache, getActiveMarketCache, abortSignalAny, type MarketData } from "./market-cache.js";
+import { createDatabase, closeDb, queryAll, queryRun } from "../services/database.js";
 
 const MOCK_MARKET: MarketData = {
   categories: ["ore", "component", "refined"],
@@ -281,6 +282,40 @@ describe("MarketCache", () => {
     const cache = new MarketCache("http://localhost/api/market", 60_000, [0]);
     await cache.refresh();
     expect(cache.getBreaker().getFailures()).toBe(1);
+  });
+
+  it("registers as the active cache on start and clears on stop", async () => {
+    mockFetch([{ body: MOCK_MARKET, status: 200 }]);
+    const cache = new MarketCache("http://localhost/api/market", 60_000, [0]);
+    expect(getActiveMarketCache()).toBeNull();
+    const timer = cache.start();
+    try {
+      expect(getActiveMarketCache()).toBe(cache);
+    } finally {
+      cache.stop();
+      clearInterval(timer);
+    }
+    expect(getActiveMarketCache()).toBeNull();
+  });
+
+  it("prunes market_history rows older than 30 days when recording a snapshot", async () => {
+    createDatabase(":memory:");
+    try {
+      queryRun(
+        `INSERT INTO market_history (item_id, poi_id, price, type, timestamp)
+         VALUES ('ancient_item', 'global:solarian', 5, 'buy', datetime('now', '-40 days'))`,
+      );
+      mockFetch([{ body: MOCK_MARKET, status: 200 }]);
+      const cache = new MarketCache("http://localhost/api/market", 60_000, [0]);
+      await cache.refresh(); // first refresh triggers the hourly history snapshot
+
+      const rows = queryAll<{ item_id: string }>("SELECT item_id FROM market_history");
+      expect(rows.some((r) => r.item_id === "ancient_item")).toBe(false);
+      // New snapshot rows were inserted (bid+ask per item with positive prices)
+      expect(rows.some((r) => r.item_id === "iron_ore")).toBe(true);
+    } finally {
+      closeDb();
+    }
   });
 
   it("resets breaker after successful fetch following failures", async () => {

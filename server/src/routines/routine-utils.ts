@@ -22,10 +22,17 @@ export function completePhase(p: RoutinePhase, result?: unknown): RoutinePhase {
 }
 
 export function checkCombat(result: unknown): boolean {
-  if (!result) return false;
-  const res = (result as Record<string, unknown>)?.result as Record<string, unknown> | undefined;
-  if (res?.battle_started || (res?.event as Record<string, unknown>)?.type === "battle_started") return true;
-  if ((result as Record<string, unknown>)?.error && ((result as Record<string, unknown>).error as Record<string, unknown>)?.code === "combat_detected") return true;
+  if (!result || typeof result !== "object") return false;
+  const top = result as Record<string, unknown>;
+  // Call sites pass either the full { result, error } envelope from execute()
+  // or an already-unwrapped result object (e.g. jump results unwrapped inside
+  // a withRetry closure) — inspect combat signals at both depths.
+  const candidates = [top, top.result as Record<string, unknown> | undefined];
+  for (const res of candidates) {
+    if (!res || typeof res !== "object") continue;
+    if (res.battle_started || (res.event as Record<string, unknown> | undefined)?.type === "battle_started") return true;
+  }
+  if (top.error && (top.error as Record<string, unknown>)?.code === "combat_detected") return true;
   return false;
 }
 
@@ -189,6 +196,32 @@ export function extractDemandItems(marketData: unknown): Map<string, string> {
   }
 
   return demandItems;
+}
+
+/**
+ * Build a slug/id → CANONICAL item_id alias map from EVERY row of an
+ * analyze_market text table, regardless of insight category. Unlike
+ * extractDemandItems (which only includes rows the station buys), this covers
+ * all items the market knows about, so callers that need canonical ids for
+ * NON-demand items (e.g. create_sell_order on leftovers) can resolve
+ * name-slug cargo ids like mining_laser_i to real ids like mining_laser_1.
+ * Items absent from the market table stay unresolved — callers should fall
+ * back to the raw id (correct for the common slug==id case, e.g. ores).
+ */
+export function extractItemIdAliases(marketData: unknown): Map<string, string> {
+  const aliases = new Map<string, string>();
+  if (typeof marketData !== "string") return aliases;
+  const { headers, rows } = parseTextTable(marketData);
+  const idIdx = headers.findIndex((h) => h === "item_id" || h === "id");
+  const nameIdx = headers.findIndex((h) => h === "item" || h === "name");
+  if (idIdx === -1) return aliases;
+  for (const cols of rows) {
+    const id = cols[idIdx];
+    if (!id) continue;
+    aliases.set(id, id);
+    if (nameIdx >= 0 && cols[nameIdx]) aliases.set(itemNameToId(cols[nameIdx]), id);
+  }
+  return aliases;
 }
 
 /**

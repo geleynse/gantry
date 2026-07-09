@@ -13,19 +13,21 @@ import { PrayerCanaryButton } from "./prayer-canary-button";
 
 function ProcessControls({ agentName, agent }: { agentName: string; agent: AgentStatus | null }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const isRunning = agent?.llmRunning ?? false;
   const shutdownState = agent?.shutdownState ?? "none";
 
   async function doAction(action: string, body?: unknown) {
     setBusy(action);
+    setError(null);
     try {
       await apiFetch(`/agents/${agentName}/${action}`, {
         method: "POST",
         ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
       });
     } catch (err) {
-      console.error(`Failed to ${action}:`, err);
+      setError(`Failed to ${action}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setBusy(null);
     }
@@ -113,6 +115,13 @@ function ProcessControls({ agentName, agent }: { agentName: string; agent: Agent
           </span>
         )}
       </div>
+
+      {error && (
+        <div className="flex items-center gap-1.5 text-[11px] text-error">
+          <AlertCircle className="w-3 h-3" />
+          {error}
+        </div>
+      )}
     </div>
   );
 }

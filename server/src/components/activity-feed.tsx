@@ -224,7 +224,15 @@ function ActivityRow({
     <div className={cn("border-b border-border", !event.result_summary && !event.params_summary && "opacity-80")}>
       {/* Main row */}
       <div
+        role="button"
+        tabIndex={0}
         onClick={() => setExpanded((x) => !x)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded((x) => !x);
+          }
+        }}
         className={cn(
           "px-3 py-1.5 text-xs font-mono flex items-center gap-2 hover:bg-primary/5 cursor-pointer",
           rowBorderClass(event),
@@ -352,6 +360,11 @@ export function ActivityFeed() {
   const [throughput, setThroughput] = useState<string | null>(null);
   const eventTimesRef = useRef<number[]>([]);
 
+  // Batches that arrive while paused — buffered and flushed on resume, so
+  // "Pause auto-scroll" freezes the display without dropping events (useSSE
+  // only retains the latest message).
+  const pausedBufferRef = useRef<ActivityEvent[]>([]);
+
   // Agent filter toggles — all on by default. When the roster changes we
   // preserve any existing toggles and default new agents to "on".
   const [agentToggles, setAgentToggles] = useState<Record<string, boolean>>({});
@@ -415,12 +428,25 @@ export function ActivityFeed() {
     const rate = eventTimesRef.current.length / 60;
     setThroughput(rate < 0.1 ? null : rate >= 1 ? `~${Math.round(rate)}/s` : `~${(rate * 60).toFixed(0)}/min`);
 
-    if (paused) return;
+    if (paused) {
+      // Buffer instead of dropping; merge dedupes by id on flush.
+      pausedBufferRef.current.push(...sseData);
+      if (pausedBufferRef.current.length > MAX_EVENTS) {
+        pausedBufferRef.current = pausedBufferRef.current.slice(-MAX_EVENTS);
+      }
+      return;
+    }
+
+    // Flush anything buffered during a pause along with the latest batch
+    const incoming = pausedBufferRef.current.length > 0
+      ? [...pausedBufferRef.current, ...sseData]
+      : sseData;
+    pausedBufferRef.current = [];
 
     setEvents((prev) => {
       const updated = [...prev];
       let changed = false;
-      for (const record of sseData) {
+      for (const record of incoming) {
         const existingIdx = updated.findIndex((r) => r.id === record.id);
         if (existingIdx >= 0) {
           updated[existingIdx] = record;

@@ -93,9 +93,12 @@ async function run(ctx: RoutineContext, params: SupplyRunParams): Promise<Routin
     ctx.log("warn", "supply_run: cargo already full, skipping acquisition.");
     phases.push(completePhase(acquirePhase, { items: [], total_cost: 0, stopped: "cargo_full_at_start" }));
   } else {
+    const acquireErrors: Array<{ item_id: string; error: unknown }> = [];
     for (const item of params.items) {
-      const tool = buyMethod === "market" ? "buy" : "storage";
-      const args = buyMethod === "market" ? item : { ...item, action: "withdraw" };
+      // "storage" is not a real tool — withdraw_items is the v1 name that
+      // dispatches to spacemolt_storage/withdraw.
+      const tool = buyMethod === "market" ? "buy" : "withdraw_items";
+      const args = buyMethod === "market" ? item : { item_id: item.item_id, quantity: item.quantity };
       const resp = await ctx.client.execute(tool, args);
 
       if (resp.error) {
@@ -103,7 +106,10 @@ async function run(ctx: RoutineContext, params: SupplyRunParams): Promise<Routin
           ctx.log("warn", "supply_run: Cargo full, stopping acquisition.");
           break;
         }
-        continue; // Skip if item cannot be acquired, e.g., not enough credits
+        // Skip if item cannot be acquired, e.g., not enough credits — but record why
+        acquireErrors.push({ item_id: item.item_id, error: resp.error });
+        ctx.log("warn", `supply_run: could not acquire ${item.item_id}: ${JSON.stringify(resp.error)}`);
+        continue;
       }
 
       const cost = (resp.result as any)?.cost ?? 0;
@@ -118,7 +124,21 @@ async function run(ctx: RoutineContext, params: SupplyRunParams): Promise<Routin
         break;
       }
     }
-    phases.push(completePhase(acquirePhase, { items: itemsAcquired, total_cost: totalCost }));
+    phases.push(completePhase(acquirePhase, {
+      items: itemsAcquired,
+      total_cost: totalCost,
+      ...(acquireErrors.length > 0 ? { errors: acquireErrors } : {}),
+    }));
+
+    // Nothing acquired at all → traveling on to sell would produce an empty
+    // "delivery" reported as success. Hand off so the agent can diagnose.
+    if (itemsAcquired.length === 0 && params.items.length > 0) {
+      return handoff(
+        `supply_run: could not acquire any of ${params.items.length} requested item(s) at ${params.buy_station} via ${buyMethod}`,
+        { buy_station: params.buy_station, buy_method: buyMethod, errors: acquireErrors },
+        phases,
+      );
+    }
   }
 
   // --- Travel to sell_station and Dock ---

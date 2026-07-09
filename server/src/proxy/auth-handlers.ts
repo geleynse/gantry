@@ -62,6 +62,13 @@ export interface LoginDeps {
   sessions: SessionManager;
   sessionStore: SessionStore;
   sessionAgentMap: Map<string, string>;
+  /**
+   * Per-turn "shutdown warning already fired" guard, shared with the injection
+   * pipeline (PipelineContext.shutdownWarningFired). Cleared here on login so
+   * the SHUTDOWN_SIGNAL warning can re-fire on each new turn, not just once per
+   * MCP session. Optional for backward compat — tests can omit it.
+   */
+  shutdownWarningFired?: Set<string>;
   statusCache: Map<string, { data: Record<string, unknown>; fetchedAt: number }>;
   battleCache: Map<string, BattleState | null>;
   eventBuffers: Map<string, EventBuffer>;
@@ -454,6 +461,9 @@ export async function handleLogin(
     if (sessionId) {
       sessionStore.resetIterationCount(sessionId);
     }
+    // A new turn begins on login — clear the shutdown-warning guard so the
+    // SHUTDOWN_SIGNAL injection re-fires on this turn instead of once ever.
+    deps.shutdownWarningFired?.delete(agentName);
 
     // Pre-warm: validate the game session before handing off to the agent.
     // A freshly-created game session can become stale between creation and

@@ -16,6 +16,7 @@ describe("createHealthMonitor", () => {
   let mockHasSession: ReturnType<typeof spyOn>;
   let mockHasSignal: ReturnType<typeof spyOn>;
   let mockGetSignalMessage: ReturnType<typeof spyOn>;
+  let mockClearSignal: ReturnType<typeof spyOn>;
   let mockStartAgent: ReturnType<typeof spyOn>;
   let mockIsRestartSuppressed: ReturnType<typeof spyOn>;
   let mockCreateAlert: ReturnType<typeof spyOn>;
@@ -26,6 +27,7 @@ describe("createHealthMonitor", () => {
     mockHasSession = spyOn(proc, "hasSession").mockResolvedValue(false);
     mockHasSignal = spyOn(signalsDb, "hasSignal").mockReturnValue(false);
     mockGetSignalMessage = spyOn(signalsDb, "getSignalMessage").mockReturnValue(null);
+    mockClearSignal = spyOn(signalsDb, "clearSignal").mockImplementation(() => {});
     mockStartAgent = spyOn(agentManager, "startAgent").mockResolvedValue({ ok: true, message: "started" });
     mockIsRestartSuppressed = spyOn(cooldowns, "isRestartSuppressed").mockReturnValue({ suppressed: false });
     mockCreateAlert = spyOn(alertsDb, "createAlert").mockReturnValue(1);
@@ -57,10 +59,36 @@ describe("createHealthMonitor", () => {
       await monitor.tick();
       expect(monitor.getState("drifter-gale")?.consecutiveRestarts).toBe(1);
 
-      // Agent comes back alive
+      // Agent comes back alive (untracked → uptime unknown → treated as stable)
       mockHasSession.mockResolvedValue(true);
       await monitor.tick();
       expect(monitor.getState("drifter-gale")?.consecutiveRestarts).toBe(0);
+    });
+
+    it("does not reset the backoff until the agent shows sustained uptime", async () => {
+      mockHasSession.mockResolvedValue(false);
+      mockHasSignal.mockReturnValue(false);
+      const monitor = createHealthMonitor([testAgents[0]]);
+      monitor.markRunning("drifter-gale");
+
+      // Crash → restart attempt #1
+      await monitor.tick();
+      expect(monitor.getState("drifter-gale")?.consecutiveRestarts).toBe(1);
+
+      try {
+        // Alive but only for 1 minute — a >30s crash loop must NOT reset backoff
+        proc._setProcessStartedAtForTest("drifter-gale", Date.now() - 60_000);
+        mockHasSession.mockResolvedValue(true);
+        await monitor.tick();
+        expect(monitor.getState("drifter-gale")?.consecutiveRestarts).toBe(1);
+
+        // Alive for 11 minutes — sustained uptime forgives the backoff
+        proc._setProcessStartedAtForTest("drifter-gale", Date.now() - 11 * 60_000);
+        await monitor.tick();
+        expect(monitor.getState("drifter-gale")?.consecutiveRestarts).toBe(0);
+      } finally {
+        proc._setProcessStartedAtForTest("drifter-gale", null);
+      }
     });
   });
 
@@ -309,6 +337,40 @@ describe("createHealthMonitor", () => {
       expect(mockStartAgent).toHaveBeenCalledWith("drifter-gale");
     });
 
+    it("auto-resumes after a normal overseer cooldown even though the soft stop set markStopped and left a stopped_gracefully signal", async () => {
+      // Real overseer stop flow: softStopAgent leaves a stopped_gracefully
+      // signal AND the onStopped hook calls markStopped. Neither may keep the
+      // agent down once the 1h cooldown expires.
+      mockHasSession.mockResolvedValue(false);
+      let signalCleared = false;
+      mockHasSignal.mockImplementation(
+        (_name: string, type: string) => !signalCleared && type === "stopped_gracefully",
+      );
+      mockClearSignal.mockImplementation(() => { signalCleared = true; });
+      mockIsRestartSuppressed
+        .mockReturnValueOnce({
+          suppressed: true,
+          stoppedUntil: new Date(Date.now() + 60_000),
+          reason: "overseer stop",
+          holdOffline: false,
+        })
+        .mockReturnValue({ suppressed: false });
+
+      const monitor = createHealthMonitor([testAgents[0]]);
+      monitor.markRunning("drifter-gale");
+      monitor.markStopped("drifter-gale"); // onStopped hook fires on every stop kind
+
+      // Cooldown active: no restart, but auto-resume stays armed
+      await monitor.tick();
+      expect(mockStartAgent).not.toHaveBeenCalled();
+      expect(monitor.getState("drifter-gale")?.desiredState).toBe("running");
+
+      // Cooldown expired: leftover overseer stop signals are cleared and the agent restarts
+      await monitor.tick();
+      expect(mockClearSignal).toHaveBeenCalledWith("drifter-gale", "stopped_gracefully");
+      expect(mockStartAgent).toHaveBeenCalledWith("drifter-gale");
+    });
+
     it("switches to desiredState=stopped when hold_offline is set", async () => {
       mockHasSession.mockResolvedValue(false);
       mockHasSignal.mockReturnValue(false);
@@ -357,13 +419,21 @@ describe("createHealthMonitor", () => {
   });
 
   describe("markRunning / markStopped", () => {
-    it("markRunning sets desired state to running and resets counters", () => {
+    it("markRunning sets desired state to running without resetting the backoff", async () => {
+      // startAgent fires the onStarted hook (→ markRunning) on every restart
+      // attempt, including the monitor's own — resetting the counters here
+      // would zero the backoff that was just applied.
+      mockHasSession.mockResolvedValue(false);
+      mockHasSignal.mockReturnValue(false);
       const monitor = createHealthMonitor(testAgents);
       monitor.markRunning("drifter-gale");
+      await monitor.tick(); // crash → restart attempt #1
+
+      monitor.markRunning("drifter-gale"); // simulates the onStarted hook
       const state = monitor.getState("drifter-gale");
       expect(state?.desiredState).toBe("running");
-      expect(state?.consecutiveRestarts).toBe(0);
-      expect(state?.nextRestartAfterMs).toBe(0);
+      expect(state?.consecutiveRestarts).toBe(1);
+      expect(state?.nextRestartAfterMs).toBeGreaterThan(0);
     });
 
     it("markStopped sets desired state to stopped", () => {

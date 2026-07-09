@@ -82,6 +82,13 @@ export function createDatabase(dbPath?: string): void {
     }
   }
 
+  // Retention reaper for append-heavy analytics tables (skipped for test DBs).
+  if (isTestDatabase) {
+    stopAnalyticsPruneTimer();
+  } else {
+    startAnalyticsPruneTimer();
+  }
+
   log.info('Database initialized');
 }
 
@@ -114,6 +121,7 @@ export function getDbIfInitialized(): Database | null {
 }
 
 export function closeDb(): void {
+  stopAnalyticsPruneTimer();
   if (db) {
     statementCache.clear();
     db.close();
@@ -176,6 +184,78 @@ export function queryRun(sql: string, ...params: SQLQueryBindings[]): number {
   }
   const result = stmt.run(...params);
   return (result as { changes: number }).changes ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Analytics retention — bounded windows for the append-heavy tables.
+//
+// The repo's convention is that churn tables get reapers (proxy_tool_calls,
+// sell_log, resource_knowledge, mcp_sessions, ...), but the analytics tables
+// written on every agent turn had none, so fleet.db grew without bound on
+// long-lived deployments. Retention chosen:
+//   90 days: turns, tool_calls, game_snapshots, combat_events, captains_logs
+//   30 days: agent_action_log, fleet_comms_log
+// (enrollment_audit is a low-volume audit trail and is kept forever.)
+// ---------------------------------------------------------------------------
+
+const ANALYTICS_LONG_RETENTION = '-90 days';
+const ANALYTICS_SHORT_RETENTION = '-30 days';
+const ANALYTICS_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000; // same cadence as the proxy_tool_calls prune timer
+
+let analyticsPruneTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopAnalyticsPruneTimer(): void {
+  if (analyticsPruneTimer) {
+    clearInterval(analyticsPruneTimer);
+    analyticsPruneTimer = null;
+  }
+}
+
+/** Delete analytics rows older than their retention window. Returns total rows deleted. */
+export function pruneAnalyticsTables(): number {
+  if (!db) return 0;
+  let total = 0;
+  try {
+    db.transaction(() => {
+      // Children of turns first — tool_calls/game_snapshots/combat_events
+      // reference turns(id) and foreign_keys is ON in production.
+      total += queryRun(
+        `DELETE FROM tool_calls WHERE turn_id IN (SELECT id FROM turns WHERE started_at < datetime('now', ?))`,
+        ANALYTICS_LONG_RETENTION,
+      );
+      total += queryRun(
+        `DELETE FROM game_snapshots WHERE turn_id IN (SELECT id FROM turns WHERE started_at < datetime('now', ?))`,
+        ANALYTICS_LONG_RETENTION,
+      );
+      total += queryRun(
+        `DELETE FROM combat_events
+         WHERE created_at < datetime('now', ?)
+            OR turn_id IN (SELECT id FROM turns WHERE started_at < datetime('now', ?))`,
+        ANALYTICS_LONG_RETENTION,
+        ANALYTICS_LONG_RETENTION,
+      );
+      total += queryRun(`DELETE FROM turns WHERE started_at < datetime('now', ?)`, ANALYTICS_LONG_RETENTION);
+      total += queryRun(`DELETE FROM captains_logs WHERE created_at < datetime('now', ?)`, ANALYTICS_LONG_RETENTION);
+      total += queryRun(`DELETE FROM agent_action_log WHERE created_at < datetime('now', ?)`, ANALYTICS_SHORT_RETENTION);
+      total += queryRun(`DELETE FROM fleet_comms_log WHERE created_at < datetime('now', ?)`, ANALYTICS_SHORT_RETENTION);
+    })();
+  } catch (e) {
+    log.error('Analytics retention prune failed', { error: e });
+  }
+  return total;
+}
+
+/** Startup + 6h reaper. Lives here (not index.ts) so retention is guaranteed
+ * wherever the database is opened for real use. Not started for test DBs. */
+function startAnalyticsPruneTimer(): void {
+  stopAnalyticsPruneTimer();
+  const deleted = pruneAnalyticsTables();
+  if (deleted > 0) log.info('Pruned old analytics rows', { deleted });
+  analyticsPruneTimer = setInterval(() => {
+    const n = pruneAnalyticsTables();
+    if (n > 0) log.info('Pruned old analytics rows', { deleted: n });
+  }, ANALYTICS_PRUNE_INTERVAL_MS);
+  analyticsPruneTimer.unref();
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +362,9 @@ CREATE TABLE IF NOT EXISTS session_handoffs (
 
 CREATE INDEX IF NOT EXISTS idx_fleet_orders_target ON fleet_orders(target_agent);
 CREATE INDEX IF NOT EXISTS idx_fleet_order_deliveries_order ON fleet_order_deliveries(order_id);
+-- Agent-leading index backs the "NOT IN (SELECT order_id ... WHERE agent = ?)"
+-- subquery in getPendingOrders, which runs on every proxied tool call.
+CREATE INDEX IF NOT EXISTS idx_fleet_order_deliveries_agent ON fleet_order_deliveries(agent, order_id);
 CREATE INDEX IF NOT EXISTS idx_fleet_comms_log_type ON fleet_comms_log(type);
 CREATE INDEX IF NOT EXISTS idx_fleet_comms_log_agent ON fleet_comms_log(agent);
 CREATE INDEX IF NOT EXISTS idx_fleet_comms_log_created ON fleet_comms_log(created_at);
@@ -528,6 +611,10 @@ CREATE INDEX IF NOT EXISTS idx_captains_logs_game_id ON captains_logs(game_log_i
 CREATE INDEX IF NOT EXISTS idx_captains_logs_created ON captains_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_market_history_item ON market_history(item_id);
 CREATE INDEX IF NOT EXISTS idx_market_history_timestamp ON market_history(timestamp);
+-- Backs the correlated "MAX(id) ... WHERE item_id AND poi_id AND type" latest-row
+-- subquery in getStationsForItem; without it each candidate row rescans every
+-- historical row for the item.
+CREATE INDEX IF NOT EXISTS idx_market_history_item_poi_type ON market_history(item_id, poi_id, type, id);
 CREATE INDEX IF NOT EXISTS idx_galaxy_pois_system ON galaxy_pois(system);
 -- NOCASE name index backs the station-name -> poi_id lookup in
 -- recordStationObservation (runs per analyze_market opportunity row).

@@ -24,6 +24,11 @@ describe("game-registration", () => {
     });
     
     expect(globalThis.fetch).toHaveBeenCalled();
+
+    // Every external fetch must carry a timeout signal — a hung game API
+    // would otherwise pin the enrollment HTTP request for minutes.
+    const [, init] = (globalThis.fetch as any).mock.calls[0];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("throws error on registration failure", async () => {

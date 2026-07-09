@@ -76,6 +76,18 @@ export class FleetCoordinator {
     this.marketCache = marketCache;
     this.arbitrageAnalyzer = arbitrageAnalyzer;
     this.battleCache = battleCache;
+
+    // Resume the tick counter from persisted state — coordinator_state survives
+    // restarts, and getLastTick/getHistory order by tick_number DESC, so
+    // restarting from 0 would sort new ticks below the previous run's.
+    try {
+      const row = queryOne<{ max_tick: number | null }>(
+        "SELECT MAX(tick_number) AS max_tick FROM coordinator_state",
+      );
+      this.tickNumber = row?.max_tick ?? 0;
+    } catch {
+      // Fresh DB or table missing — start from 0
+    }
   }
 
   /** Check if the coordinator is enabled (config hot-reload aware). */
@@ -347,9 +359,17 @@ export class FleetCoordinator {
   /** Expire previous coordinator orders so they don't stack. */
   private expirePreviousOrders(): void {
     try {
-      // Delete coordinator orders that haven't been delivered yet
+      // Delete coordinator orders that haven't been delivered to anyone yet.
+      // Delivered orders can't be deleted — fleet_order_deliveries rows
+      // reference them (FK, no ON DELETE), and the whole statement would abort.
       queryRun(
         `DELETE FROM fleet_orders WHERE message LIKE '[COORDINATOR]%'
+         AND id NOT IN (SELECT order_id FROM fleet_order_deliveries)`,
+      );
+      // Expire the delivered ones so they drop out of pending-order views.
+      queryRun(
+        `UPDATE fleet_orders SET expires_at = datetime('now')
+         WHERE message LIKE '[COORDINATOR]%'
          AND (expires_at IS NULL OR expires_at > datetime('now'))`,
       );
     } catch (err) {

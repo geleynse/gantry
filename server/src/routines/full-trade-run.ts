@@ -8,7 +8,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, getCargoUtilization, done, handoff, phase, completePhase, checkCombat, extractDemandItems, resolveSellable, parseCargoItems, travelAndDock } from "./routine-utils.js";
+import { withRetry, getCargoUtilization, done, handoff, phase, completePhase, checkCombat, extractDemandItems, extractItemIdAliases, resolveSellable, parseCargoItems, travelAndDock } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -91,12 +91,19 @@ async function run(ctx: RoutineContext, params: FullTradeRunParams): Promise<Rou
   // --- Travel to belt ---
   const travelBeltPhase = phase("travel_belt");
   try {
-    const travelResult = await withRetry(() => ctx.client.execute("travel_to", { destination: params.belt }));
+    // Throw on resp.error inside the retry fn (mining-loop pattern) — execute()
+    // reports game failures via { error }, never by throwing, so without this
+    // withRetry never retries and a failed travel would be treated as arrival.
+    const travelResult = await withRetry(async () => {
+      const resp = await ctx.client.execute("travel_to", { destination: params.belt });
+      if (resp.error) throw new Error(`travel_to failed: ${JSON.stringify(resp.error)}`);
+      return resp.result;
+    }, 2);
     if (checkCombat(travelResult)) return handoff("Combat detected while traveling to belt", {}, phases);
-    phases.push(completePhase(travelBeltPhase, travelResult.result));
+    phases.push(completePhase(travelBeltPhase, travelResult));
   } catch (err) {
     phases.push(completePhase(travelBeltPhase, { error: String(err) }));
-    return handoff(`Travel to ${params.belt} failed: ${String(err)}`, {}, phases);
+    return handoff(`Travel to ${params.belt} failed: ${err instanceof Error ? err.message : String(err)}`, {}, phases);
   }
 
   // --- Mine ---
@@ -182,16 +189,33 @@ async function run(ctx: RoutineContext, params: FullTradeRunParams): Promise<Rou
   }
   
   // --- Create sell orders ---
-  const itemsToOrder = cargoItems.filter(c => !demandItems.has(c.item_id));
+  // Cargo ids are display-name slugs (the text cargo table has no id column),
+  // e.g. mining_laser_i for the real id mining_laser_1. The demand map only
+  // aliases items the station BUYS — these leftovers need the all-items alias
+  // map to resolve to canonical ids, else the order fails on an invalid item.
+  const idAliases = extractItemIdAliases(marketResp.result);
+  const itemsToOrder = cargoItems
+    .filter(c => !demandItems.has(c.item_id))
+    .map(c => ({ ...c, item_id: idAliases.get(c.item_id) ?? c.item_id }));
   if (itemsToOrder.length > 0) {
     const orderPhase = phase("create_sell_orders");
     let ordersCreated = 0;
+    const orderErrors: Array<{ item_id: string; error: unknown }> = [];
     for (const item of itemsToOrder) {
       const orderResp = await ctx.client.execute("create_sell_order", { item_id: item.item_id, quantity: item.quantity, price_mode: "market" });
-      if(!orderResp.error) ordersCreated++;
+      if (orderResp.error) {
+        orderErrors.push({ item_id: item.item_id, error: orderResp.error });
+        ctx.log("warn", `full_trade_run: create_sell_order failed for ${item.item_id}: ${JSON.stringify(orderResp.error)}`);
+      } else {
+        ordersCreated++;
+      }
     }
     sellOrderCount = ordersCreated;
-    phases.push(completePhase(orderPhase, { orders_created: ordersCreated, items: itemsToOrder.map(i => i.item_id) }));
+    phases.push(completePhase(orderPhase, {
+      orders_created: ordersCreated,
+      items: itemsToOrder.map(i => i.item_id),
+      ...(orderErrors.length > 0 ? { order_errors: orderErrors } : {}),
+    }));
   }
 
   // --- Refuel ---

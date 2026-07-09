@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { createDatabase, closeDb } from "./database.js";
+import { createDatabase, closeDb, queryOne } from "./database.js";
 import {
   createOrder,
   listOrders,
@@ -7,6 +7,7 @@ import {
   markDelivered,
   createReport,
   getCommsLog,
+  pruneExpiredOrders,
 } from "./comms-db.js";
 
 describe("comms-db", () => {
@@ -87,5 +88,30 @@ describe("comms-db", () => {
     markDelivered(id, "drifter-gale");
     const log = getCommsLog();
     expect(log.some((e: any) => e.type === "delivery")).toBe(true);
+  });
+
+  it("prunes long-expired orders and their deliveries, keeps recent and non-expiring ones", () => {
+    const oldId = createOrder({ message: "Long expired", expires_at: "2020-01-01T00:00:00Z" });
+    markDelivered(oldId, "drifter-gale");
+    const recentExpiredId = createOrder({
+      message: "Recently expired",
+      expires_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    });
+    const foreverId = createOrder({ message: "No expiry" });
+
+    const deleted = pruneExpiredOrders(7);
+    expect(deleted).toBe(1);
+
+    const remaining = listOrders();
+    const ids = remaining.map((o) => o.id);
+    expect(ids).not.toContain(oldId);
+    expect(ids).toContain(recentExpiredId);
+    expect(ids).toContain(foreverId);
+    // Delivery rows for the pruned order are gone too
+    const deliveryCount = queryOne<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM fleet_order_deliveries WHERE order_id = ?",
+      oldId,
+    );
+    expect(deliveryCount?.c).toBe(0);
   });
 });

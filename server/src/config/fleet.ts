@@ -92,8 +92,15 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
     return { ...a, socksPort, mcpPreset };
   });
 
-  const gameUrl = fleetConfig.mcpGameUrl;
+  // Normalize a trailing slash so 'https://host/mcp/' still derives correctly.
+  const gameUrl = fleetConfig.mcpGameUrl.replace(/\/+$/, "");
   const gameApiUrl = gameUrl.replace(/\/mcp$/, "/api/v1");
+  if (gameApiUrl === gameUrl) {
+    log.warn(
+      `mcpGameUrl "${fleetConfig.mcpGameUrl}" does not end with "/mcp"; ` +
+      `gameApiUrl could not be derived (REST calls will hit the MCP URL and likely fail).`,
+    );
+  }
 
   const agentDeniedTools = fleetConfig.agentDeniedTools ?? {};
   const callLimits = fleetConfig.callLimits ?? {};
@@ -168,6 +175,7 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
     forumUrl: fleetConfig.forumUrl,
     validateCredentialsOnStartup: fleetConfig.validateCredentialsOnStartup,
     cargoSaturationGuard: fleetConfig.cargoSaturationGuard,
+    survivability: fleetConfig.survivability,
   };
 }
 
@@ -204,20 +212,30 @@ function initConfig(): void {
   if (isInitialized) return;
   isInitialized = true;
 
+  // In tests, FLEET_DIR may be /dev/null or the config intentionally absent;
+  // stay silent so tests can override via setConfigForTesting(). In production
+  // a failure is recorded (initError) and logged so getConfig() surfaces the
+  // real reason instead of the misleading "Config not initialized" message.
+  const isTest = process.env.NODE_ENV === "test" || process.env.BUN_ENV === "test";
+
   let configPath: string;
   try {
     configPath = resolveConfigPath(FLEET_DIR);
   } catch (err) {
-    // During tests, FLEET_DIR might be /dev/null or invalid
-    // Don't set initError yet; tests can call setConfigForTesting()
-    // Only throw if getConfig() is actually called
+    if (!isTest) {
+      initError = err instanceof Error ? err : new Error(String(err));
+      log.error(`Failed to resolve config path: ${initError.message}`);
+    }
     return;
   }
 
   try {
     cachedConfig = loadConfig(FLEET_DIR);
   } catch (err) {
-    // During tests, loading might fail; again, allow setConfigForTesting()
+    if (!isTest) {
+      initError = err instanceof Error ? err : new Error(String(err));
+      log.error(`Failed to load config: ${initError.message}`);
+    }
     return;
   }
 
@@ -321,9 +339,21 @@ export function getToolsForRolePreset(
 
 /**
  * Save the provided raw configuration back to the active config file.
+ *
+ * Validates against FleetConfigSchema before writing so a buggy caller gets an
+ * immediate error instead of persisting a config that fails to load on the
+ * next reload/restart. The raw object is written verbatim (not the parsed
+ * output) so unknown top-level keys are preserved.
  */
-export function saveConfig(rawConfig: any): void {
-  const configPath = resolveConfigPath(FLEET_DIR);
+export function saveConfig(rawConfig: any, fleetDir: string = FLEET_DIR): void {
+  const parsed = FleetConfigSchema.safeParse(rawConfig);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((i) => `  ${i.path.join(".")}: ${i.message}`)
+      .join("\n");
+    throw new Error(`[config] Refusing to save invalid config:\n${issues}`);
+  }
+  const configPath = resolveConfigPath(fleetDir);
   atomicWriteFileSync(configPath, JSON.stringify(rawConfig, null, 2));
 }
 

@@ -19,6 +19,8 @@ export interface UseRealtimeUpdatesOptions {
   minRetryMs?: number;
   /** Max reconnect delay in ms (default: 30000) */
   maxRetryMs?: number;
+  /** How long to wait for the WS to open before falling back to SSE (default: 3000) */
+  wsOpenTimeoutMs?: number;
 }
 
 export interface UseRealtimeUpdatesResult<T> {
@@ -48,6 +50,7 @@ export function useRealtimeUpdates<T>(
     forceSSE = false,
     minRetryMs = DEFAULT_MIN_RETRY,
     maxRetryMs = DEFAULT_MAX_RETRY,
+    wsOpenTimeoutMs = 3000,
   } = options;
 
   const [data, setData] = useState<T | null>(null);
@@ -114,13 +117,15 @@ export function useRealtimeUpdates<T>(
       const ws = new WebSocket(buildWsUrl(wsPath));
       wsRef.current = ws;
 
+      // On timeout, only close the socket — the close event fires ws.onclose,
+      // whose !wsConnected branch does the single connectSSE(). Calling
+      // connectSSE() here too would open two EventSources and leak the first
+      // (esRef only tracks the latest).
       const openTimeout = setTimeout(() => {
         if (!wsConnected) {
           ws.close();
-          wsRef.current = null;
-          connectSSE();
         }
-      }, 3000);
+      }, wsOpenTimeoutMs);
 
       ws.onopen = () => {
         clearTimeout(openTimeout);
@@ -167,7 +172,7 @@ export function useRealtimeUpdates<T>(
     } catch {
       connectSSE();
     }
-  }, [wsPath, channel, connectSSE, scheduleRetry]);
+  }, [wsPath, channel, wsOpenTimeoutMs, connectSSE, scheduleRetry]);
 
   useEffect(() => {
     closedRef.current = false;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { getCargoUtilization, parseCargoItems, extractDemandItems, resolveSellable, parseTextTable, itemNameToId } from "./routine-utils.js";
+import { getCargoUtilization, parseCargoItems, extractDemandItems, extractItemIdAliases, resolveSellable, parseTextTable, itemNameToId, checkCombat } from "./routine-utils.js";
 
 // Live formats captured from game v0.426.5 (v0.417.3 formatted-output change).
 const GET_CARGO_TEXT =
@@ -31,6 +31,52 @@ describe("routine-utils: itemNameToId", () => {
     expect(itemNameToId("Power Cell")).toBe("power_cell");
     expect(itemNameToId("Trade Authenticator")).toBe("trade_authenticator");
     expect(itemNameToId("Shield Booster II")).toBe("shield_booster_ii");
+  });
+});
+
+describe("routine-utils: checkCombat", () => {
+  it("detects battle_started in the { result } envelope from execute()", () => {
+    expect(checkCombat({ result: { battle_started: true } })).toBe(true);
+    expect(checkCombat({ result: { event: { type: "battle_started" } } })).toBe(true);
+  });
+
+  it("detects battle_started on an already-unwrapped result (withRetry closures unwrap resp.result)", () => {
+    // Regression: navigate_home/explore_and_mine pass the unwrapped jump result;
+    // checkCombat used to only look one level down and always returned false.
+    expect(checkCombat({ battle_started: true })).toBe(true);
+    expect(checkCombat({ event: { type: "battle_started" } })).toBe(true);
+  });
+
+  it("detects combat_detected error code and returns false otherwise", () => {
+    expect(checkCombat({ error: { code: "combat_detected" } })).toBe(true);
+    expect(checkCombat({ result: { status: "arrived" } })).toBe(false);
+    expect(checkCombat({ status: "arrived" })).toBe(false);
+    expect(checkCombat(undefined)).toBe(false);
+    expect(checkCombat("jumped")).toBe(false);
+  });
+});
+
+describe("routine-utils: extractItemIdAliases", () => {
+  it("maps every row's id and name-slug to the canonical id, ignoring category", () => {
+    const aliases = extractItemIdAliases(ANALYZE_MARKET_TEXT);
+    // opportunity rows are excluded from extractDemandItems but included here
+    expect(aliases.get("titanium_alloy")).toBe("titanium_alloy");
+    expect(aliases.get("shield_emitter")).toBe("shield_emitter");
+  });
+
+  it("resolves a name-slug alias to the canonical id when they differ", () => {
+    const text =
+      "Trading insights at X:\n" +
+      "priority\tcategory\titem\titem_id\tinsight\n" +
+      "100\topportunity\tMining Laser I\tmining_laser_1\tArbitrage route";
+    const aliases = extractItemIdAliases(text);
+    expect(aliases.get("mining_laser_i")).toBe("mining_laser_1");
+    expect(aliases.get("mining_laser_1")).toBe("mining_laser_1");
+  });
+
+  it("returns empty for non-text market data", () => {
+    expect(extractItemIdAliases({ market: [] }).size).toBe(0);
+    expect(extractItemIdAliases(undefined).size).toBe(0);
   });
 });
 

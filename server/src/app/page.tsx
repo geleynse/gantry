@@ -194,7 +194,15 @@ export default function DashboardPage() {
   const [fleetBusy, setFleetBusy] = useState(false);
   const [fleetStateBusy, setFleetStateBusy] = useState(false);
   const [fleetState, setFleetState] = useState<FleetDisabledState | null>(null);
+  const [fleetError, setFleetError] = useState<string | null>(null);
   const [compactView, setCompactView] = useState(false);
+
+  useEffect(() => {
+    if (fleetError) {
+      const timer = setTimeout(() => setFleetError(null), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [fleetError]);
 
   async function loadFleetState() {
     try {
@@ -213,11 +221,14 @@ export default function DashboardPage() {
 
   async function fleetAction(action: "start-all" | "stop-all") {
     setFleetBusy(true);
+    setFleetError(null);
     try {
       await apiFetch(`/agents/${action}`, { method: "POST" });
       await loadFleetState();
     } catch (err) {
-      console.error(`Fleet ${action} failed:`, err);
+      setFleetError(
+        `Fleet ${action} failed: ${err instanceof Error ? err.message : String(err)}`
+      );
     } finally {
       setFleetBusy(false);
     }
@@ -226,6 +237,7 @@ export default function DashboardPage() {
   async function toggleFleetState() {
     const disabled = fleetState?.disabled ?? false;
     setFleetStateBusy(true);
+    setFleetError(null);
     try {
       const data = await apiFetch<FleetDisabledState>(
         disabled ? "/agents/fleet-state/enable" : "/agents/fleet-state/disable",
@@ -237,7 +249,9 @@ export default function DashboardPage() {
       );
       setFleetState(data);
     } catch (err) {
-      console.error("Fleet state update failed:", err);
+      setFleetError(
+        `Fleet state update failed: ${err instanceof Error ? err.message : String(err)}`
+      );
     } finally {
       setFleetStateBusy(false);
     }
@@ -270,14 +284,6 @@ export default function DashboardPage() {
             <span className="font-mono text-foreground">
               {totalCredits !== null ? formatCreditsFull(totalCredits) : "—"}
             </span>
-          </div>
-
-          {/* Total cost placeholder */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-muted-foreground uppercase tracking-wider text-[10px]">
-              Active Session Cost
-            </span>
-            <span className="font-mono text-muted-foreground">$0.00</span>
           </div>
 
           {/* Agent state summary — exclude overseer (has its own banner/page) */}
@@ -358,6 +364,12 @@ export default function DashboardPage() {
             </>
           )}
         </div>
+
+        {fleetError && (
+          <div className="w-full text-xs text-destructive bg-destructive/10 rounded px-2 py-1">
+            {fleetError}
+          </div>
+        )}
       </div>
 
       {/* Agent grid — show connecting indicator until first SSE event arrives */}

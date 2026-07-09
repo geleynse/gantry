@@ -133,6 +133,23 @@ describe('AgentControls', () => {
       );
     });
 
+    it('surfaces an error when a process action fails', async () => {
+      global.fetch = mock().mockImplementation(async (url: string) => ({
+        ok: !url.includes('/agents/'),
+        json: async () => ({ routines: [] }),
+        text: async () => 'Admin access required',
+        status: 403,
+        statusText: 'Forbidden',
+      })) as unknown as typeof fetch;
+      await renderComponent(
+        <AgentControls agentName="drifter-gale" agent={createMockAgentStatus({ llmRunning: false })} />
+      );
+      await act(async () => { fireEvent.click(screen.getByText('Start')); });
+      await waitFor(() =>
+        expect(screen.getByText(/Failed to start: API 403/)).toBeInTheDocument()
+      );
+    });
+
     it('calls restart endpoint when Restart clicked', async () => {
       await renderComponent(
         <AgentControls agentName="drifter-gale" agent={createMockAgentStatus({ llmRunning: true })} />

@@ -1,16 +1,10 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { envInt } from "./env.js";
 
-// Test the envInt helper logic directly, without delete require.cache.
-// The importFresh pattern (delete require.cache + dynamic import) creates
-// duplicate module instances, breaking `export let` live bindings in env.ts.
-// This poisoned setFleetDirForTesting for enrollment.test.ts and credentials.test.ts.
-
-// Since the env vars are evaluated at module load time as constants,
-// we test the parsing logic inline instead of re-importing the module.
-function envInt(key: string, fallback: number): number {
-  const v = parseInt(process.env[key] ?? "", 10);
-  return isNaN(v) ? fallback : v;
-}
+// envInt is imported statically (a single module instance) — this is safe.
+// The hazard is only the importFresh pattern (delete require.cache + dynamic
+// import), which creates duplicate module instances and breaks `export let`
+// live bindings, poisoning setFleetDirForTesting for other test files.
 
 describe("Environment Config", () => {
   let originalEnv: NodeJS.ProcessEnv;
@@ -77,5 +71,20 @@ describe("Environment Config", () => {
     process.env.MARKET_SCAN_INTERVAL_MS = "not-a-number";
     // parseInt("not-a-number") returns NaN, so the default should be used.
     expect(envInt("MARKET_SCAN_INTERVAL_MS", 300000)).toBe(300000);
+  });
+
+  test("should clamp a negative interval to the default (no setInterval hot loop)", () => {
+    process.env.MARKET_SCAN_INTERVAL_MS = "-1";
+    expect(envInt("MARKET_SCAN_INTERVAL_MS", 300000)).toBe(300000);
+  });
+
+  test("should clamp zero to the default for setInterval consumers", () => {
+    process.env.MARKET_SCAN_INTERVAL_MS = "0";
+    expect(envInt("MARKET_SCAN_INTERVAL_MS", 300000)).toBe(300000);
+  });
+
+  test("should honor a custom minimum of 0 when zero is legitimate", () => {
+    process.env.MARKET_SCAN_INTERVAL_MS = "0";
+    expect(envInt("MARKET_SCAN_INTERVAL_MS", 300000, 0)).toBe(0);
   });
 });

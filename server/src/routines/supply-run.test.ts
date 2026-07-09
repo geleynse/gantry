@@ -77,17 +77,36 @@ describe("supply_run routine", () => {
     it("completes a supply run using storage withdraw", async () => {
         const ctx = mockContext(async (tool, args) => {
             if (tool === "travel_to" || tool === "dock" || tool === "analyze_market" || tool === "multi_sell" || tool === "refuel") return { result: {} };
-            if (tool === "storage") return { result: { item: defaultItems[0] } };
+            if (tool === "withdraw_items") return { result: { item: defaultItems[0] } };
             return { result: {} };
         }, { player: { credits: 1000 }});
 
-        await supplyRunRoutine.run(ctx, {
+        const result = await supplyRunRoutine.run(ctx, {
             buy_station: "BUY-S",
             sell_station: "SELL-S",
             items: defaultItems,
             buy_method: "storage",
         });
-        expect(ctx.client.execute).toHaveBeenCalledWith("storage", { ...defaultItems[0], action: "withdraw" });
+        expect(result.status).toBe("completed");
+        // "storage" is not a real tool — must dispatch via withdraw_items
+        expect(ctx.client.execute).toHaveBeenCalledWith("withdraw_items", { item_id: "WATER", quantity: 20 });
+    });
+
+    it("hands off when no items could be acquired", async () => {
+        const ctx = mockContext(async (tool) => {
+            if (tool === "travel_to" || tool === "dock") return { result: {} };
+            if (tool === "buy") return { error: { code: "insufficient_credits", message: "Not enough credits" } };
+            return { result: {} };
+        }, { player: { credits: 0 }});
+
+        const result = await supplyRunRoutine.run(ctx, {
+            buy_station: "BUY-S",
+            sell_station: "SELL-S",
+            items: defaultItems,
+            buy_method: "market",
+        });
+        expect(result.status).toBe("handoff");
+        expect(result.summary).toContain("could not acquire any");
     });
 
     it("stops buying if cargo is full", async () => {

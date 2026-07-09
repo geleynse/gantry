@@ -33,6 +33,8 @@ describe("explore_and_mine routine", () => {
   describe("run", () => {
     it("jumps, finds belts, mines, returns, sells", async () => {
       const toolsCalled: string[] = [];
+      let mineArgs: Record<string, unknown> | undefined;
+      let sellArgs: Record<string, unknown> | undefined;
       const ctx = mockContext(async (tool, args) => {
         toolsCalled.push(tool);
         if (tool === "get_status") return {
@@ -48,17 +50,18 @@ describe("explore_and_mine routine", () => {
           },
         };
         if (tool === "travel_to") return { result: { status: "completed" } };
-        if (tool === "batch_mine") return { result: { mines_completed: 5, total_ore: 25 } };
-        if (tool === "get_cargo") return { result: { used: 20, capacity: 50 } };
+        if (tool === "batch_mine") { mineArgs = args; return { result: { mines_completed: 5, total_ore: 25 } }; }
+        if (tool === "get_cargo") return { result: { used: 20, capacity: 50, cargo: [{ item_id: "iron_ore", quantity: 20 }] } };
         if (tool === "dock") return { result: { docked: true } };
-        if (tool === "analyze_market") return { result: { demand: ["ore"] } };
-        if (tool === "multi_sell") return { result: { items_sold: 3, credits_earned: 150 } };
+        if (tool === "analyze_market") return { result: { demand: [{ item_id: "iron_ore" }] } };
+        if (tool === "multi_sell") { sellArgs = args; return { result: { items_sold: 3, credits_earned: 150 } }; }
         return { result: {} };
       });
 
       const result = await exploreAndMineRoutine.run(ctx, {
         system: "alpha",
         returnStation: "nexus_core",
+        cycles: 4,
       });
       expect(result.status).toBe("completed");
       expect(result.data.belts_mined).toEqual(["alpha_belt_1"]);
@@ -68,6 +71,35 @@ describe("explore_and_mine routine", () => {
       expect(toolsCalled).toContain("get_system");
       expect(toolsCalled).toContain("batch_mine");
       expect(toolsCalled).toContain("multi_sell");
+      // batch_mine's compound handler reads args.count, not args.cycles
+      expect(mineArgs).toEqual({ count: 4 });
+      // multi_sell requires an explicit items list built from cargo × demand
+      expect(sellArgs).toEqual({ items: [{ item_id: "iron_ore", quantity: 20 }] });
+    });
+
+    it("hands off when the sell step fails", async () => {
+      const ctx = mockContext(async (tool) => {
+        if (tool === "get_status") return {
+          result: { player: { current_system: "alpha" }, ship: { cargo_used: 20, cargo_capacity: 50 } },
+        };
+        if (tool === "get_system") return {
+          result: { pois: [{ id: "belt_1", name: "Belt 1", type: "asteroid_belt" }] },
+        };
+        if (tool === "travel_to") return { result: { status: "completed" } };
+        if (tool === "batch_mine") return { result: { mines_completed: 5 } };
+        if (tool === "get_cargo") return { result: { cargo: [{ item_id: "iron_ore", quantity: 20 }] } };
+        if (tool === "dock") return { result: { docked: true } };
+        if (tool === "analyze_market") return { result: { demand: [{ item_id: "iron_ore" }] } };
+        if (tool === "multi_sell") return { error: "You must be docked at a station to use multi_sell." };
+        return { result: {} };
+      });
+
+      const result = await exploreAndMineRoutine.run(ctx, {
+        system: "alpha",
+        returnStation: "nexus_core",
+      });
+      expect(result.status).toBe("handoff");
+      expect(result.summary).toContain("selling at nexus_core failed");
     });
 
     it("hands off when no belts found", async () => {

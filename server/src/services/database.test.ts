@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { createDatabase, getDb, closeDb } from "./database.js";
+import { createDatabase, getDb, closeDb, pruneAnalyticsTables } from "./database.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -84,6 +84,57 @@ describe("Database Contention Audit", () => {
     const info = db.prepare("PRAGMA table_info(galaxy_pois)").all() as Array<{ name: string }>;
     const columns = info.map(r => r.name);
     expect(columns).toContain("dockable");
+  });
+});
+
+describe("analytics retention and hot-path indexes", () => {
+  beforeEach(() => {
+    createDatabase(":memory:");
+  });
+
+  afterEach(() => {
+    closeDb();
+  });
+
+  it("creates the hot-path indexes on existing databases", () => {
+    const db = getDb();
+    const names = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all() as Array<{ name: string }>)
+      .map((r) => r.name);
+    expect(names).toContain("idx_fleet_order_deliveries_agent");
+    expect(names).toContain("idx_market_history_item_poi_type");
+  });
+
+  it("prunes analytics rows older than their retention windows", () => {
+    const db = getDb();
+
+    // Old turn (100 days) with child rows; recent turn stays.
+    db.run(`INSERT INTO turns (agent, turn_number, started_at) VALUES ('a1', 1, datetime('now', '-100 days'))`);
+    const oldTurnId = (db.prepare("SELECT last_insert_rowid() AS id").get() as { id: number }).id;
+    db.run(`INSERT INTO turns (agent, turn_number, started_at) VALUES ('a1', 2, datetime('now'))`);
+    const newTurnId = (db.prepare("SELECT last_insert_rowid() AS id").get() as { id: number }).id;
+
+    db.run(`INSERT INTO tool_calls (turn_id, sequence_number, tool_name) VALUES (${oldTurnId}, 1, 'get_status')`);
+    db.run(`INSERT INTO tool_calls (turn_id, sequence_number, tool_name) VALUES (${newTurnId}, 1, 'get_status')`);
+    db.run(`INSERT INTO game_snapshots (turn_id, agent) VALUES (${oldTurnId}, 'a1')`);
+    db.run(`INSERT INTO combat_events (agent, turn_id, event_type, created_at) VALUES ('a1', ${oldTurnId}, 'hit', datetime('now', '-100 days'))`);
+    db.run(`INSERT INTO captains_logs (agent, game_log_id, entry_text, created_at) VALUES ('a1', 'g1', 'old', datetime('now', '-100 days'))`);
+    db.run(`INSERT INTO agent_action_log (agent, action_type, created_at) VALUES ('a1', 'sell', datetime('now', '-40 days'))`);
+    db.run(`INSERT INTO agent_action_log (agent, action_type, created_at) VALUES ('a1', 'sell', datetime('now'))`);
+    db.run(`INSERT INTO fleet_comms_log (type, message, created_at) VALUES ('report', 'old', datetime('now', '-40 days'))`);
+    db.run(`INSERT INTO fleet_comms_log (type, message, created_at) VALUES ('report', 'new', datetime('now'))`);
+
+    const deleted = pruneAnalyticsTables();
+    expect(deleted).toBe(7); // old turn + tool_call + snapshot + combat + captains + action + comms
+
+    const count = (table: string) =>
+      (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number }).c;
+    expect(count("turns")).toBe(1);
+    expect(count("tool_calls")).toBe(1);
+    expect(count("game_snapshots")).toBe(0);
+    expect(count("combat_events")).toBe(0);
+    expect(count("captains_logs")).toBe(0);
+    expect(count("agent_action_log")).toBe(1);
+    expect(count("fleet_comms_log")).toBe(1);
   });
 });
 

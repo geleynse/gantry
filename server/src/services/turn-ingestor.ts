@@ -70,6 +70,7 @@ export function ingestTurnFile(agent: string, filePath: string): void {
     log.debug('Skipping incomplete turn (no summary)', { agent, file: basename(filePath) });
     return;
   }
+  const summary = turn.summary;
 
   const { turnNumber, epochSeconds } = parsed;
   const startedAt = new Date(epochSeconds * 1000).toISOString();
@@ -87,34 +88,125 @@ export function ingestTurnFile(agent: string, filePath: string): void {
 
   const db = getDb();
 
-  const insertTurn = db.prepare(`
-    INSERT OR IGNORE INTO turns (
-      agent, turn_number, started_at, completed_at, duration_ms,
-      cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens,
-      iterations, model, error_type
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  // All four tables (turns, tool_calls, combat_events, game_snapshots) are
+  // written in one transaction: the turns row is the dedup key (INSERT OR
+  // IGNORE), so a partially-committed turn would permanently block re-ingest
+  // of its child rows on the next backfill pass.
+  let turnId: number | bigint | null = null;
 
-  const info = insertTurn.run(
-    agent,
-    turnNumber,
-    startedAt,
-    completedAt,
-    turn.summary.durationMs,
-    turn.summary.costUsd,
-    turn.summary.inputTokens,
-    turn.summary.outputTokens,
-    turn.summary.cacheReadTokens,
-    turn.summary.cacheCreateTokens,
-    turn.summary.iterations,
-    turn.summary.model || getAgent(agent)?.model || null,
-    null,
-  );
+  const runIngest = db.transaction(() => {
+    const insertTurn = db.prepare(`
+      INSERT OR IGNORE INTO turns (
+        agent, turn_number, started_at, completed_at, duration_ms,
+        cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens,
+        iterations, model, error_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
 
-  // If the row was ignored (duplicate), skip tool calls, snapshots, and combat events
-  if (info.changes === 0) return;
+    const info = insertTurn.run(
+      agent,
+      turnNumber,
+      startedAt,
+      completedAt,
+      summary.durationMs,
+      summary.costUsd,
+      summary.inputTokens,
+      summary.outputTokens,
+      summary.cacheReadTokens,
+      summary.cacheCreateTokens,
+      summary.iterations,
+      summary.model || getAgent(agent)?.model || null,
+      null,
+    );
 
-  const turnId = info.lastInsertRowid;
+    // If the row was ignored (duplicate), skip tool calls, snapshots, and combat events
+    if (info.changes === 0) return;
+
+    turnId = info.lastInsertRowid;
+
+    // Insert tool calls
+    const insertToolCall = db.prepare(`
+      INSERT INTO tool_calls (turn_id, sequence_number, tool_name, args_json, result_summary, duration_ms, success)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const tc of turn.toolCalls) {
+      insertToolCall.run(
+        turnId,
+        tc.sequenceNumber,
+        tc.toolName,
+        tc.argsJson,
+        tc.resultSummary,
+        null,
+        tc.success ? 1 : 0,
+      );
+    }
+
+    // Insert combat events
+    if (turn.combatEvents.length > 0) {
+      // Fallback system: use gameState system, or look up last known system from DB
+      const fallbackSystem = turn.gameState?.system ?? queryOne<{ system: string }>(
+        `SELECT system FROM game_snapshots WHERE agent = ? AND system IS NOT NULL AND system != '' ORDER BY id DESC LIMIT 1`,
+        agent
+      )?.system ?? null;
+
+      const insertCombat = db.prepare(`
+        INSERT INTO combat_events (
+          agent, turn_id, event_type, pirate_name, pirate_tier,
+          damage, hull_after, max_hull, died, insurance_payout, system, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      // Use the turn's startedAt as the event timestamp
+      for (const evt of turn.combatEvents) {
+        insertCombat.run(
+          agent,
+          turnId,
+          evt.eventType,
+          evt.pirateName,
+          evt.pirateTier,
+          evt.damage,
+          evt.hullAfter,
+          evt.maxHull,
+          evt.died ? 1 : 0,
+          evt.insurancePayout,
+          evt.system || fallbackSystem,
+          startedAt,
+        );
+      }
+    }
+
+    // Insert game snapshot if available
+    if (turn.gameState) {
+      const gs = turn.gameState;
+      db.prepare(`
+        INSERT INTO game_snapshots (
+          turn_id, agent, credits, fuel, fuel_max, cargo_used, cargo_max,
+          system, poi, docked, hull, hull_max, shield, shield_max, ship_name, ship_class
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        turnId,
+        agent,
+        gs.credits,
+        gs.fuel,
+        gs.fuelMax,
+        gs.cargoUsed,
+        gs.cargoMax,
+        gs.system,
+        gs.poi,
+        gs.docked !== null ? (gs.docked ? 1 : 0) : null,
+        gs.hull,
+        gs.hullMax,
+        gs.shield,
+        gs.shieldMax,
+        gs.shipName,
+        gs.shipClass,
+      );
+    }
+  });
+  runIngest();
+
+  // Duplicate turn — nothing was inserted
+  if (turnId === null) return;
 
   // Warn on suspicious zero-cost turns (helps catch parser format mismatches early)
   if (turn.summary.costUsd === 0 && turn.toolCalls.length > 0) {
@@ -134,7 +226,8 @@ export function ingestTurnFile(agent: string, filePath: string): void {
     combatEvents: turn.combatEvents.length,
   });
 
-  // Fire post-ingest hooks (e.g. overseer cost backfill)
+  // Fire post-ingest hooks (e.g. overseer cost backfill) — after the
+  // transaction commits so hooks never observe a rolled-back turn.
   if (postIngestHooks.length > 0) {
     const hookData: PostIngestData = {
       agent,
@@ -149,85 +242,6 @@ export function ingestTurnFile(agent: string, filePath: string): void {
         log.warn('Post-ingest hook error', { agent, error: err instanceof Error ? err.message : String(err) });
       }
     }
-  }
-
-  // Insert tool calls
-  const insertToolCall = db.prepare(`
-    INSERT INTO tool_calls (turn_id, sequence_number, tool_name, args_json, result_summary, duration_ms, success)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  for (const tc of turn.toolCalls) {
-    insertToolCall.run(
-      turnId,
-      tc.sequenceNumber,
-      tc.toolName,
-      tc.argsJson,
-      tc.resultSummary,
-      null,
-      tc.success ? 1 : 0,
-    );
-  }
-
-  // Insert combat events
-  if (turn.combatEvents.length > 0) {
-    // Fallback system: use gameState system, or look up last known system from DB
-    const fallbackSystem = turn.gameState?.system ?? queryOne<{ system: string }>(
-      `SELECT system FROM game_snapshots WHERE agent = ? AND system IS NOT NULL AND system != '' ORDER BY id DESC LIMIT 1`,
-      agent
-    )?.system ?? null;
-
-    const insertCombat = db.prepare(`
-      INSERT INTO combat_events (
-        agent, turn_id, event_type, pirate_name, pirate_tier,
-        damage, hull_after, max_hull, died, insurance_payout, system, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    // Use the turn's startedAt as the event timestamp
-    for (const evt of turn.combatEvents) {
-      insertCombat.run(
-        agent,
-        turnId,
-        evt.eventType,
-        evt.pirateName,
-        evt.pirateTier,
-        evt.damage,
-        evt.hullAfter,
-        evt.maxHull,
-        evt.died ? 1 : 0,
-        evt.insurancePayout,
-        evt.system || fallbackSystem,
-        startedAt,
-      );
-    }
-  }
-
-  // Insert game snapshot if available
-  if (turn.gameState) {
-    const gs = turn.gameState;
-    db.prepare(`
-      INSERT INTO game_snapshots (
-        turn_id, agent, credits, fuel, fuel_max, cargo_used, cargo_max,
-        system, poi, docked, hull, hull_max, shield, shield_max, ship_name, ship_class
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      turnId,
-      agent,
-      gs.credits,
-      gs.fuel,
-      gs.fuelMax,
-      gs.cargoUsed,
-      gs.cargoMax,
-      gs.system,
-      gs.poi,
-      gs.docked !== null ? (gs.docked ? 1 : 0) : null,
-      gs.hull,
-      gs.hullMax,
-      gs.shield,
-      gs.shieldMax,
-      gs.shipName,
-      gs.shipClass,
-    );
   }
 }
 

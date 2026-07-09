@@ -191,6 +191,9 @@ export function createGantryServer(config: GantryConfig, shared?: SharedState) {
   for (const injection of createDefaultInjections()) {
     injectionRegistry.register(injection);
   }
+  // Shared per-turn shutdown-warning guard: same Set is read by the injection
+  // pipeline and cleared on login (auth-handlers) so the warning re-fires per turn.
+  const shutdownWarningFired = new Set<string>();
   const pipelineCtx: PipelineContext = {
     config,
     sessionAgentMap,
@@ -211,7 +214,7 @@ export function createGantryServer(config: GantryConfig, shared?: SharedState) {
     // Use shared transit throttle from SharedState so it persists across agent turns/sessions.
     // Fall back to a new instance only in standalone mode (no shared state, e.g. tests).
     transitThrottle: shared?.proxy.transitThrottle ?? new TransitThrottle(),
-    shutdownWarningFired: new Set<string>(),
+    shutdownWarningFired,
   };
 
   const transitStuckDetector = shared?.proxy.transitStuckDetector ?? new TransitStuckDetector();
@@ -299,6 +302,7 @@ export function createGantryServer(config: GantryConfig, shared?: SharedState) {
     marketReservations,
     overseerEventLog: shared?.fleet.overseerEventLog ?? null,
     closeStaleTransportsForAgent: shared?.sessions.closeStaleTransportsForAgent,
+    shutdownWarningFired,
   };
 
   mcpServer.registerTool("login", {

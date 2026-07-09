@@ -9,6 +9,7 @@
 import { createLogger } from "../lib/logger.js";
 import { persistMarketCache } from "./cache-persistence.js";
 import { recordPrice } from "../services/market-history.js";
+import { getDbIfInitialized, queryRun } from "../services/database.js";
 import { CircuitBreaker, type CircuitBreakerConfig } from "./circuit-breaker.js";
 
 import { MARKET_SCAN_INTERVAL_MS } from "../config/env.js";
@@ -42,6 +43,18 @@ export function abortSignalAny(signals: AbortSignal[]): AbortSignal {
 }
 
 const log = createLogger("market-cache");
+
+/**
+ * The most recently start()ed MarketCache instance. Lets sibling services
+ * (e.g. the market scanner in services/market-scanner.ts) consume the shared
+ * cache instead of issuing their own duplicate fetches of the rate-limited
+ * game market API. Cleared again on stop().
+ */
+let activeMarketCache: MarketCache | null = null;
+
+export function getActiveMarketCache(): MarketCache | null {
+  return activeMarketCache;
+}
 
 export interface MarketItem {
   item_id: string;
@@ -94,6 +107,7 @@ export class MarketCache {
 
   /** Start periodic background refresh. Non-blocking initial fetch. Returns the interval handle. */
   start(): ReturnType<typeof setInterval> {
+    activeMarketCache = this;
     // Fetch immediately (non-blocking)
     this.refresh().catch(() => {});
     this.refreshTimer = setInterval(() => {
@@ -104,6 +118,7 @@ export class MarketCache {
   }
 
   stop(): void {
+    if (activeMarketCache === this) activeMarketCache = null;
     if (this.refreshTimer) {
       clearInterval(this.refreshTimer);
       this.refreshTimer = null;
@@ -254,26 +269,52 @@ export class MarketCache {
     return this.breaker;
   }
 
+  /** Retention window for market_history rows. All readers use bounded windows
+   * (72h in getStationsForItem, days-parameterized in getPriceTrends), so rows
+   * older than this are dead weight — without pruning the table grows by
+   * ~2 rows/item/empire every hour, forever. */
+  private static readonly HISTORY_RETENTION_DAYS = 30;
+
   /** Persist the current market data to market_history table. */
   private recordHistory(data: MarketData): void {
     log.info(`recording market history snapshot for ${data.items.length} items`);
-    for (const item of data.items) {
-      if (item.best_bid > 0) {
-        recordPrice({
-          item_id: item.item_id,
-          poi_id: `global:${item.empire || 'neutral'}`,
-          price: item.best_bid,
-          type: 'sell' // Best bid is what a player can sell for
-        });
+    const insertAll = () => {
+      for (const item of data.items) {
+        if (item.best_bid > 0) {
+          recordPrice({
+            item_id: item.item_id,
+            poi_id: `global:${item.empire || 'neutral'}`,
+            price: item.best_bid,
+            type: 'sell' // Best bid is what a player can sell for
+          });
+        }
+        if (item.best_ask > 0) {
+          recordPrice({
+            item_id: item.item_id,
+            poi_id: `global:${item.empire || 'neutral'}`,
+            price: item.best_ask,
+            type: 'buy' // Best ask is what a player can buy for
+          });
+        }
       }
-      if (item.best_ask > 0) {
-        recordPrice({
-          item_id: item.item_id,
-          poi_id: `global:${item.empire || 'neutral'}`,
-          price: item.best_ask,
-          type: 'buy' // Best ask is what a player can buy for
-        });
-      }
+    };
+
+    const db = getDbIfInitialized();
+    if (!db) {
+      insertAll(); // recordPrice no-ops safely without a database
+      return;
+    }
+    try {
+      // Opportunistic retention prune: runs once per hourly snapshot, cheap via
+      // idx_market_history_timestamp.
+      const pruned = queryRun(
+        `DELETE FROM market_history WHERE timestamp < datetime('now', '-${MarketCache.HISTORY_RETENTION_DAYS} days')`,
+      );
+      if (pruned > 0) log.info(`pruned ${pruned} market_history rows older than ${MarketCache.HISTORY_RETENTION_DAYS} days`);
+      // Single transaction: the hourly burst is thousands of INSERTs — batch them.
+      db.transaction(insertAll)();
+    } catch (e) {
+      log.error("failed to record market history snapshot", { error: e });
     }
   }
 }

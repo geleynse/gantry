@@ -13,9 +13,9 @@
  */
 
 import { createLogger } from "../lib/logger.js";
-import { hasSignal, getSignalMessage } from "./signals-db.js";
+import { hasSignal, getSignalMessage, clearSignal } from "./signals-db.js";
 import { startAgent } from "./agent-manager.js";
-import { hasSession } from "./process-manager.js";
+import { hasSession, getProcessUptimeMs } from "./process-manager.js";
 import type { AgentConfig } from "../config.js";
 import { getFleetDisabledState } from "./fleet-control.js";
 import { isRestartSuppressed } from "./overseer-stop-cooldown.js";
@@ -31,10 +31,23 @@ export interface AgentRestartState {
   desiredState: AgentDesiredState;
   consecutiveRestarts: number;
   nextRestartAfterMs: number; // epoch ms — don't attempt before this time
+  /**
+   * Armed while a normal (non-hold_offline) overseer stop cooldown is active.
+   * When the cooldown expires, the monitor clears the leftover stop signals
+   * from the overseer's soft stop and resumes auto-restart.
+   */
+  resumeAfterCooldown: boolean;
 }
 
 /** Exponential backoff delays in ms: 30s, 60s, 120s, 300s, 600s (max). */
 const BACKOFF_DELAYS_MS = [30_000, 60_000, 120_000, 300_000, 600_000];
+
+/**
+ * Minimum sustained uptime before the restart backoff is forgiven. Resetting
+ * on every observed-alive tick would let an agent that survives longer than
+ * one tick interval between crashes restart-loop forever at the minimum delay.
+ */
+const BACKOFF_RESET_UPTIME_MS = 10 * 60_000;
 
 function backoffDelayMs(restartCount: number): number {
   const index = Math.min(restartCount, BACKOFF_DELAYS_MS.length - 1);
@@ -46,9 +59,11 @@ export interface HealthMonitor {
   tick(): Promise<void>;
 
   /**
-   * Mark an agent as "should be running". Called by the health monitor
-   * itself when it observes an agent is alive, or by agent-manager on explicit start.
-   * Resets consecutive restart counter.
+   * Mark an agent as "should be running". Called by agent-manager on explicit
+   * start (via the onStarted lifecycle hook). Does NOT reset the restart
+   * backoff — startAgent fires the hook on every auto-restart attempt too, so
+   * resetting here would zero the backoff the monitor just applied. The
+   * backoff clears in tick() once the agent shows sustained uptime.
    */
   markRunning(agentName: string): void;
 
@@ -77,6 +92,7 @@ export function createHealthMonitor(agents: AgentConfig[]): HealthMonitor {
         desiredState: "stopped",
         consecutiveRestarts: 0,
         nextRestartAfterMs: 0,
+        resumeAfterCooldown: false,
       };
       states.set(name, state);
     }
@@ -117,15 +133,74 @@ export function createHealthMonitor(agents: AgentConfig[]): HealthMonitor {
     }
 
     const alive = await hasSession(name);
+    const state = getOrInitState(name);
 
     if (alive) {
-      markRunning(name);
+      state.desiredState = "running";
+      state.resumeAfterCooldown = false;
+      // Only forgive the restart backoff after sustained uptime — resetting on
+      // every observed-alive tick would let an agent that dies shortly after
+      // each restart loop forever at the minimum delay. Untracked processes
+      // (external PID-file spawns) have no uptime; treat them as stable.
+      const uptimeMs = getProcessUptimeMs(name);
+      if (uptimeMs === null || uptimeMs >= BACKOFF_RESET_UPTIME_MS) {
+        state.consecutiveRestarts = 0;
+        state.nextRestartAfterMs = 0;
+      }
       return;
     }
 
-    const state = getOrInitState(name);
-
     // Agent is not running. Decide whether to restart.
+
+    // Case 0: Overseer stop cooldown — checked before the desired-state and
+    // stop-signal cases because an overseer soft stop ALSO sets both (the
+    // onStopped hook calls markStopped, and softStopAgent leaves a
+    // stopped_gracefully signal). If those cases ran first they would latch
+    // desiredState="stopped" and the documented 1h auto-resume could never fire.
+    const cooldown = isRestartSuppressed(name);
+    if (cooldown.suppressed && cooldown.stoppedUntil) {
+      const remainingMin = Math.round((cooldown.stoppedUntil.getTime() - Date.now()) / 60_000);
+      // Log once per suppression episode, not on every 30s tick.
+      const alreadyLatched = cooldown.holdOffline
+        ? state.desiredState === "stopped" && !state.resumeAfterCooldown
+        : state.resumeAfterCooldown;
+      if (!alreadyLatched) {
+        log.info(
+          cooldown.holdOffline
+            ? "Auto-restart suppressed — overseer hold_offline set (operator must manually start)"
+            : "Auto-restart suppressed — overseer stop cooldown active",
+          {
+            agent: name,
+            stoppedUntil: cooldown.stoppedUntil.toISOString(),
+            remainingMin,
+            holdOffline: cooldown.holdOffline ?? false,
+            reason: cooldown.reason,
+          },
+        );
+      }
+      // Preserve desiredState="running" for normal cooldowns so the monitor
+      // resumes auto-restart when the timestamp expires. Only indefinite
+      // hold_offline should move the agent to a manual-start state.
+      if (cooldown.holdOffline) {
+        state.desiredState = "stopped";
+        state.resumeAfterCooldown = false;
+      } else {
+        state.desiredState = "running";
+        state.resumeAfterCooldown = true;
+      }
+      return;
+    }
+
+    // Cooldown just expired with auto-resume armed: the stop signals belong to
+    // the overseer's soft stop, not an operator — clear them so Case 2 doesn't
+    // latch the agent into a manual-start state.
+    if (state.resumeAfterCooldown) {
+      state.resumeAfterCooldown = false;
+      state.desiredState = "running";
+      clearSignal(name, "stopped_gracefully");
+      clearSignal(name, "shutdown");
+      log.info("Overseer stop cooldown expired — resuming auto-restart", { agent: name });
+    }
 
     // Case 1: Desired state is "stopped" — manual stop, don't restart.
     if (state.desiredState === "stopped") {
@@ -157,34 +232,6 @@ export function createHealthMonitor(agents: AgentConfig[]): HealthMonitor {
         }
       }
 
-      return;
-    }
-
-    // Case 2b: Overseer stop cooldown — the overseer force-stopped this agent
-    // and the 1-hour cooldown is still active.  Block auto-restart so we don't
-    // immediately undo the overseer's intervention.  Operator can override by
-    // calling startAgent directly (which calls clearCooldownForOperatorStart).
-    const cooldown = isRestartSuppressed(name);
-    if (cooldown.suppressed && cooldown.stoppedUntil) {
-      const remainingMin = Math.round((cooldown.stoppedUntil.getTime() - Date.now()) / 60_000);
-      log.info(
-        cooldown.holdOffline
-          ? "Auto-restart suppressed — overseer hold_offline set (operator must manually start)"
-          : "Auto-restart suppressed — overseer stop cooldown active",
-        {
-          agent: name,
-          stoppedUntil: cooldown.stoppedUntil.toISOString(),
-          remainingMin,
-          holdOffline: cooldown.holdOffline ?? false,
-          reason: cooldown.reason,
-        },
-      );
-      // Preserve desiredState="running" for normal cooldowns so the monitor
-      // resumes auto-restart when the timestamp expires. Only indefinite
-      // hold_offline should move the agent to a manual-start state.
-      if (cooldown.holdOffline) {
-        state.desiredState = "stopped";
-      }
       return;
     }
 
@@ -228,8 +275,7 @@ export function createHealthMonitor(agents: AgentConfig[]): HealthMonitor {
   function markRunning(agentName: string): void {
     const state = getOrInitState(agentName);
     state.desiredState = "running";
-    state.consecutiveRestarts = 0;
-    state.nextRestartAfterMs = 0;
+    state.resumeAfterCooldown = false;
   }
 
   function markStopped(agentName: string): void {

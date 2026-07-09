@@ -11,7 +11,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, done, handoff, phase, completePhase, checkCombat, getCargoUtilization, travelAndDock, getStatPct } from "./routine-utils.js";
+import { withRetry, done, handoff, phase, completePhase, checkCombat, getCargoUtilization, travelAndDock, getStatPct, extractDemandItems, parseCargoItems, resolveSellable } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -162,12 +162,27 @@ async function run(ctx: RoutineContext, params: NavigateHomeParams): Promise<Rou
       const analyzeResp = await ctx.client.execute("analyze_market");
       phases.push(completePhase(analyzePhase, analyzeResp.result));
 
+      // multi_sell requires an explicit items list — build it from cargo
+      // filtered to what this station demands (same pattern as sell_cycle).
+      const demandItems = extractDemandItems(analyzeResp.result);
+      const cargoItemsResp = await ctx.client.execute("get_cargo");
+      const cargoItems = parseCargoItems(cargoItemsResp.result);
+      const itemsToSell = resolveSellable(cargoItems, demandItems);
+
       const sellPhase = phase("sell_cargo");
-      const sellResp = await ctx.client.execute("multi_sell");
-      if (sellResp.error) {
-        ctx.log("warn", `navigate_home: sell error: ${JSON.stringify(sellResp.error)}`);
-        phases.push(completePhase(sellPhase, { error: sellResp.error }));
+      if (itemsToSell.length === 0) {
+        ctx.log("info", `navigate_home: no demand at ${params.station} for cargo, skipping sell`);
+        phases.push(completePhase(sellPhase, { skipped: "no_demand", cargo_items: cargoItems.map((c) => c.item_id) }));
       } else {
+        const sellResp = await ctx.client.execute("multi_sell", { items: itemsToSell });
+        if (sellResp.error) {
+          phases.push(completePhase(sellPhase, { error: sellResp.error }));
+          return handoff(
+            `Returned to ${params.station} but selling cargo failed: ${JSON.stringify(sellResp.error)}`,
+            { station: params.station, did_refuel: didRefuel, did_repair: didRepair },
+            phases,
+          );
+        }
         const sellResult = sellResp.result as Record<string, unknown> | undefined;
         soldCount = typeof sellResult?.items_sold === "number" ? sellResult.items_sold : 0;
         creditsEarned = typeof sellResult?.credits_earned === "number" ? sellResult.credits_earned

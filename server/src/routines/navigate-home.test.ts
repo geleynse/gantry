@@ -48,7 +48,8 @@ describe("navigate_home routine", () => {
     it("travels, docks, refuels, repairs, and sells", async () => {
       const toolsCalled: string[] = [];
       let traveled = false;
-      const ctx = mockContext(async (tool) => {
+      let sellArgs: Record<string, unknown> | undefined;
+      const ctx = mockContext(async (tool, args) => {
         toolsCalled.push(tool);
         if (tool === "get_status") return {
           result: {
@@ -65,9 +66,9 @@ describe("navigate_home routine", () => {
         if (tool === "dock") return { result: { status: "docked" } };
         if (tool === "refuel") return { result: { fuel_after: 100 } };
         if (tool === "repair") return { result: { hull_after: 100 } };
-        if (tool === "get_cargo") return { result: { used: 10, capacity: 50, cargo: [] } };
-        if (tool === "analyze_market") return { result: { demand: [] } };
-        if (tool === "multi_sell") return { result: { items_sold: 5, credits_earned: 500 } };
+        if (tool === "get_cargo") return { result: { used: 10, capacity: 50, cargo: [{ item_id: "iron_ore", quantity: 10 }] } };
+        if (tool === "analyze_market") return { result: { demand: [{ item_id: "iron_ore" }] } };
+        if (tool === "multi_sell") { sellArgs = args; return { result: { items_sold: 5, credits_earned: 500 } }; }
         return { result: {} };
       });
 
@@ -82,6 +83,48 @@ describe("navigate_home routine", () => {
       expect(toolsCalled).toContain("refuel");
       expect(toolsCalled).toContain("repair");
       expect(toolsCalled).toContain("multi_sell");
+      // multi_sell requires an explicit items list built from cargo × demand
+      expect(sellArgs).toEqual({ items: [{ item_id: "iron_ore", quantity: 10 }] });
+    });
+
+    it("skips the sell when the station has no demand for cargo", async () => {
+      const toolsCalled: string[] = [];
+      const ctx = mockContext(async (tool) => {
+        toolsCalled.push(tool);
+        if (tool === "get_status") return {
+          result: {
+            player: { current_system: "sol", current_poi: "nexus_core", docked_at_base: "nexus_base", credits: 1000 },
+            ship: { fuel: 100, fuel_max: 100, hull: 100, hull_max: 100, cargo_used: 10, cargo_capacity: 50 },
+          },
+        };
+        if (tool === "get_cargo") return { result: { cargo: [{ item_id: "iron_ore", quantity: 10 }] } };
+        if (tool === "analyze_market") return { result: { demand: [] } };
+        return { result: {} };
+      });
+
+      const result = await navigateHomeRoutine.run(ctx, { station: "nexus_core" });
+      expect(result.status).toBe("completed");
+      expect(result.data.items_sold).toBe(0);
+      expect(toolsCalled).not.toContain("multi_sell");
+    });
+
+    it("hands off when multi_sell fails", async () => {
+      const ctx = mockContext(async (tool) => {
+        if (tool === "get_status") return {
+          result: {
+            player: { current_system: "sol", current_poi: "nexus_core", docked_at_base: "nexus_base", credits: 1000 },
+            ship: { fuel: 100, fuel_max: 100, hull: 100, hull_max: 100, cargo_used: 10, cargo_capacity: 50 },
+          },
+        };
+        if (tool === "get_cargo") return { result: { cargo: [{ item_id: "iron_ore", quantity: 10 }] } };
+        if (tool === "analyze_market") return { result: { demand: [{ item_id: "iron_ore" }] } };
+        if (tool === "multi_sell") return { error: "You must be docked at a station to use multi_sell." };
+        return { result: {} };
+      });
+
+      const result = await navigateHomeRoutine.run(ctx, { station: "nexus_core" });
+      expect(result.status).toBe("handoff");
+      expect(result.summary).toContain("selling cargo failed");
     });
 
     it("jumps when cross-system travel needed", async () => {

@@ -154,7 +154,20 @@ const PRAYER_CANARY_SYSTEM_PROMPT =
   'You are running a PRAYER CANARY test. Your ONLY task: call spacemolt_pray(script="wait 1;", max_steps=1, timeout_ticks=2) as your very first tool call. ' +
   'After spacemolt_pray returns, call logout() and stop. Do not do anything else. This is a one-shot operator verification run.';
 
-export async function startAgent(name: string): Promise<{ ok: boolean; message: string }> {
+/**
+ * Start an agent.
+ *
+ * @param opts.operatorInitiated When true (default), an active overseer stop
+ *   cooldown AND the operator-only `hold_offline` escalation flag are cleared —
+ *   this is the human-operator override. Automated callers (e.g. the overseer's
+ *   own start_agent action) MUST pass `false` so an automated restart cannot
+ *   erase an operator hold that is waiting for manual review.
+ */
+export async function startAgent(
+  name: string,
+  opts: { operatorInitiated?: boolean } = {},
+): Promise<{ ok: boolean; message: string }> {
+  const { operatorInitiated = true } = opts;
   if (!validateAgentName(name)) return { ok: false, message: `Unknown agent: ${name}` };
 
   const fleetDisabled = getFleetDisabledState();
@@ -177,10 +190,14 @@ export async function startAgent(name: string): Promise<{ ok: boolean; message: 
     return { ok: false, message: `${name} already running` };
   }
 
-  // If an overseer stop cooldown is active, the operator is intentionally
+  // If an overseer stop cooldown is active, an operator start is intentionally
   // overriding it.  Clear the cooldown so the health monitor doesn't immediately
-  // flip desiredState back to "stopped" after this start.
-  clearCooldownForOperatorStart(name);
+  // flip desiredState back to "stopped" after this start. Only an operator start
+  // clears the hold_offline escalation flag — an automated start must leave it
+  // set so the loop it gates stays blocked until a human reviews it.
+  if (operatorInitiated) {
+    clearCooldownForOperatorStart(name);
+  }
 
   const credentialBlock = getCredentialStartBlock(name);
   if (credentialBlock) {

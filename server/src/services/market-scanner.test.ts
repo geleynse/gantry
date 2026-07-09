@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { type MarketData } from "./market-scanner.js";
 import { createDatabase, closeDb } from "./database.js";
 import { runMarketScan } from "./market-scanner.js";
+import { MarketCache } from "../proxy/market-cache.js";
 
 const MOCK_MARKET_DATA: MarketData = {
   categories: ["ore"],
@@ -49,6 +50,46 @@ describe("runMarketScan", () => {
       // Second scan: same opportunities but no new orders (already exist)
       expect(result2.orders_created).toBe(0);
       expect(result1.opportunities).toBe(result2.opportunities);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it("consumes a shared market cache instead of fetching", async () => {
+    const origFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls++;
+      throw new Error("scanner must not fetch when a cache is available");
+    }) as unknown as typeof fetch;
+
+    try {
+      const cache = new MarketCache("http://localhost/api/market", 60_000, [0]);
+      cache.restore(MOCK_MARKET_DATA, Date.now());
+      const result = await runMarketScan(cache);
+      expect(result.opportunities).toBeGreaterThan(0);
+      expect(result.orders_created).toBeGreaterThan(0);
+      expect(fetchCalls).toBe(0);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it("skips the scan when cache data is too stale", async () => {
+    const origFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls++;
+      throw new Error("scanner must not fall back to fetch on stale cache");
+    }) as unknown as typeof fetch;
+
+    try {
+      const cache = new MarketCache("http://localhost/api/market", 60_000, [0]);
+      cache.restore(MOCK_MARKET_DATA, Date.now() - 16 * 60 * 1000); // > 15 min old
+      const result = await runMarketScan(cache);
+      expect(result.opportunities).toBe(0);
+      expect(result.orders_created).toBe(0);
+      expect(fetchCalls).toBe(0);
     } finally {
       globalThis.fetch = origFetch;
     }

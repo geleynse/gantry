@@ -26,6 +26,7 @@ export async function registerAccount(
 
   const response = await fetch(`${GAME_API_BASE}/register`, {
     method: "POST",
+    signal: AbortSignal.timeout(15_000),
     headers: {
       "Content-Type": "application/json",
     },

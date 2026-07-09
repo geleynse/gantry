@@ -22,6 +22,14 @@ export const AgentConfigSchema = z.object({
   proxy: z.string().optional(),
   /** Computed at load time from proxy .conf file — not read from JSON directly. */
   socksPort: z.number().optional(),
+  /**
+   * Per-agent turn sleep override (ms). Falls back to the fleet-level
+   * turnSleepMs when unset. Consumed by agent-manager's buildStartSpec
+   * (passed to the runner as --interval).
+   */
+  turnSleepMs: z.number().positive().optional(),
+  /** @deprecated Use turnSleepMs instead. Accepted for backward compatibility. */
+  turnInterval: z.number().positive().optional(),
   mcpVersion: z.enum(["v1", "v2", "overseer"]).optional(),
   mcpPreset: z.enum(["basic", "standard", "full"]).optional(),
   toolResultFormat: z.enum(["json", "yaml"]).optional(),

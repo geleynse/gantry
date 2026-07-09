@@ -346,6 +346,65 @@ describe("multi-sell (direct import)", () => {
     expect(soldQty).toBe(7); // resolved from "Iron Ore" → iron_ore
   });
 
+  it("resolves quantity=ALL when the canonical item_id differs from the name slug", async () => {
+    // The name-vs-item_id gotcha: cargo is name-keyed ("Mining Laser I" →
+    // mining_laser_i) but agents pass the canonical game id mining_laser_1.
+    // The direct lookup misses; the display-name alias must resolve it.
+    const cache = makeStatusCache("agent", {
+      player: { current_poi: "sol_station", credits: 1000, docked_at_base: "sol_station" },
+      ship: { cargo_used: 4, cargo: [{ name: "Mining Laser I", quantity: 2 }] },
+    });
+    let soldQty: number | undefined;
+    let soldItem: string | undefined;
+    const client = makeClient({
+      execute: async (tool, args) => {
+        if (tool === "sell") {
+          soldItem = args?.item_id as string;
+          soldQty = args?.quantity as number;
+          return { result: { credits_earned: 500 } };
+        }
+        return { result: {} };
+      },
+    }, { cache, agentName: "agent" });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await multiSell(
+      deps,
+      [{ item_id: "mining_laser_1", quantity: "ALL" as unknown as number }],
+      new Set(["analyze_market"]),
+    );
+
+    expect(result.status).toBe("completed");
+    expect(soldQty).toBe(2);          // resolved via "mining_laser_1" → "Mining Laser I" → mining_laser_i
+    expect(soldItem).toBe("mining_laser_1"); // sell still uses the canonical id
+  });
+
+  it("resolves quantity=ALL via arabic→roman tier fallback for unmapped ids", async () => {
+    // pulse_laser_2 has no ITEM_MAPPING entry; the trailing-number → roman
+    // numeral fallback must match the name-slugged cargo key pulse_laser_ii.
+    const cache = makeStatusCache("agent", {
+      player: { current_poi: "sol_station", credits: 1000, docked_at_base: "sol_station" },
+      ship: { cargo_used: 3, cargo: [{ name: "Pulse Laser II", quantity: 3 }] },
+    });
+    let soldQty: number | undefined;
+    const client = makeClient({
+      execute: async (tool, args) => {
+        if (tool === "sell") { soldQty = args?.quantity as number; return { result: { credits_earned: 900 } }; }
+        return { result: {} };
+      },
+    }, { cache, agentName: "agent" });
+    const deps = makeDeps("agent", client, cache);
+
+    const result = await multiSell(
+      deps,
+      [{ item_id: "pulse_laser_2", quantity: "ALL" as unknown as number }],
+      new Set(["analyze_market"]),
+    );
+
+    expect(result.status).toBe("completed");
+    expect(soldQty).toBe(3);
+  });
+
   it("adds cargo_warning when cargo is unchanged after sells", async () => {
     const cache = makeStatusCache("agent", {
       player: { current_poi: "sol_station", credits: 1000, docked_at_base: "sol_station" },
@@ -441,31 +500,34 @@ describe("multi-sell (direct import)", () => {
     expect(recent[0].quantity).toBe(10);
   });
 
-  it("does not record sells when result has an 'error' key (explicit error shape)", async () => {
+  it("does not record failed sells in the sell log (realistic { code, message } game error)", async () => {
     const sellLog = new SellLog();
     const cache = makeStatusCache("agent", {
       player: { current_poi: "sol_station", credits: 1000, docked_at_base: "sol_station" },
       ship: { cargo_used: 10 },
     });
-    // Return an error object that itself has an "error" key — the sell-log filter
-    // checks `"error" in r.result` to detect error results.
+    // The real game client reports errors as { code, message } — no `error` key.
+    // multiSell must wrap it so the sell-log filter (`"error" in r.result`)
+    // still detects the failure; unwrapped, failed sells were logged as real
+    // sales and polluted fleet deconfliction warnings.
     const client = makeClient({
       execute: async (tool) => {
-        if (tool === "sell") return { error: { error: "item_not_found", code: 404 } };
+        if (tool === "sell") return { error: { code: "item_not_found", message: "No such item" } };
         return { result: {} };
       },
     }, { cache, agentName: "agent" });
     const deps = makeDeps("agent", client, cache, { sellLog });
 
-    await multiSell(
+    const result = await multiSell(
       deps,
       [{ item_id: "iron_ore", quantity: 5 }],
       new Set(["analyze_market"]),
     );
 
     const recent = sellLog.getRecent("sol_station");
-    // When error has an "error" key, the sell-log filter skips it
     expect(recent).toHaveLength(0);
+    // And the failed sell must not be counted as sold
+    expect(result.items_sold).toBe(0);
   });
 
   it("includes fleet_sell_warning when another agent recently sold the same item", async () => {
@@ -678,10 +740,15 @@ describe("multi-sell (direct import)", () => {
     ];
     const result = await multiSell(deps, items, new Set(["analyze_market"]));
 
-    // All 3 items should appear in sells (success or failure)
-    expect(result.items_sold).toBe(3);
+    // All 3 items should appear in sells (success or failure) …
     const sells = result.sells as Array<{ item_id: string; result: unknown }>;
-    expect(sells.find((s) => s.item_id === "missing_item")).toBeTruthy();
+    expect(sells).toHaveLength(3);
+    const failed = sells.find((s) => s.item_id === "missing_item");
+    expect(failed).toBeTruthy();
+    // … the failure carries the game error under an `error` key …
+    expect((failed!.result as Record<string, unknown>).error).toEqual({ code: "item_not_in_cargo" });
+    // … but items_sold only counts the sells that actually succeeded.
+    expect(result.items_sold).toBe(2);
   });
 
   // ---------------------------------------------------------------------------

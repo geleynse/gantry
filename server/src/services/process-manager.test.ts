@@ -175,20 +175,44 @@ describe('process-manager', () => {
   });
 
   describe('killSession', () => {
-    it('calls kill on the tracked child process', async () => {
-      const kill = mock(() => true);
-      const fakeChild = {
-        exitCode: null,
-        killed: false,
-        pid: 99,
-        kill,
-        on: () => {},
-        unref: () => {},
-      };
-      _getTrackedProcesses().set('gantry-server', fakeChild as any);
+    // Use a pid beyond Linux's pid_max (4194304) so the deferred 2s SIGKILL —
+    // which runs after the process.kill spy is restored — always hits ESRCH.
+    const FAKE_PID = 2147483647;
 
-      await killSession('gantry-server');
-      expect(kill).toHaveBeenCalledWith('SIGTERM');
+    it('signals the tracked child process group with SIGTERM', async () => {
+      const killSpy = spyOn(process, 'kill').mockImplementation(() => true);
+      try {
+        const kill = mock(() => true);
+        const fakeChild = {
+          exitCode: null,
+          killed: false,
+          pid: FAKE_PID,
+          kill,
+          on: () => {},
+          unref: () => {},
+        };
+        _getTrackedProcesses().set('gantry-server', fakeChild as any);
+
+        await killSession('gantry-server');
+        // Runners are spawned detached (pgid == pid) — the whole group must be
+        // signalled or the runner's own children survive the SIGKILL fallback.
+        expect(killSpy).toHaveBeenCalledWith(-FAKE_PID, 'SIGTERM');
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
+
+    it('signals the process group for PID-file processes', async () => {
+      const killSpy = spyOn(process, 'kill').mockImplementation(() => true);
+      try {
+        existsSpy.mockReturnValue(true);
+        readSpy.mockReturnValue(String(FAKE_PID));
+
+        await killSession('gantry-server');
+        expect(killSpy).toHaveBeenCalledWith(-FAKE_PID, 'SIGTERM');
+      } finally {
+        killSpy.mockRestore();
+      }
     });
 
     it('cleans up dead ref without calling kill', async () => {

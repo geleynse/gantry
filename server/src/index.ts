@@ -314,14 +314,18 @@ log.info("Health monitor started", { intervalMs: HEALTH_MONITOR_INTERVAL });
 
 // --- 9. Graceful shutdown ---
 let forceExitTimeout: ReturnType<typeof setTimeout> | undefined;
+let shuttingDown = false;
 
 async function shutdown(signal: string) {
-  log.info("Shutting down", { signal });
-
-  // Clear the force-exit timer (won't trigger anymore)
-  if (forceExitTimeout) {
-    clearTimeout(forceExitTimeout);
+  // Re-entrancy guard: a second signal (or an uncaughtException raised during
+  // shutdown) must not re-run cleanup or re-arm the 30s force-exit window.
+  if (shuttingDown) {
+    log.warn("Shutdown already in progress, ignoring", { signal });
+    return;
   }
+  shuttingDown = true;
+
+  log.info("Shutting down", { signal });
 
   // Set a force-exit timer immediately (30s total timeout for entire shutdown)
   forceExitTimeout = setTimeout(() => {
@@ -357,6 +361,10 @@ async function shutdown(signal: string) {
           resolve();
         }
       });
+      // server.close() only resolves once all existing connections end, but the
+      // dashboard holds long-lived SSE streams that never end server-side —
+      // terminate them so shutdown doesn't hang until the 30s force-exit timer.
+      server.closeAllConnections();
     });
 
     // All cleanup complete — exit cleanly

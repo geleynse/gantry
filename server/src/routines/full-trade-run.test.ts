@@ -129,6 +129,53 @@ describe("full_trade_run routine", () => {
         expect(ctx.client.execute).toHaveBeenCalledWith("create_sell_order", expect.anything());
     });
 
+    it("hands off when travel to the belt fails (execute reports { error }, never throws)", async () => {
+        const ctx = mockContext(async (tool) => {
+            if (tool === "travel_to") return { error: { status: "error", error: "travel_failed", message: "no route" } };
+            return { result: {} };
+        });
+
+        const result = await fullTradeRunRoutine.run(ctx, { belt: "BELT-X", station: "S" });
+        expect(result.status).toBe("handoff");
+        expect(result.handoffReason).toContain("Travel to BELT-X failed");
+        // must NOT have proceeded to mine at the wrong location
+        expect(ctx.client.execute).not.toHaveBeenCalledWith("batch_mine", expect.anything());
+    }, 15_000);
+
+    it("resolves name-slug cargo ids to canonical ids for create_sell_order and records failed orders", async () => {
+        // Cargo ids come from slugging display names ("Mining Laser I" →
+        // mining_laser_i) while the real game id is mining_laser_1; the
+        // all-items market alias map must bridge them for non-demand leftovers.
+        const MARKET_TEXT =
+            "Trading insights at X:\n" +
+            "priority\tcategory\titem\titem_id\tinsight\n" +
+            "100\tdemand\tSteel Plate\tsteel_plate\tStation pays\n" +
+            "90\topportunity\tMining Laser I\tmining_laser_1\tArbitrage route";
+        const CARGO_TEXT =
+            "Cargo: 24/50 used.\nitem\tqty\tsize\nSteel Plate\t10\t2\nMining Laser I\t2\t4\n\nCredits: 100cr";
+        const orderArgs: Array<Record<string, unknown> | undefined> = [];
+        const toolHandler = async (tool: string, args?: Record<string, unknown>) => {
+            if (tool === "travel_to" || tool === "dock" || tool === "refuel" || tool === "craft") return { result: {} };
+            if (tool === "batch_mine") return { result: { mines_completed: 1 } };
+            if (tool === "analyze_market") return { result: MARKET_TEXT };
+            if (tool === "get_cargo") return { result: CARGO_TEXT };
+            if (tool === "multi_sell") return { result: { items_sold: 1 } };
+            if (tool === "create_sell_order") { orderArgs.push(args); return { error: { code: "invalid_item", message: "nope" } }; }
+            return { result: {} };
+        };
+        const ctx = mockContext(toolHandler, { player: { credits: 0, current_system: "SYS-A" } });
+
+        const result = await fullTradeRunRoutine.run(ctx, { belt: "B", station: "S" });
+        expect(result.status).toBe("completed");
+        // slug mining_laser_i resolved to canonical mining_laser_1
+        expect(orderArgs).toEqual([{ item_id: "mining_laser_1", quantity: 2, price_mode: "market" }]);
+        // failed order is recorded, not silently counted
+        expect(result.data.sell_orders_created).toBe(0);
+        const orderPhase = result.phases.find((p) => p.name === "create_sell_orders");
+        expect((orderPhase?.result as Record<string, unknown>).orders_created).toBe(0);
+        expect((orderPhase?.result as Record<string, unknown>).order_errors).toHaveLength(1);
+    });
+
     it("stops mining early when cargo exceeds 90% threshold", async () => {
         let getCargoCount = 0;
         const toolHandler = async (tool: string, args: any) => {

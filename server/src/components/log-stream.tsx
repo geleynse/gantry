@@ -86,10 +86,12 @@ export function LogStream({ agentName, from, to }: LogStreamProps) {
     });
 
     es.onerror = () => {
-      es.close();
-      esRef.current = null;
+      // Don't close() here — that would defeat EventSource's built-in
+      // auto-reconnect and permanently kill the stream on any transient
+      // blip (e.g. every server deploy). The "open" handler clears the
+      // error once the browser reconnects.
       setConnected(false);
-      setError("Connection lost");
+      setError("Connection lost — reconnecting…");
     };
 
     return () => {

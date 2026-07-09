@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { createDatabase, closeDb, getDb } from "./database.js";
+import { markDelivered } from "./comms-db.js";
 import { FleetCoordinator } from "./coordinator.js";
 import { setConfigForTesting } from "../config/fleet.js";
 import { createMockConfig } from "../test/helpers.js";
@@ -172,6 +173,69 @@ describe("FleetCoordinator", () => {
     const secondOrders = db.prepare("SELECT * FROM fleet_orders WHERE message LIKE '[COORDINATOR]%'").all();
     // Should have roughly the same count (old expired, new created)
     expect(secondOrders.length).toBeGreaterThan(0);
+  });
+
+  test("tick keeps (but expires) delivered coordinator orders and deletes undelivered ones", async () => {
+    // fleet_order_deliveries rows reference fleet_orders (FK, no ON DELETE) —
+    // deleting a delivered order would abort the whole cleanup statement in
+    // production, so delivered orders must be expired in place instead.
+    const statusCache = createStatusCache({
+      "drifter-gale": { credits: 10000 },
+    });
+    const coord = new FleetCoordinator(
+      statusCache, createMockMarketCache(), createMockArbitrageAnalyzer(), new Map(),
+    );
+    coord.setEnabled(true);
+
+    await coord.tick();
+    const db = getDb();
+    const firstOrders = db.prepare(
+      "SELECT id FROM fleet_orders WHERE message LIKE '[COORDINATOR]%'",
+    ).all() as { id: number }[];
+    expect(firstOrders.length).toBeGreaterThan(0);
+
+    // Simulate the agent receiving the first order
+    const deliveredId = firstOrders[0].id;
+    markDelivered(deliveredId, "drifter-gale");
+
+    // Plant a stale undelivered coordinator order from a "previous tick"
+    const staleId = db.prepare(
+      "INSERT INTO fleet_orders (message, target_agent, priority) VALUES ('[COORDINATOR] stale', 'rust-vane', 'normal')",
+    ).run().lastInsertRowid as number;
+
+    await coord.tick();
+
+    // Delivered order survives but is expired
+    const delivered = db.prepare(
+      "SELECT id FROM fleet_orders WHERE id = ? AND expires_at <= datetime('now')",
+    ).get(deliveredId);
+    expect(delivered).toBeTruthy();
+
+    // Undelivered stale order is deleted
+    const stale = db.prepare("SELECT id FROM fleet_orders WHERE id = ?").get(staleId);
+    expect(stale).toBeNull();
+  });
+
+  test("tick counter resumes from persisted coordinator_state after a restart", async () => {
+    const statusCache = createStatusCache({
+      "drifter-gale": { credits: 10000 },
+    });
+    const coord = new FleetCoordinator(
+      statusCache, createMockMarketCache(), createMockArbitrageAnalyzer(), new Map(),
+    );
+    await coord.tick();
+    await coord.tick();
+
+    // Simulate a server restart: new instance, same database
+    const coord2 = new FleetCoordinator(
+      statusCache, createMockMarketCache(), createMockArbitrageAnalyzer(), new Map(),
+    );
+    const result = await coord2.tick();
+    expect(result.tick_number).toBe(3);
+
+    // History must show the newest tick first, not the pre-restart ones
+    const history = coord2.getHistory();
+    expect(history[0].tick_number).toBe(3);
   });
 
   test("getLastTick returns null before any ticks", () => {
