@@ -2,7 +2,16 @@ import { describe, test, expect, beforeEach } from "bun:test";
 import { writeFileSync, readFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { FleetConfigSchema, AgentConfigSchema } from "./schemas.js";
-import { loadConfig, saveConfig } from "./fleet.js";
+import {
+  loadConfig,
+  saveConfig,
+  setConfigForTesting,
+  applyConfig,
+  getConfig,
+  AGENTS,
+  AGENT_NAMES,
+  TURN_SLEEP_MS,
+} from "./fleet.js";
 import type { AgentConfig, GantryConfig } from "./types.js";
 
 describe("Config Schemas", () => {
@@ -339,6 +348,93 @@ describe("Config Loading (loadConfig)", () => {
     const config = loadConfig(tmpDir);
     expect(config.agents[0].prayEnabled).toBe(true);
     expect(config.prayer?.fuzzyMatchThreshold).toBe(0.75);
+    cleanup();
+  });
+});
+
+// Regression: bug #124 — there used to be TWO independently-loaded config objects
+// (index.ts's own loadConfig() vs config/fleet.ts's cachedConfig). A runtime edit
+// only half-applied: the module-global getConfig()/AGENTS/TURN_SLEEP_MS consumers
+// saw the new value while the object index.ts passed into createApp → pipeline /
+// routes / MCP kept the boot-time value. The fix: index.ts consumes getConfig()
+// (the single cached object) and the watcher applies reloads IN PLACE via
+// applyConfig(), so a runtime edit is seen coherently by both worlds.
+describe("Config single source of truth (#124)", () => {
+  const tmpDir = join(import.meta.dir, "__test_fleet_single_source__");
+  const configPath = join(tmpDir, "fleet-config.json");
+
+  beforeEach(() => {
+    mkdirSync(tmpDir, { recursive: true });
+  });
+
+  function writeConfig(config: Record<string, unknown>) {
+    writeFileSync(configPath, JSON.stringify(config));
+  }
+
+  function cleanup() {
+    try { rmSync(tmpDir, { recursive: true }); } catch {}
+  }
+
+  test("a watcher reload is visible on the object index.ts already handed to the app", () => {
+    // Boot: cachedConfig is loaded and index.ts grabs getConfig() once.
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp",
+      turnSleepMs: 111,
+      agents: [{ name: "alpha" }],
+    });
+    setConfigForTesting(loadConfig(tmpDir));
+
+    // index.ts: `const config = getConfig()` — this exact object is threaded
+    // into createApp → createMcpServer (pipelineCtx.config) and createApiRoutes.
+    const appHeldConfig = getConfig();
+    expect(appHeldConfig.turnSleepMs).toBe(111);
+    expect(appHeldConfig.agents).toHaveLength(1);
+    // Module-global consumers agree at boot.
+    expect(TURN_SLEEP_MS).toBe(111);
+    expect(AGENTS).toHaveLength(1);
+
+    // Operator edits gantry.json at runtime → watchFile fires → applyConfig(reloaded).
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp",
+      turnSleepMs: 222,
+      agents: [{ name: "alpha" }, { name: "beta" }],
+    });
+    applyConfig(loadConfig(tmpDir));
+
+    // SINGLE SOURCE: the reference the app is still holding reflects the edit —
+    // no half-apply. (Before the fix this stayed 111 / 1 agent.)
+    expect(appHeldConfig.turnSleepMs).toBe(222);
+    expect(appHeldConfig.agents.map((a) => a.name)).toEqual(["alpha", "beta"]);
+
+    // Object identity is preserved — there is exactly one config object.
+    expect(getConfig()).toBe(appHeldConfig);
+
+    // Module-global consumers updated coherently with the app's view.
+    expect(TURN_SLEEP_MS).toBe(222);
+    expect(AGENTS).toHaveLength(2);
+    expect(AGENT_NAMES.has("beta")).toBe(true);
+
+    cleanup();
+  });
+
+  test("applyConfig fully overwrites — a field removed from the reload does not linger", () => {
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [{ name: "alpha" }],
+      fleetName: "first-fleet",
+    });
+    setConfigForTesting(loadConfig(tmpDir));
+    const held = getConfig();
+    expect(held.fleetName).toBe("first-fleet");
+
+    // Reload without fleetName — the held object's field must clear, not persist.
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp",
+      agents: [{ name: "alpha" }],
+    });
+    applyConfig(loadConfig(tmpDir));
+    expect(held.fleetName).toBeUndefined();
+
     cleanup();
   });
 });

@@ -3,7 +3,7 @@
  * Combines the MCP action proxy and fleet web dashboard into a single process.
  */
 
-import { FLEET_DIR, PORT, LOG_LEVEL, MARKET_SCAN_INTERVAL_MS, loadConfig } from "./config.js";
+import { FLEET_DIR, PORT, LOG_LEVEL, MARKET_SCAN_INTERVAL_MS, initConfig, getConfig } from "./config.js";
 import { createApp } from "./app.js";
 import { createDatabase } from "./services/database.js";
 import { loadRecentRoutineJobs } from "./services/routine-jobs.js";
@@ -78,8 +78,14 @@ try {
 }
 
 // --- 2. Load config ---
+// Consume the SINGLE cached config that the config-file watcher hot-reloads —
+// NOT an independent loadConfig() (bug #124). initConfig() is idempotent (it
+// already ran at module import); getConfig() returns the one object the watcher
+// mutates in place, so the pipeline/routes/MCP built from it below see runtime
+// config edits coherently with the module-global getConfig()/AGENTS consumers.
 log.info("Loading config", { fleet_dir: FLEET_DIR });
-const config = loadConfig(FLEET_DIR);
+initConfig();
+const config = getConfig();
 log.info("Config loaded", {
   agents: config.agents.length,
   game_mcp: config.gameMcpUrl,

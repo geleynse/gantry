@@ -203,12 +203,39 @@ function updateDerivedState(): void {
 }
 
 /**
+ * Apply a freshly-loaded config to the single cached config object.
+ *
+ * SINGLE SOURCE OF TRUTH: mutates `cachedConfig` IN PLACE (via Object.assign)
+ * rather than reassigning it to a new object. index.ts passes `getConfig()`
+ * into createApp → the MCP pipeline (pipelineCtx.config) and the web routers,
+ * all of which hold that reference for the process lifetime and read fields off
+ * it live per request/turn. If a reload reassigned `cachedConfig` to a new
+ * object, those long-lived holders would keep pointing at the boot object and a
+ * runtime config edit would only HALF-apply — the module-global getConfig()/
+ * AGENTS/TURN_SLEEP_MS consumers would update while the app/routes/MCP stayed
+ * frozen (bug #124). Mutating in place keeps one object that every holder shares.
+ *
+ * loadConfig() always returns a full GantryConfig literal (every key present,
+ * `undefined` included), so Object.assign fully overwrites — no stale keys from
+ * a removed field linger. The whole assignment runs synchronously in the watcher
+ * callback, so no in-flight request can observe a half-copied object.
+ */
+export function applyConfig(next: GantryConfig): void {
+  if (cachedConfig) {
+    Object.assign(cachedConfig, next);
+  } else {
+    cachedConfig = next;
+  }
+  updateDerivedState();
+}
+
+/**
  * Initialize config (called at module load).
  * Sets up the initial config and starts watching for changes.
  * On failure, records the error — getConfig() will throw it.
  * In tests, this may fail silently; tests should call setConfigForTesting().
  */
-function initConfig(): void {
+export function initConfig(): void {
   if (isInitialized) return;
   isInitialized = true;
 
@@ -239,11 +266,12 @@ function initConfig(): void {
     return;
   }
 
-  // Watch whichever config file was actually found
+  // Watch whichever config file was actually found. Apply the reload in place
+  // (applyConfig) so the object index.ts passes into createApp/pipeline/routes —
+  // the same object getConfig() returns — reflects the change; see applyConfig.
   watchFile(configPath, { interval: 5000 }, () => {
     try {
-      cachedConfig = loadConfig(FLEET_DIR);
-      updateDerivedState();
+      applyConfig(loadConfig(FLEET_DIR));
       log.info(`Reloaded config (${AGENTS.length} agents)`);
     } catch (err) {
       log.error(`Failed to reload config: ${err}`);

@@ -44,6 +44,8 @@ export {
 export {
   resolveConfigPath,
   loadConfig,
+  initConfig,
+  applyConfig,
   AGENTS,
   AGENT_NAMES,
   TURN_SLEEP_MS,
