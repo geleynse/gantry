@@ -52,6 +52,29 @@ describe("fleet_refuel routine", () => {
   });
 
   describe("run", () => {
+    it("reads own fuel from the v2 TEXT-dashboard get_status (regression for the string-cast bug)", async () => {
+      // Pre-fix: the { player, ship } cast made ship undefined → selfFuelPct
+      // defaulted to 100 → the agent never refueled itself even when near empty.
+      const STATUS_TEXT =
+        "Brass Meridian [solarian] | 100cr | Sol\n" +
+        "Hull: 100/100   Shield: 50/50   Armor: 25   Speed: 18\n" +
+        "Fuel: 30/100   Cargo: 0/50   CPU: 9/12   Power: 7/10\n" +
+        "Docked at: sol_base";
+      const ctx = mockContext(async (tool) => {
+        if (tool === "spacemolt_fleet") return fleetStatus([
+          { username: "test-agent", fuel: 30, max_fuel: 100 },
+          { username: "ally-1", fuel: 90, max_fuel: 100 },
+        ]);
+        if (tool === "get_status") return { result: STATUS_TEXT };
+        if (tool === "spacemolt_storage") return { error: { code: "no_bunker", message: "none" } };
+        if (tool === "refuel") return { result: { fuel_after: 100 } };
+        return { result: {} };
+      });
+      const result = await fleetRefuelRoutine.run(ctx, { station: "sol_base" });
+      expect(result.status).toBe("completed");
+      expect(result.data.self_refueled).toBe(true); // 30% < 80 → refuels
+    });
+
     it("refuels self and reports all members healthy when fleet fuel is fine", async () => {
       const toolsCalled: string[] = [];
       const ctx = mockContext(async (tool) => {

@@ -4,6 +4,7 @@
  */
 
 import type { RoutineContext, RoutinePhase, RoutineResult } from "./types.js";
+import { parseGetStatusText } from "../proxy/http-game-client-v2.js";
 
 export function done(summary: string, data: Record<string, unknown>, phases: RoutinePhase[]): RoutineResult {
   return { status: "completed", summary, data, phases, durationMs: 0 };
@@ -408,6 +409,88 @@ export function getTradeMissionCost(mission: Record<string, unknown>): number | 
   }
 
   return null;
+}
+
+/**
+ * Normalize a `get_status` result into the `{ player, ship }` shape the routines
+ * consume — regardless of whether the game returned the OLD JSON object or the
+ * v2 formatted TEXT dashboard string.
+ *
+ * v2 `get_status` returns a text dashboard, NOT `{ player, ship }`. Routines that
+ * cast `resp.result as { player, ship }` therefore read `undefined` for every
+ * field (arrival checks always fail, fuel/hull always unknown). Route the result
+ * through this helper instead.
+ *
+ * Mapping when the result is a text dashboard (via parseGetStatusText):
+ *   - `player.current_poi` + `player.docked_at_base` ← the "Docked at:" line. The
+ *     text has no POI/system id; the dock line is the only location signal, so we
+ *     expose it under both names the routines `.includes(station)`-check. It is
+ *     undefined in space (correct: "not there yet" / "not docked").
+ *   - `player.username/empire/credits` ← header line.
+ *   - `ship.{hull,shield,fuel,cargo_used,...}` with BOTH `max_*` and `*_max`
+ *     aliases so getStatPct/getCargoUtilization read either name, plus `modules`
+ *     and named `cargo` rows.
+ * When the result is already an object carrying `player`/`ship` (test/legacy/
+ * future JSON), it is returned as-is. Anything else (undefined/unparseable/an
+ * object without player|ship) yields `{}` so callers degrade exactly as before.
+ *
+ * NOTE: the text dashboard carries no system id, so `player.current_system` is
+ * left undefined here (same as the raw string cast did). Routines that need it
+ * (fleet_jump arrival, patrol) already fall back to the status cache.
+ */
+export function getStatusState(result: unknown): {
+  player?: Record<string, unknown>;
+  ship?: Record<string, unknown>;
+} {
+  // Already-object shape (test mocks, legacy JSON, future-proofing).
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const obj = result as Record<string, unknown>;
+    if ("player" in obj || "ship" in obj) {
+      return {
+        player: obj.player as Record<string, unknown> | undefined,
+        ship: obj.ship as Record<string, unknown> | undefined,
+      };
+    }
+    return {};
+  }
+
+  // v2 formatted TEXT dashboard.
+  if (typeof result === "string") {
+    const p = parseGetStatusText(result);
+    const player: Record<string, unknown> = {
+      username: p.username,
+      empire: p.empire,
+      credits: p.credits,
+      // Only location signal in the text is the "Docked at:" line — expose it as
+      // both the poi and the dock field the routines check.
+      current_poi: p.dockedAt,
+      docked_at_base: p.dockedAt,
+    };
+    const ship: Record<string, unknown> = {
+      hull: p.hull,
+      max_hull: p.maxHull,
+      hull_max: p.maxHull,
+      shield: p.shield,
+      max_shield: p.maxShield,
+      shield_max: p.maxShield,
+      armor: p.armor,
+      speed: p.speed,
+      fuel: p.fuel,
+      max_fuel: p.maxFuel,
+      fuel_max: p.maxFuel,
+      cargo_used: p.cargoUsed,
+      cargo_capacity: p.cargoCapacity,
+      cpu_used: p.cpuUsed,
+      cpu_capacity: p.cpuCapacity,
+      power_used: p.powerUsed,
+      power_capacity: p.powerCapacity,
+      modules: p.modules,
+      cargo: p.cargo.map((c) => ({ name: c.name, quantity: c.quantity })),
+    };
+    return { player, ship };
+  }
+
+  return {};
 }
 
 /**

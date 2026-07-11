@@ -36,6 +36,25 @@ describe("manage_storage routine", () => {
   });
 
   describe("run", () => {
+    it("reads docked_at_base from the v2 TEXT-dashboard get_status (regression)", async () => {
+      // Pre-fix: the { player } cast made docked_at_base undefined → the routine
+      // handed off with "Must be docked" even while docked.
+      const deposited: string[] = [];
+      const STATUS_TEXT =
+        "Rust Vane [Drifter] | 100cr | Sol\n" +
+        "Fuel: 50/100   Cargo: 1/50   CPU: 9/12   Power: 7/10\n" +
+        "Docked at: nexus_base";
+      const ctx = mockContext(async (tool, args) => {
+        if (tool === "get_status") return { result: STATUS_TEXT };
+        if (tool === "get_cargo") return { result: { cargo: [{ id: "ore_1" }] } };
+        if (tool === "deposit_items") { deposited.push(String((args as any)?.id)); return { result: { deposited: true } }; }
+        return { result: {} };
+      });
+      const result = await manageStorageRoutine.run(ctx, { action: "deposit_all" });
+      expect(result.status).toBe("completed");
+      expect(result.data.deposited).toBe(1);
+    });
+
     it("deposits all cargo items", async () => {
       const deposited: string[] = [];
       const ctx = mockContext(async (tool, args) => {

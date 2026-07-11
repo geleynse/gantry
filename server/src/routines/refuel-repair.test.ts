@@ -34,6 +34,33 @@ describe("refuel_repair routine", () => {
   });
 
   describe("run", () => {
+    it("reads ship fuel/hull from the v2 TEXT-dashboard get_status (regression for the string-cast bug)", async () => {
+      // v2 get_status is a TEXT dashboard, not { ship }. Pre-fix, the cast made
+      // ship undefined → getStatPct null → "Fuel or hull data unavailable" handoff.
+      const toolsCalled: string[] = [];
+      const STATUS_TEXT =
+        "Rust Vane [Drifter] | 100cr | Sol\n" +
+        "Hull: 70/100   Shield: 50/50   Armor: 25   Speed: 18\n" +
+        "Fuel: 50/100   Cargo: 0/50   CPU: 9/12   Power: 7/10\n" +
+        "Docked at: sirius_station";
+      const ctx = mockContext(
+        async (tool) => {
+          toolsCalled.push(tool);
+          if (tool === "get_status") return { result: STATUS_TEXT };
+          if (tool === "refuel") return { result: { fuel_after: 100 } };
+          if (tool === "repair") return { result: { hull_after: 100 } };
+          return { result: {} };
+        },
+        { player: { current_poi: "sol_belt" } },
+      );
+      const result = await refuelRepairRoutine.run(ctx, { station: "sirius_station" });
+      expect(result.status).toBe("completed");
+      expect(result.data.did_refuel).toBe(true);  // 50% fuel < 80
+      expect(result.data.did_repair).toBe(true);  // 70% hull < 90
+      expect(toolsCalled).toContain("refuel");
+      expect(toolsCalled).toContain("repair");
+    });
+
     it("refuels and repairs when both needed", async () => {
       const toolsCalled: string[] = [];
       const ctx = mockContext(

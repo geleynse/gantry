@@ -8,7 +8,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { done, handoff, phase, completePhase, travelAndDock, getStatPct } from "./routine-utils.js";
+import { done, handoff, phase, completePhase, travelAndDock, getStatPct, getStatusState } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -55,8 +55,7 @@ async function run(ctx: RoutineContext, params: RefuelRepairParams): Promise<Rou
 
   // --- Phase 4: Check fuel and hull ---
   const statusResp = await ctx.client.execute("get_status");
-  const status = statusResp.result as Record<string, unknown> | undefined;
-  const ship = status?.ship as Record<string, unknown> | undefined;
+  const ship = getStatusState(statusResp.result).ship;
 
   let fuelCurrent = typeof ship?.fuel === "number" ? ship.fuel : undefined;
   let fuelMax = typeof ship?.max_fuel === "number" ? ship.max_fuel

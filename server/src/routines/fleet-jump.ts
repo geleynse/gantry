@@ -14,7 +14,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, done, handoff, phase, completePhase, checkCombat } from "./routine-utils.js";
+import { withRetry, done, handoff, phase, completePhase, checkCombat, getStatusState } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -89,8 +89,7 @@ async function run(ctx: RoutineContext, params: FleetJumpParams): Promise<Routin
 
   // --- Phase 2: Check if already at destination ---
   const statusResp = await ctx.client.execute("get_status");
-  const status = statusResp.result as Record<string, unknown> | undefined;
-  const player = status?.player as Record<string, unknown> | undefined;
+  const player = getStatusState(statusResp.result).player;
   const currentSystem = player?.current_system as string | undefined;
 
   if (currentSystem === params.destination) {
@@ -161,8 +160,7 @@ async function run(ctx: RoutineContext, params: FleetJumpParams): Promise<Routin
   await ctx.client.waitForTick();
 
   const postJumpResp = await ctx.client.execute("get_status");
-  const postStatus = postJumpResp.result as Record<string, unknown> | undefined;
-  const postPlayer = postStatus?.player as Record<string, unknown> | undefined;
+  const postPlayer = getStatusState(postJumpResp.result).player;
   const arrivedSystem = postPlayer?.current_system as string | undefined;
 
   const arrived = arrivedSystem === params.destination;

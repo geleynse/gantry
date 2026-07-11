@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { getCargoUtilization, parseCargoItems, extractDemandItems, extractItemIdAliases, resolveSellable, parseTextTable, itemNameToId, checkCombat } from "./routine-utils.js";
+import { getCargoUtilization, getStatusState, getStatPct, parseCargoItems, extractDemandItems, extractItemIdAliases, resolveSellable, parseTextTable, itemNameToId, checkCombat } from "./routine-utils.js";
 
 // Live formats captured from game v0.426.5 (v0.417.3 formatted-output change).
 const GET_CARGO_TEXT =
@@ -235,5 +235,55 @@ describe("routine-utils: getCargoUtilization", () => {
     const util = getCargoUtilization({ used: 110, capacity: 100 });
     expect(util?.freeSpace).toBe(0);
     expect(util?.pctFull).toBeCloseTo(110);
+  });
+});
+
+describe("routine-utils: getStatusState", () => {
+  it("maps a v2 TEXT dashboard string into { player, ship }", () => {
+    const { player, ship } = getStatusState(GET_STATUS_TEXT);
+    // player: dock line is the only location signal — exposed as both fields.
+    expect(player?.current_poi).toBe("sirius_observatory_station");
+    expect(player?.docked_at_base).toBe("sirius_observatory_station");
+    expect(player?.username).toBe("Rust Vane");
+    expect(player?.credits).toBe(54877005);
+    // ship: fuel/hull/cargo readable by getStatPct + getCargoUtilization.
+    expect(ship?.fuel).toBe(253);
+    expect(ship?.max_fuel).toBe(350);
+    expect(ship?.fuel_max).toBe(350);
+    expect(ship?.hull).toBe(480);
+    expect(ship?.cargo_used).toBe(629);
+    expect(ship?.cargo_capacity).toBe(655);
+    // Downstream helpers accept the mapped ship as-is.
+    expect(getStatPct(ship, "fuel")).toBeCloseTo((253 / 350) * 100);
+    expect(getStatPct(ship, "hull")).toBeCloseTo(100);
+  });
+
+  it("leaves current_poi/docked_at_base undefined when in space (no Docked at: line)", () => {
+    const inSpace =
+      "Rust Vane [solarian] | 55,541,553cr | Proxima Centauri\n" +
+      "Fuel: 328/350 | Cargo: 21/655 | CPU: 27/32 | Power: 49/80\n" +
+      "Hull: 480/480 | Shield: 225/225 | Armor: 22 | Speed: 1";
+    const { player, ship } = getStatusState(inSpace);
+    expect(player?.current_poi).toBeUndefined();
+    expect(player?.docked_at_base).toBeUndefined();
+    expect(ship?.fuel).toBe(328);
+  });
+
+  it("passes an already-object { player, ship } through unchanged (legacy/test JSON)", () => {
+    const obj = {
+      player: { current_poi: "nexus_core", credits: 1000 },
+      ship: { fuel: 50, fuel_max: 100 },
+    };
+    const state = getStatusState(obj);
+    expect(state.player).toBe(obj.player);
+    expect(state.ship).toBe(obj.ship);
+  });
+
+  it("returns {} for garbage / unparseable input", () => {
+    expect(getStatusState(undefined)).toEqual({});
+    expect(getStatusState(null)).toEqual({});
+    expect(getStatusState(42)).toEqual({});
+    // object without player/ship keys → {} (degrade like the old cast).
+    expect(getStatusState({ foo: "bar" })).toEqual({});
   });
 });

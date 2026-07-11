@@ -9,7 +9,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { done, handoff, phase, completePhase, travelAndDock } from "./routine-utils.js";
+import { done, handoff, phase, completePhase, travelAndDock, getStatusState } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -130,11 +130,11 @@ async function run(ctx: RoutineContext, rawParams: UpgradeShipParams): Promise<R
 
   // --- Phase SURVEY: Get current status + market ---
   const statusResp = await ctx.client.execute("get_status");
-  const statusResult = statusResp.result as Record<string, unknown> | undefined;
-  const ship = (statusResult?.ship ?? cachedShip) as Record<string, unknown> | undefined;
+  const statusState = getStatusState(statusResp.result);
+  const ship = (statusState.ship ?? cachedShip) as Record<string, unknown> | undefined;
   const credits =
-    typeof (statusResult?.player as Record<string, unknown>)?.credits === "number"
-      ? (statusResult!.player as Record<string, unknown>).credits as number
+    typeof statusState.player?.credits === "number"
+      ? statusState.player.credits as number
       : cachedCredits ?? 0;
 
   // Resolve budget: explicit param wins, otherwise 50% of current credits

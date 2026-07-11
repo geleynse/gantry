@@ -17,7 +17,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, done, handoff, phase, completePhase, getStatPct } from "./routine-utils.js";
+import { withRetry, done, handoff, phase, completePhase, getStatPct, getStatusState } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -60,12 +60,12 @@ async function run(ctx: RoutineContext, params: PatrolAndAttackParams): Promise<
   // --- Phase 1: Init — check hull and location ---
   const initPhase = phase("init");
   const statusResp = await ctx.client.execute("get_status");
-  const status = statusResp.result as Record<string, unknown> | undefined;
-  const ship = status?.ship as Record<string, unknown> | undefined;
+  const initState = getStatusState(statusResp.result);
+  const ship = initState.ship;
   const hullPct = getStatPct(ship, "hull") ?? 100;
 
   // Use live status for currentSystem, fall back to cache
-  const statusPlayer = status?.player as Record<string, unknown> | undefined;
+  const statusPlayer = initState.player;
   const currentSystem = (statusPlayer?.current_system as string | undefined)
     ?? (ctx.statusCache.get(ctx.agentName)?.data?.player as Record<string, unknown> | undefined)?.current_system as string | undefined;
 
@@ -139,7 +139,7 @@ async function run(ctx: RoutineContext, params: PatrolAndAttackParams): Promise<
     // Check defeat/fled — handoff to LLM
     if (outcome === "defeat" || outcome === "fled" || outcome === "destroyed") {
       const postStatusResp = await ctx.client.execute("get_status");
-      const postShip = (postStatusResp.result as Record<string, unknown> | undefined)?.ship as Record<string, unknown> | undefined;
+      const postShip = getStatusState(postStatusResp.result).ship;
       const postHullPct = getStatPct(postShip, "hull") ?? 0;
       return handoff(
         `Combat ${outcome} in ${system} — hull at ${Math.round(postHullPct)}%`,
@@ -169,7 +169,7 @@ async function run(ctx: RoutineContext, params: PatrolAndAttackParams): Promise<
 
     // Check hull after combat
     const postCombatStatus = await ctx.client.execute("get_status");
-    const postCombatShip = (postCombatStatus.result as Record<string, unknown> | undefined)?.ship as Record<string, unknown> | undefined;
+    const postCombatShip = getStatusState(postCombatStatus.result).ship;
     const postCombatHullPct = getStatPct(postCombatShip, "hull") ?? 100;
 
     if (postCombatHullPct < 30) {

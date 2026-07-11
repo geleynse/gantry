@@ -11,7 +11,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, done, handoff, phase, completePhase, checkCombat, getCargoUtilization, travelAndDock, getStatPct, extractDemandItems, parseCargoItems, resolveSellable } from "./routine-utils.js";
+import { withRetry, done, handoff, phase, completePhase, checkCombat, getCargoUtilization, travelAndDock, getStatPct, getStatusState, extractDemandItems, parseCargoItems, resolveSellable } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -52,8 +52,7 @@ async function run(ctx: RoutineContext, params: NavigateHomeParams): Promise<Rou
   // --- Phase 1: Init — check current location ---
   const initPhase = phase("init");
   const statusResp = await ctx.client.execute("get_status");
-  const status = statusResp.result as Record<string, unknown> | undefined;
-  const player = status?.player as Record<string, unknown> | undefined;
+  const player = getStatusState(statusResp.result).player;
   const currentSystem = player?.current_system as string | undefined;
   const currentPoi = player?.current_poi as string | undefined;
   const dockedAt = player?.docked_at_base as string | undefined;
@@ -98,8 +97,8 @@ async function run(ctx: RoutineContext, params: NavigateHomeParams): Promise<Rou
   // --- Phase 5: Refuel ---
   // Re-fetch status after docking for accurate fuel/hull readings AND arrival verification
   const freshStatusResp = await ctx.client.execute("get_status");
-  const freshStatus = freshStatusResp.result as Record<string, unknown> | undefined;
-  const freshPlayer = freshStatus?.player as Record<string, unknown> | undefined;
+  const freshState = getStatusState(freshStatusResp.result);
+  const freshPlayer = freshState.player;
   const arrivedPoi = freshPlayer?.current_poi as string | undefined;
   const arrivedDocked = freshPlayer?.docked_at_base as string | undefined;
   const arrived = !!arrivedPoi?.includes(params.station);
@@ -112,7 +111,7 @@ async function run(ctx: RoutineContext, params: NavigateHomeParams): Promise<Rou
     );
   }
 
-  const ship = freshStatus?.ship as Record<string, unknown> | undefined;
+  const ship = freshState.ship;
   let didRefuel = false;
   if (params.refuel !== false) {
     const fuelPct = getStatPct(ship, "fuel");

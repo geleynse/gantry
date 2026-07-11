@@ -31,6 +31,40 @@ describe("explore_and_mine routine", () => {
   });
 
   describe("run", () => {
+    it("mines and sells with a v2 TEXT-dashboard get_status (regression for the string-cast bug)", async () => {
+      // v2 get_status is a TEXT dashboard. The init read + the mid/post cargo
+      // checks must all tolerate the string. (Text carries no system id, so
+      // currentSystem is undefined → needsJump true, same as before.)
+      const toolsCalled: string[] = [];
+      const STATUS_TEXT =
+        "Lumen Shoal [Drifter] | 100cr | Alpha\n" +
+        "Hull: 100/100   Shield: 50/50   Armor: 25   Speed: 18\n" +
+        "Fuel: 90/100   Cargo: 20/50   CPU: 9/12   Power: 7/10";
+      const ctx = mockContext(async (tool) => {
+        toolsCalled.push(tool);
+        if (tool === "get_status") return { result: STATUS_TEXT };
+        if (tool === "jump_route") return { result: { status: "arrived" } };
+        if (tool === "get_system") return {
+          result: { pois: [{ id: "alpha_belt_1", name: "Alpha Belt 1", type: "asteroid_belt" }] },
+        };
+        if (tool === "travel_to") return { result: { status: "completed" } };
+        if (tool === "batch_mine") return { result: { mines_completed: 5, total_ore: 25 } };
+        if (tool === "get_cargo") return { result: { cargo: [{ item_id: "iron_ore", quantity: 20 }] } };
+        if (tool === "dock") return { result: { docked: true } };
+        if (tool === "analyze_market") return { result: { demand: [{ item_id: "iron_ore" }] } };
+        if (tool === "multi_sell") return { result: { items_sold: 3, credits_earned: 150 } };
+        return { result: {} };
+      });
+      const result = await exploreAndMineRoutine.run(ctx, {
+        system: "alpha",
+        returnStation: "nexus_core",
+      });
+      expect(result.status).toBe("completed");
+      expect(result.data.belts_mined).toEqual(["alpha_belt_1"]);
+      expect(toolsCalled).toContain("batch_mine");
+      expect(toolsCalled).toContain("multi_sell");
+    });
+
     it("jumps, finds belts, mines, returns, sells", async () => {
       const toolsCalled: string[] = [];
       let mineArgs: Record<string, unknown> | undefined;

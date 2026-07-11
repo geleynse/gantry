@@ -86,6 +86,31 @@ describe("upgrade_ship routine", () => {
   // run — travel/dock
   // ---------------------------------------------------------------------------
   describe("run — travel and dock", () => {
+    it("reads credits from the v2 TEXT-dashboard get_status for the budget (regression)", async () => {
+      // Pre-fix the { player, ship } cast made statusResult.player undefined →
+      // credits fell back to cache (or 0). With text credits now parsed, the
+      // computed budget reflects live credits.
+      const STATUS_TEXT =
+        "Rust Vane [solarian] | 20,000cr | Sirius\n" +
+        "Ship: Compendium (compendium) | Hull: 480/480 | Shield: 225/225 | Armor: 22 | Speed: 1\n" +
+        "Fuel: 253/350 | Cargo: 12/655 | CPU: 27/32 | Power: 49/80\n" +
+        "Docked at: sirius_station";
+      const ctx = mockContext(
+        async (tool) => {
+          if (tool === "get_status") return { result: STATUS_TEXT };
+          if (tool === "view_market") return { result: SAMPLE_MARKET };
+          if (tool === "browse_ships") return { result: { ships: [] } };
+          return { result: {} };
+        },
+        // cache has the dock location (init reads it) but NO credits.
+        { player: { docked_at_base: "sirius_base", current_poi: "sirius_station" } },
+      );
+      const result = await upgradeShipRoutine.run(ctx, { station: "sirius_station" });
+      expect(result.status).toBe("completed");
+      // budget = 50% of the 20,000 credits parsed from the TEXT dashboard.
+      expect(result.data.budget_used).toBe(10000);
+    });
+
     it("skips travel and dock when already docked at target station", async () => {
       const toolsCalled: string[] = [];
       const ctx = mockContext(

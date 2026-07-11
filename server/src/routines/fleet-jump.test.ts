@@ -54,6 +54,26 @@ describe("fleet_jump routine", () => {
   });
 
   describe("run", () => {
+    it("tolerates a v2 TEXT-dashboard get_status but cannot confirm arrival from text (residual limitation)", async () => {
+      // Routed through getStatusState so the { player } cast no longer reads
+      // garbage. NOTE: get_status TEXT carries no system id, so fleet_jump's
+      // system-based arrival check still can't pass from text alone — the routine
+      // must degrade gracefully (handoff, not throw). Full system verification
+      // needs get_location/cache, a separate fix outside the get_status parse.
+      const STATUS_TEXT =
+        "Test Agent [Drifter] | 100cr | Sol\n" +
+        "Hull: 100/100   Shield: 50/50   Armor: 25   Speed: 18\n" +
+        "Fuel: 90/100   Cargo: 0/50   CPU: 9/12   Power: 7/10";
+      const ctx = mockContext(async (tool) => {
+        if (tool === "spacemolt_fleet") return fleetStatus([{ username: "test-agent" }], "sol");
+        if (tool === "get_status") return { result: STATUS_TEXT };
+        if (tool === "jump_route") return { result: { status: "jumped", destination: "sirius" } };
+        return { result: {} };
+      });
+      const result = await fleetJumpRoutine.run(ctx, { destination: "sirius" });
+      expect(result.status).toBe("handoff"); // arrival unverifiable from text, but no crash
+    });
+
     it("completes when all members arrive at destination", async () => {
       const toolsCalled: string[] = [];
       let jumped = false;

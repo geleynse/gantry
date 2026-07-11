@@ -51,6 +51,29 @@ describe("patrol_and_attack routine", () => {
   });
 
   describe("run", () => {
+    it("reads ship hull from the v2 TEXT-dashboard get_status (regression for the string-cast bug)", async () => {
+      // v2 get_status is a TEXT dashboard, not { ship }. Pre-fix the cast made
+      // ship undefined → getStatPct(undefined,"hull") ?? 100 → hull always read as
+      // 100% → a critically damaged ship would patrol straight into combat.
+      // (get_status text has no system id, so currentSystem still comes from cache.)
+      const STATUS_TEXT =
+        "Sable Thorn [Drifter] | 100cr | Sol\n" +
+        "Hull: 20/100   Shield: 50/50   Armor: 25   Speed: 18\n" +
+        "Fuel: 90/100   Cargo: 0/50   CPU: 9/12   Power: 7/10";
+      const ctx = mockContext(
+        async (tool) => {
+          if (tool === "get_status") return { result: STATUS_TEXT };
+          return { result: {} };
+        },
+        { player: { current_system: "sol" } },
+      );
+      const result = await patrolAndAttackRoutine.run(ctx, {});
+      // Now the 20% hull is actually read → routine hands off instead of fighting.
+      expect(result.status).toBe("handoff");
+      expect(result.handoffReason).toContain("Hull critically low");
+      expect(result.handoffReason).toContain("20%");
+    });
+
     it("patrols current system with victory and loot", async () => {
       const ctx = mockContext(
         async (tool) => {

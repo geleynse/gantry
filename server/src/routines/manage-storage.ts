@@ -11,7 +11,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { done, handoff, phase, completePhase } from "./routine-utils.js";
+import { done, handoff, phase, completePhase, getStatusState } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -50,8 +50,7 @@ async function run(ctx: RoutineContext, params: ManageStorageParams): Promise<Ro
   // --- Phase 1: Init — verify docked ---
   const initPhase = phase("init");
   const statusResp = await ctx.client.execute("get_status");
-  const status = statusResp.result as Record<string, unknown> | undefined;
-  const player = status?.player as Record<string, unknown> | undefined;
+  const player = getStatusState(statusResp.result).player;
   const dockedAt = player?.docked_at_base as string | undefined;
 
   if (!dockedAt) {

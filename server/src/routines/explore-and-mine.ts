@@ -12,7 +12,7 @@
  */
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
-import { withRetry, done, handoff, phase, completePhase, checkCombat, getCargoUtilization, travelAndDock, extractDemandItems, parseCargoItems, resolveSellable } from "./routine-utils.js";
+import { withRetry, done, handoff, phase, completePhase, checkCombat, getCargoUtilization, getStatusState, travelAndDock, extractDemandItems, parseCargoItems, resolveSellable } from "./routine-utils.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -56,8 +56,7 @@ async function run(ctx: RoutineContext, rawParams: ExploreAndMineParams): Promis
   // --- Phase 1: Init ---
   const initPhase = phase("init");
   const statusResp = await ctx.client.execute("get_status");
-  const status = statusResp.result as Record<string, unknown> | undefined;
-  const player = status?.player as Record<string, unknown> | undefined;
+  const player = getStatusState(statusResp.result).player;
   const currentSystem = player?.current_system as string | undefined;
   const needsJump = currentSystem !== rawParams.system;
   phases.push(completePhase(initPhase, { currentSystem, needsJump }));

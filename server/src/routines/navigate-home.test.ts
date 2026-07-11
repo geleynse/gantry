@@ -87,6 +87,32 @@ describe("navigate_home routine", () => {
       expect(sellArgs).toEqual({ items: [{ item_id: "iron_ore", quantity: 10 }] });
     });
 
+    it("reads the v2 TEXT-dashboard get_status: verifies arrival and refuels (regression for the string-cast bug)", async () => {
+      // v2 get_status returns a formatted TEXT dashboard, not { player, ship }.
+      // Pre-fix, navigate_home cast resp.result as an object → current_poi was
+      // ALWAYS undefined → arrival check failed → handoff before refuel ran.
+      const toolsCalled: string[] = [];
+      const STATUS_TEXT =
+        "Drifter Gale [Drifter] | 12,345cr | Sol System\n" +
+        "Hull: 480/480   Shield: 50/50   Armor: 25   Speed: 18\n" +
+        "Fuel: 100/350   Cargo: 12/655   CPU: 9/12   Power: 7/10\n" +
+        "Docked at: nexus_core_station";
+      const ctx = mockContext(async (tool) => {
+        toolsCalled.push(tool);
+        if (tool === "get_status") return { result: STATUS_TEXT };
+        if (tool === "refuel") return { result: { fuel_after: 350 } };
+        if (tool === "repair") return { result: { hull_after: 480 } };
+        return { result: {} };
+      });
+
+      const result = await navigateHomeRoutine.run(ctx, { station: "nexus_core", sell: false });
+      // Pre-fix this handed off with "ship is not at nexus_core"; now it completes.
+      expect(result.status).toBe("completed");
+      expect(result.summary).not.toContain("is not at");
+      expect(result.data.did_refuel).toBe(true); // Fuel 100/350 = 28% < 80 → refuels
+      expect(toolsCalled).toContain("refuel");
+    });
+
     it("skips the sell when the station has no demand for cargo", async () => {
       const toolsCalled: string[] = [];
       const ctx = mockContext(async (tool) => {
