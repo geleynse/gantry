@@ -14,6 +14,16 @@ interface ErrorHint {
 }
 
 const ERROR_HINTS: ErrorHint[] = [
+  // Specific game error CODES first. Matching is first-match-wins substring over
+  // the whole lowercased message, so snake_case codes must precede the generic
+  // English-phrase patterns below — e.g. skipped_unfunded must win even if the
+  // live message also contains "insufficient credits".
+  // v0.463.0 mining density check.
+  { pattern: "deposit_too_sparse", hint: "This deposit's ore density is too low for your mining lasers to work. Move to a denser/richer deposit — do NOT retry the same node." },
+  // v0.467.0 passenger economy — a station's citizen fund can run dry.
+  { pattern: "skipped_unfunded", hint: "A passenger didn't board — the origin station's citizen fund can't cover the fare. Pick a different (funded/higher-demand) origin station or different passengers. Do NOT retry the same boarding immediately." },
+  // v0.382.0 view_market incremental polling — the since= cursor can go stale.
+  { pattern: "stale_cursor", hint: "The since= market cursor is too old, or you changed stations, so the incremental delta can't be served. Call view_market WITHOUT the since= cursor to re-baseline, then resume incremental polling." },
   { pattern: "not docked", hint: "Your cached state may be stale — call get_state first to re-sync, then dock at a station before retrying." },
   { pattern: "must be docked", hint: "Your cached state may be stale — call get_state first to re-sync, then dock at a station before retrying." },
   { pattern: "already docked", hint: "You're already docked — this is not a failure. Call get_state to re-sync and proceed with your next step." },

@@ -227,3 +227,31 @@ describe("addErrorHint — v0.342 facility idle_reason enum", () => {
     expect(result).toContain("Hint:");
   });
 });
+
+describe("addErrorHint — v0.463.0 deposit_too_sparse", () => {
+  it("tells the agent to move to a denser deposit and not retry", () => {
+    const result = addErrorHint("[deposit_too_sparse] Ore density too low for mining lasers");
+    expect(result).toContain("Hint:");
+    expect(result.toLowerCase()).toContain("density");
+    expect(result).toContain("do NOT retry the same node");
+  });
+});
+
+describe("addErrorHint — v0.467.0 skipped_unfunded", () => {
+  it("tells the agent to pick a different origin station and not retry immediately", () => {
+    const result = addErrorHint("[skipped_unfunded] Passenger skipped: origin citizen fund insufficient");
+    expect(result).toContain("Hint:");
+    expect(result.toLowerCase()).toContain("citizen fund");
+    expect(result).toContain("Do NOT retry the same boarding immediately");
+  });
+});
+
+describe("addErrorHint — v0.382.0 stale_cursor", () => {
+  it("tells the agent to re-baseline view_market without the since cursor", () => {
+    const result = addErrorHint("[stale_cursor] since= cursor is too old for this station");
+    expect(result).toContain("Hint:");
+    expect(result).toContain("view_market");
+    expect(result).toContain("since=");
+    expect(result.toLowerCase()).toContain("re-baseline");
+  });
+});
