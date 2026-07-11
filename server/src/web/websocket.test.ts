@@ -11,21 +11,36 @@
 
 import { describe, it, expect } from "bun:test";
 import http from "node:http";
+import type { IncomingMessage } from "node:http";
 import { WebSocket } from "ws";
-import { attachWebSocketServer, getWebSocketClientCount, type WsChannel } from "./websocket.js";
+import {
+  attachWebSocketServer,
+  getWebSocketClientCount,
+  resolveWsRole,
+  type WsChannel,
+} from "./websocket.js";
+import type { AuthAdapter } from "./auth/types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createTestServer(): {
+/** Adapter that grants viewer to everyone — mirrors the "public read" default
+ * these WS channels carry (equivalent to authMiddleware's viewer fallback),
+ * used for the connection/broadcast mechanics tests below which aren't
+ * exercising auth itself. */
+function alwaysViewerAdapter(): AuthAdapter {
+  return { name: "test-viewer", async authenticate() { return null; } };
+}
+
+function createTestServer(authAdapter: AuthAdapter = alwaysViewerAdapter()): {
   server: http.Server;
   broadcast: (channel: WsChannel, event: string, data: unknown) => void;
   close: () => Promise<void>;
   port: () => number;
 } {
   const server = http.createServer();
-  const { broadcast, close: closeWss } = attachWebSocketServer(server);
+  const { broadcast, close: closeWss } = attachWebSocketServer(server, authAdapter);
 
   const closePromise = () =>
     new Promise<void>((resolve) => {
@@ -72,6 +87,92 @@ async function withTestServer(
     await ctx.close();
   }
 }
+
+// ---------------------------------------------------------------------------
+// resolveWsRole — auth resolution for the raw upgrade request (audit #112b)
+// Fast, non-flaky unit tests (no live socket loopback needed), always run.
+// ---------------------------------------------------------------------------
+
+function fakeUpgradeRequest(headers: Record<string, string> = {}, remoteAddress = "203.0.113.5"): IncomingMessage {
+  return {
+    headers,
+    socket: { remoteAddress },
+  } as unknown as IncomingMessage;
+}
+
+function adapterReturning(result: { role: "admin" | "viewer"; identity?: string } | null): AuthAdapter {
+  return { name: "test", async authenticate() { return result; } };
+}
+
+function throwingAdapter(): AuthAdapter {
+  return {
+    name: "test-throwing",
+    async authenticate() {
+      throw new Error("adapter exploded");
+    },
+  };
+}
+
+describe("resolveWsRole", () => {
+  it("resolves 'admin' when the adapter grants admin", async () => {
+    const role = await resolveWsRole(adapterReturning({ role: "admin", identity: "x" }), fakeUpgradeRequest());
+    expect(role).toBe("admin");
+  });
+
+  it("resolves 'viewer' when the adapter grants viewer", async () => {
+    const role = await resolveWsRole(adapterReturning({ role: "viewer" }), fakeUpgradeRequest());
+    expect(role).toBe("viewer");
+  });
+
+  it("defaults to 'viewer' when the adapter returns null (matches authMiddleware's public-read default)", async () => {
+    const role = await resolveWsRole(adapterReturning(null), fakeUpgradeRequest());
+    expect(role).toBe("viewer");
+  });
+
+  it("rejects (returns null) when the adapter throws — fail-closed", async () => {
+    const role = await resolveWsRole(throwingAdapter(), fakeUpgradeRequest());
+    expect(role).toBeNull();
+  });
+
+  it("passes request headers through to the adapter (e.g. CF JWT header)", async () => {
+    let seenHeader: unknown;
+    const adapter: AuthAdapter = {
+      name: "header-check",
+      async authenticate(req) {
+        seenHeader = req.headers["cf-access-jwt-assertion"];
+        return null;
+      },
+    };
+    await resolveWsRole(adapter, fakeUpgradeRequest({ "cf-access-jwt-assertion": "abc.def.ghi" }));
+    expect(seenHeader).toBe("abc.def.ghi");
+  });
+
+  it("exposes the socket's remoteAddress as req.ip for IP-based adapters", async () => {
+    let seenIp: unknown;
+    const adapter: AuthAdapter = {
+      name: "ip-check",
+      async authenticate(req) {
+        seenIp = req.ip;
+        return null;
+      },
+    };
+    await resolveWsRole(adapter, fakeUpgradeRequest({}, "192.168.1.42"));
+    expect(seenIp).toBe("192.168.1.42");
+  });
+
+  it("req.get() reads headers case-insensitively (Host header)", async () => {
+    let seenHost: unknown;
+    const adapter: AuthAdapter = {
+      name: "host-check",
+      async authenticate(req) {
+        seenHost = req.get("host");
+        return null;
+      },
+    };
+    await resolveWsRole(adapter, fakeUpgradeRequest({ host: "gantry.example.com" }));
+    expect(seenHost).toBe("gantry.example.com");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Connection

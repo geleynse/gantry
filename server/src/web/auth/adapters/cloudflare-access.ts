@@ -5,7 +5,7 @@ const log = createLogger("auth:cf");
 
 interface CfAccessConfig {
   teamDomain: string; // e.g. "yourteam.cloudflareaccess.com"
-  audience?: string; // Application Audience (AUD) tag (optional)
+  audience: string; // Application Audience (AUD) tag — required, see construction check below
 }
 
 interface CfJwk {
@@ -52,6 +52,17 @@ function base64urlDecode(str: string): Buffer {
 export function createCloudflareAccessAdapter(config: CfAccessConfig): AuthAdapter {
   if (!config.teamDomain) {
     throw new Error("[auth:cloudflare-access] teamDomain is required");
+  }
+  if (!config.audience) {
+    // Without a pinned audience, ANY validly-signed JWT from this Cloudflare
+    // Zero Trust team domain would be accepted — including JWTs minted for a
+    // completely different application under the same team. Issuer/signature/
+    // expiry checks alone do not prevent this cross-app token confusion.
+    throw new Error(
+      "[auth:cloudflare-access] audience is required (set the Application Audience/AUD tag " +
+        "from the Cloudflare Zero Trust dashboard). Omitting it lets a valid JWT for a " +
+        "different app under the same team domain be accepted as Gantry admin.",
+    );
   }
 
   // Per-instance key cache
@@ -144,10 +155,10 @@ export function createCloudflareAccessAdapter(config: CfAccessConfig): AuthAdapt
       return null; // Issuer mismatch or missing
     }
 
-    // Validate audience
+    // Validate audience (aud can be a single string or an array of strings per JWT spec)
     const aud = payload.aud;
     const audArray = Array.isArray(aud) ? aud : [aud];
-    if (config.audience && !audArray.includes(config.audience)) {
+    if (!audArray.includes(config.audience)) {
       log.warn(`JWT audience mismatch: expected ${config.audience}, got ${JSON.stringify(aud)}`);
       return null;
     }

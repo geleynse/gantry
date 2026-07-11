@@ -33,6 +33,7 @@ const ADMIN_ONLY_PREFIXES = [
   "/api/fleet/broadcast",   // broadcast send + history
   "/api/credentials",       // credential management (also has explicit checks)
   "/api/outbound",          // outbound review queue (pending model outputs)
+  "/api/server",            // server logs/stream (e.g. /api/server/logs/stream) — operational data, not world-readable
 ];
 
 // Per-agent admin-only paths. The /api/agents prefix is shared between

@@ -194,6 +194,21 @@ describe("isAdminRoute", () => {
   it("GET /api/fleet/broadcast/history IS admin", () => {
     expect(isAdminRoute(makeReq({ method: "GET", path: "/api/fleet/broadcast/history" }))).toBe(true);
   });
+  // Regression: /api/server/logs/stream was viewer-readable (audit #112a, 2026-07-09)
+  it("GET /api/server/logs/stream IS admin (live server console log)", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/server/logs/stream" }))).toBe(true);
+  });
+  it("GET /api/server (bare prefix) IS admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/server" }))).toBe(true);
+  });
+  // Prefix-collision guard: /api/server-status is a sibling path, not nested
+  // under /api/server, and must remain viewer-readable.
+  it("GET /api/server-status is NOT admin (sibling route, not under /api/server)", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/server-status" }))).toBe(false);
+  });
+  it("GET /api/server-status/stream is NOT admin", () => {
+    expect(isAdminRoute(makeReq({ method: "GET", path: "/api/server-status/stream" }))).toBe(false);
+  });
   // Per-agent admin patterns
   it("GET /api/agents/sable-thorn/inject IS admin (drains pending directive)", () => {
     expect(isAdminRoute(makeReq({ method: "GET", path: "/api/agents/sable-thorn/inject" }))).toBe(true);

@@ -15,9 +15,73 @@
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Socket } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
+import type { Request } from "express";
 import { createLogger } from "../lib/logger.js";
+import type { AuthAdapter, AuthRole } from "./auth/types.js";
 
 const log = createLogger("websocket");
+
+/**
+ * Build a minimal Express-`Request`-shaped shim from a raw HTTP upgrade
+ * request so the SAME AuthAdapter used by the HTTP `authMiddleware` can
+ * resolve a role for a WebSocket upgrade, instead of the upgrade handler
+ * running no auth at all.
+ *
+ * LIMITATION: `.ip` is read directly from the socket's peer address
+ * (`request.socket.remoteAddress`), NOT through Express's `trust proxy`
+ * X-Forwarded-For resolution. Behind a reverse proxy with `trust proxy`
+ * enabled, ordinary HTTP requests see the real client IP; this shim will
+ * instead see the proxy's own address. This only affects adapters that key
+ * off `req.ip` (`local-network`, `loopback`, and the local-network leg of
+ * `layered`) — header-based adapters (`cloudflare-access`, `token`,
+ * `domain`) read `req.headers`/`req.get()`, which this shim reproduces
+ * faithfully from the raw request and are unaffected.
+ */
+function buildAuthRequestShim(request: IncomingMessage): Request {
+  const headers = request.headers;
+  return {
+    headers,
+    ip: request.socket?.remoteAddress,
+    socket: request.socket,
+    get(name: string) {
+      const v = headers[name.toLowerCase()];
+      return Array.isArray(v) ? v[0] : v;
+    },
+  } as unknown as Request;
+}
+
+/**
+ * Resolve a role for a raw WS upgrade request using the given auth adapter.
+ * Mirrors `authMiddleware`'s semantics for non-admin/viewer-level data:
+ *   - adapter resolves a role → that role (admin or viewer)
+ *   - adapter returns null (unauthenticated) → viewer (matches HTTP: viewer
+ *     is the public default for read-only, non-admin-prefix data, which is
+ *     exactly what these WS channels carry)
+ *   - adapter throws → null, meaning "reject" (fail-closed, matching
+ *     authMiddleware's 503 fail-closed behavior on adapter errors)
+ *   - adapter returns some other truthy-but-invalid role (misbehaving custom
+ *     adapter) → null, reject
+ * Exported for unit testing without a live socket.
+ */
+export async function resolveWsRole(
+  authAdapter: AuthAdapter,
+  request: IncomingMessage,
+): Promise<AuthRole | null> {
+  try {
+    const result = await authAdapter.authenticate(buildAuthRequestShim(request));
+    const role = result?.role ?? "viewer";
+    if (role !== "admin" && role !== "viewer") {
+      log.warn("WS auth adapter returned an unrecognized role — rejecting", { role });
+      return null;
+    }
+    return role;
+  } catch (err) {
+    log.warn("WS auth adapter threw during upgrade — rejecting (fail-closed)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
 
 export type WsChannel = "fleet-status" | "agent-events" | "tool-calls";
 
@@ -48,7 +112,10 @@ const clients = new Map<WebSocket, ClientState>();
  * Attach a WebSocket server to an existing HTTP server.
  * Returns a broadcast function for pushing events to subscribed clients.
  */
-export function attachWebSocketServer(httpServer: HttpServer): {
+export function attachWebSocketServer(
+  httpServer: HttpServer,
+  authAdapter: AuthAdapter,
+): {
   broadcast: (channel: WsChannel, event: string, data: unknown) => void;
   close: () => void;
 } {
@@ -60,9 +127,27 @@ export function attachWebSocketServer(httpServer: HttpServer): {
       return;
     }
 
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request);
-    });
+    resolveWsRole(authAdapter, request)
+      .then((role) => {
+        if (role === null) {
+          log.debug("WS upgrade rejected (auth failed)");
+          socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit("connection", ws, request);
+        });
+      })
+      .catch((err) => {
+        // Defensive: resolveWsRole already catches adapter errors internally
+        // and returns null; this only guards against something unexpected
+        // (e.g. buildAuthRequestShim throwing synchronously).
+        log.error("WS upgrade auth resolution failed unexpectedly", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        socket.destroy();
+      });
   };
 
   httpServer.on("upgrade", upgradeHandler);

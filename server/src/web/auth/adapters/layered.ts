@@ -37,9 +37,14 @@ export function createLayeredAdapter(config?: LayeredConfig): AuthAdapter {
   // Create CF adapter if configured (optional)
   let cfAdapter: AuthAdapter | null = null;
   if (config?.cloudflareTeamDomain) {
+    // createCloudflareAccessAdapter throws if audience is empty/missing (see
+    // cloudflare-access.ts) — the `?? ""` here just satisfies the type; the
+    // constructor is the one that enforces and reports the requirement, so
+    // gantry.json configs missing "cloudflareAudience" fail loudly at startup
+    // instead of silently accepting any app's JWT under the team domain.
     cfAdapter = createCloudflareAccessAdapter({
       teamDomain: config.cloudflareTeamDomain,
-      audience: config.cloudflareAudience,
+      audience: config.cloudflareAudience ?? "",
     });
   }
 
