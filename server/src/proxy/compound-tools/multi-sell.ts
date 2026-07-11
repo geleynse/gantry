@@ -10,7 +10,7 @@ import { getItemDisplayName } from "../../lib/utils.js";
 import type { SellEntry } from "../sell-log.js";
 import type { CompoundToolDeps, CompoundResult, MultiSellItem } from "./types.js";
 import { stripPendingFields, refreshStatusOrFlag } from "./utils.js";
-import { parseGetStatusText } from "../http-game-client-v2.js";
+import { parseGetStatusText, itemNameToId } from "../game-text-parser.js";
 
 const log = createLogger("compound-tools");
 
@@ -146,10 +146,10 @@ export async function multiSell(
   // Resolve "ALL" quantities from cargo cache before selling.
   // refreshStatus parses status-dashboard cargo as { name, quantity } (no
   // item_id), so key the map by item_id when present else by a name→id slug
-  // (matches routine-utils.itemNameToId / the inverse of getItemDisplayName).
+  // (uses the shared itemNameToId / the inverse of getItemDisplayName).
   // Without this, every entry collapsed to an `undefined` key and ALL/unspecified
   // quantities always failed with "No <item> in cargo to sell".
-  const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const slug = itemNameToId;
   const cargo = (cachedStatus?.data?.ship as any)?.cargo as Array<{ item_id?: string; name?: string; quantity: number }> | undefined;
   const cargoMap = new Map(
     cargo?.flatMap(c => {
