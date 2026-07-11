@@ -57,13 +57,38 @@ function andWhere(where: string, clause: string): string {
   return where ? `${where} AND ${clause}` : `WHERE ${clause}`;
 }
 
+/**
+ * Returns an ISO-8601 UTC cutoff timestamp `hours` hours before now, matching
+ * the exact format `turns.started_at` is stored in (`new Date(...).toISOString()`
+ * in turn-ingestor.ts — e.g. "2026-07-11T21:34:09.000Z").
+ *
+ * Floors "now" to the whole second (matching SQLite's `datetime('now')`, which
+ * truncates fractional seconds) so this is byte-for-byte comparable to the old
+ * `datetime(started_at) >= datetime('now', '-N hours')` predicate — same rows,
+ * every time — while staying a bare column comparison the query planner can
+ * satisfy with an index (see idx_turns_started_at / idx_turns_agent_started_at).
+ *
+ * IMPORTANT: do not swap this for a raw column comparison against SQLite's own
+ * `datetime('now', ...)` (space-separated, no 'T') — since started_at has a 'T'
+ * separator, lexical comparison against a space-separated cutoff is WRONG for
+ * any row sharing the cutoff's calendar date (ASCII 'T' > ' ', so same-day rows
+ * spuriously satisfy `>=` regardless of time-of-day). Confirmed via EXPLAIN
+ * QUERY PLAN + row-count reproduction during the #115 fix.
+ */
+function isoHoursAgo(hours: number): string {
+  const nowFlooredMs = Math.floor(Date.now() / 1000) * 1000;
+  return new Date(nowFlooredMs - hours * 3_600_000).toISOString();
+}
+
 function buildTimeClause(filter: TimeFilter, tableAlias: string = 't'): { where: string; params: SQLQueryBindings[] } {
   const clauses: string[] = [];
   const params: SQLQueryBindings[] = [];
 
   if (filter.hours != null && filter.hours > 0) {
-    clauses.push(`datetime(${tableAlias}.started_at) >= datetime('now', ?)`);
-    params.push(`-${filter.hours} hours`);
+    // Bare column comparison — lets SQLite use idx_turns_started_at /
+    // idx_turns_agent_started_at instead of a full scan (was: datetime(t.started_at) >= ...).
+    clauses.push(`${tableAlias}.started_at >= ?`);
+    params.push(isoHoursAgo(filter.hours));
   }
   if (filter.agent) {
     clauses.push(`${tableAlias}.agent = ?`);
@@ -582,7 +607,13 @@ export function getPnlSummary(filter: TimeFilter): PnlResponse {
   const clauses: string[] = [];
   const params: SQLQueryBindings[] = [];
   if (filter.hours != null && filter.hours > 0) {
-    clauses.push(`datetime(created_at) >= datetime('now', ?)`);
+    // Bare column vs. datetime('now', ?) — lets SQLite use idx_action_log_time.
+    // Safe here (unlike turns.started_at) because agent_action_log.created_at
+    // is never set explicitly on insert (see action-log-parser.ts); it always
+    // takes the schema default `datetime('now')`, i.e. already in the same
+    // space-separated canonical format datetime('now', ?) produces — same
+    // pattern already used in web/routes/economy.ts's leaderboard query.
+    clauses.push(`created_at >= datetime('now', ?)`);
     params.push(`-${filter.hours} hours`);
   }
   if (filter.agent) {
@@ -753,12 +784,17 @@ export function getSessionPnl(agentName?: string, limit = 20): SessionPnl[] {
   }>;
 
   const sessions: SessionPnl[] = [];
+  // Bare created_at column vs. datetime(?) — lets SQLite use idx_action_log_time.
+  // Safe: both agent_action_log.created_at and the bound session_handoffs.created_at
+  // values come from the same schema default (`datetime('now')`), so they're
+  // already in identical canonical (space-separated) format; datetime(?) here
+  // is a no-op format-wise and only guards against any literal that isn't.
   const breakdownStmt = db.prepare(`
     SELECT action_type, SUM(COALESCE(credits_delta, 0)) AS total_delta, COUNT(*) AS count
     FROM agent_action_log
     WHERE agent = ?
-      AND datetime(created_at) > datetime(?)
-      AND datetime(created_at) <= datetime(?)
+      AND created_at > datetime(?)
+      AND created_at <= datetime(?)
     GROUP BY action_type
     ORDER BY total_delta DESC
   `);
@@ -888,15 +924,19 @@ export interface AgentTrail {
 export function getAgentTrails(hours = 24, limit = 10): AgentTrail[] {
   const safeHours = Math.max(1, Math.min(8760, Number(hours) || 24));
   const db = getDb();
+  // Bare t.started_at vs. a precomputed ISO cutoff — lets SQLite use
+  // idx_turns_started_at (was: datetime(t.started_at) >= datetime('now', ...)).
+  // See isoHoursAgo() for why this must be an ISO-format literal, not
+  // datetime('now', ...)'s space-separated output.
   const rows = db.prepare(`
     SELECT gs.agent, gs.system, MAX(t.started_at) as last_seen
     FROM game_snapshots gs
     JOIN turns t ON gs.turn_id = t.id
-    WHERE datetime(t.started_at) >= datetime('now', '-' || ? || ' hours')
+    WHERE t.started_at >= ?
       AND gs.system IS NOT NULL AND gs.system != ''
     GROUP BY gs.agent, gs.system
     ORDER BY gs.agent, last_seen DESC
-  `).all(safeHours) as Array<{ agent: string; system: string; last_seen: string }>;
+  `).all(isoHoursAgo(safeHours)) as Array<{ agent: string; system: string; last_seen: string }>;
 
   const byAgent: Record<string, string[]> = {};
   for (const row of rows) {

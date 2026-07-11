@@ -12,6 +12,7 @@ import {
   getSessionPnl,
   getExploredSystems,
   getPnlSummary,
+  getAgentTrails,
 } from './analytics-query.js';
 
 function insertTurn(agent: string, turnNumber: number, startedAt: string, opts: {
@@ -432,15 +433,27 @@ describe('analytics-query', () => {
     });
 
     it('includes action breakdown for the session window', () => {
-      insertHandoff('drifter-gale', 10000, '2026-03-01T10:00:00Z');
-      insertHandoff('drifter-gale', 13500, '2026-03-01T12:00:00Z');
+      // NOTE: session_handoffs.created_at and agent_action_log.created_at are
+      // never set explicitly by application code (see handoff.ts /
+      // action-log-parser.ts) — both always take the schema default
+      // `datetime('now')`, i.e. SQLite's own canonical "YYYY-MM-DD HH:MM:SS"
+      // format (space separator, no 'T', no fractional seconds, no 'Z').
+      // Using that real format here (not a JS toISOString() string) matters:
+      // getSessionPnl's breakdown query compares the bare `created_at` column
+      // against `datetime(?)`-normalized bounds to let SQLite use
+      // idx_action_log_time — which is only correct when the column is
+      // already in datetime()'s own canonical format (see analytics-query.ts
+      // comments on breakdownStmt / isoHoursAgo for the format trap this
+      // guards against).
+      insertHandoff('drifter-gale', 10000, '2026-03-01 10:00:00');
+      insertHandoff('drifter-gale', 13500, '2026-03-01 12:00:00');
 
       // Actions inside the window
-      insertActionLog('drifter-gale', 'sell', 2000, '2026-03-01T10:30:00Z');
-      insertActionLog('drifter-gale', 'sell', 1500, '2026-03-01T11:00:00Z');
-      insertActionLog('drifter-gale', 'buy', -500, '2026-03-01T11:30:00Z');
+      insertActionLog('drifter-gale', 'sell', 2000, '2026-03-01 10:30:00');
+      insertActionLog('drifter-gale', 'sell', 1500, '2026-03-01 11:00:00');
+      insertActionLog('drifter-gale', 'buy', -500, '2026-03-01 11:30:00');
       // Action outside the window (before sessionStart) — should be excluded
-      insertActionLog('drifter-gale', 'sell', 9999, '2026-03-01T09:00:00Z');
+      insertActionLog('drifter-gale', 'sell', 9999, '2026-03-01 09:00:00');
 
       const result = getSessionPnl('drifter-gale');
       expect(result).toHaveLength(1);
@@ -698,6 +711,125 @@ describe('analytics-query', () => {
       const fuel = result.topCosts.find(r => r.item === 'Fuel');
       expect(fuel).toBeDefined();
       expect(fuel!.totalCredits).toBe(2000);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #115 regression guards: hours-filter queries must use an index (not a full
+  // scan) AND must still return exactly the same rows the old
+  // `datetime(column) >= datetime('now', ...)` predicate returned.
+  //
+  // The tricky failure mode this guards against: turns.started_at is stored as
+  // a full ISO-8601 string with a 'T' separator (new Date().toISOString() in
+  // turn-ingestor.ts), while SQLite's own datetime('now', ...) output uses a
+  // space separator. Comparing the raw column against that space-separated
+  // form directly is WRONG — ASCII 'T' (0x54) > ' ' (0x20), so any row sharing
+  // the cutoff's calendar date spuriously satisfies `>=` regardless of
+  // time-of-day. These tests deliberately put rows and cutoffs on the SAME
+  // calendar date — the exact shape that stayed silent for the 24h-window
+  // tests above (see 'filters by 24 hour range correctly') because a
+  // 24h-aligned cutoff always lands on the previous calendar date, masking
+  // the bug by lucky date-prefix disambiguation.
+  // ---------------------------------------------------------------------------
+  describe('#115: hours-filter index usage + same-day correctness', () => {
+    it('excludes a same-calendar-date row that is outside the hours window', () => {
+      const now = new Date();
+      // Both timestamps are same-day as long as the test doesn't run in the
+      // last few hours before UTC midnight — an accepted trade-off already
+      // used by the pre-existing 'filters by N hour range' tests above.
+      const within1h = new Date(now.getTime() - 20 * 60 * 1000).toISOString(); // 20 min ago
+      const outside1hSameDay = new Date(now.getTime() - 3 * 60 * 60 * 1000).toISOString(); // 3h ago, same day
+
+      insertTurn('drifter-gale', 1, within1h, { cost: 0.11 });
+      insertTurn('drifter-gale', 2, outside1hSameDay, { cost: 0.22 });
+
+      const data = getCostOverTime({ hours: 1 });
+      expect(data).toHaveLength(1);
+      expect(data[0].cost).toBeCloseTo(0.11);
+    });
+
+    it('matches results across all hours-filtered analytics queries for a same-day dataset', () => {
+      const now = new Date();
+      const within6h = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString(); // 2h ago
+      const outside6hSameDay = new Date(now.getTime() - 7 * 60 * 60 * 1000).toISOString(); // 7h ago
+      const outside6hPriorDay = new Date(now.getTime() - 30 * 60 * 60 * 1000).toISOString(); // 30h ago
+
+      // getAgentComparison / getEfficiencyMetrics / getExpensiveTurns / getAgentTurns
+      // all share buildTimeClause — one dataset, assert each independently.
+      insertTurn('rust-vane', 1, within6h, { cost: 0.05 });
+      insertTurn('rust-vane', 2, outside6hSameDay, { cost: 0.50 });
+      insertTurn('rust-vane', 3, outside6hPriorDay, { cost: 5.00 });
+
+      expect(getCostOverTime({ hours: 6 })).toHaveLength(1);
+      expect(getExpensiveTurns({ hours: 6 })).toHaveLength(1);
+      expect(getAgentTurns('rust-vane', { hours: 6, limit: 10, offset: 0 }).total).toBe(1);
+
+      const cmp = getAgentComparison({ hours: 6 }).find(a => a.agent === 'rust-vane');
+      expect(cmp?.turnCount).toBe(1);
+
+      const eff = getEfficiencyMetrics({ hours: 6 }).find(a => a.agent === 'rust-vane');
+      expect(eff?.totalCost).toBeCloseTo(0.05);
+    });
+
+    it('getAgentTrails excludes a same-day row outside the hours window', () => {
+      const now = new Date();
+      const within2h = new Date(now.getTime() - 30 * 60 * 1000).toISOString(); // 30 min ago
+      const outside2hSameDay = new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString(); // 4h ago, same day
+
+      const t1 = insertTurn('lumen-shoal', 1, within2h);
+      const t2 = insertTurn('lumen-shoal', 2, outside2hSameDay);
+      insertSnapshot(t1, 'lumen-shoal', { system: 'Vega' });
+      insertSnapshot(t2, 'lumen-shoal', { system: 'Krynn' });
+
+      const trails = getAgentTrails(2, 10);
+      const trail = trails.find(t => t.agent === 'lumen-shoal');
+      expect(trail).toBeDefined();
+      expect(trail!.systems).toEqual(['Vega']);
+    });
+
+    it('uses an index (not a full scan) for the buildTimeClause hours predicate', () => {
+      const db = getDb();
+      // Seed enough rows that SQLite's planner would consider a scan if the
+      // index weren't usable (tiny tables sometimes get scanned regardless).
+      for (let i = 0; i < 500; i++) {
+        insertTurn('drifter-gale', i, new Date(Date.now() - i * 60_000).toISOString());
+      }
+      const plan = db.query(`
+        EXPLAIN QUERY PLAN
+        SELECT agent, started_at, cost_usd, iterations, duration_ms, input_tokens, output_tokens
+        FROM turns t
+        WHERE t.started_at >= ? AND t.agent != 'overseer'
+        ORDER BY t.started_at ASC
+      `).all(new Date(Date.now() - 3_600_000).toISOString()) as Array<{ detail: string }>;
+
+      const detail = plan.map(p => p.detail).join(' | ');
+      expect(detail).not.toMatch(/SCAN t\b/);
+      expect(detail).toMatch(/USING (COVERING )?INDEX idx_turns/);
+    });
+
+    it('uses an index (not a full scan) for a plain created_at-filtered agent_action_log query', () => {
+      // getPnlSummary's own agent-grouped query independently chooses to scan
+      // via idx_action_log_agent (for GROUP BY agent, regardless of this fix —
+      // verified via EXPLAIN QUERY PLAN during the #115 investigation), so it
+      // isn't a useful place to assert the WHERE-clause index win. The
+      // topRevenue/topCosts queries (GROUP BY item, no index on item) are the
+      // ones that actually benefit: this asserts that underlying WHERE-clause
+      // win directly against the created_at predicate in isolation.
+      const db = getDb();
+      for (let i = 0; i < 500; i++) {
+        db.prepare(`
+          INSERT INTO agent_action_log (agent, action_type, credits_delta, created_at)
+          VALUES (?, ?, ?, datetime('now', '-' || ? || ' minutes'))
+        `).run('rust-vane', 'sell', 100, i);
+      }
+      const plan = db.query(`
+        EXPLAIN QUERY PLAN
+        SELECT * FROM agent_action_log WHERE created_at >= datetime('now', ?)
+      `).all('-24 hours') as Array<{ detail: string }>;
+
+      const detail = plan.map(p => p.detail).join(' | ');
+      expect(detail).not.toMatch(/^SCAN agent_action_log$/);
+      expect(detail).toMatch(/SEARCH agent_action_log USING INDEX idx_action_log_time/);
     });
   });
 });
