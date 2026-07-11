@@ -143,3 +143,160 @@ describe('log-streamer file tailing (via FileWatcher)', () => {
     watcher.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Multi-subscriber fan-out (bug #116)
+//
+// startTailing/stopTailing keep a SINGLE shared tail per agent, fanned out to
+// N subscribers. Opening a second viewer for an agent that's already being
+// tailed must NOT disturb the first viewer, and the underlying fs.watchFile
+// tail must only start on the first subscriber and stop on the last.
+// ---------------------------------------------------------------------------
+
+import { setFleetDirForTesting } from '../config.js';
+import {
+  startTailing,
+  stopTailing,
+  stopAllTailers,
+  getActiveTailers,
+  getSubscriberCount,
+} from './log-streamer.js';
+
+/** Poll `check()` until it returns true or `timeoutMs` elapses. */
+async function waitFor(check: () => boolean, timeoutMs = 3000, intervalMs = 100): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  if (!check()) {
+    throw new Error(`waitFor: condition not met within ${timeoutMs}ms`);
+  }
+}
+
+describe('log-streamer multi-subscriber fan-out', () => {
+  let fleetDir: string;
+  let agentName: string;
+  let logPath: string;
+
+  beforeEach(() => {
+    fleetDir = join(tmpdir(), 'log-streamer-fanout-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+    mkdirSync(join(fleetDir, 'logs'), { recursive: true });
+    setFleetDirForTesting(fleetDir);
+    agentName = 'test-agent-' + Math.random().toString(36).slice(2);
+    logPath = join(fleetDir, 'logs', `${agentName}.log`);
+    writeFileSync(logPath, '');
+  });
+
+  afterEach(() => {
+    stopAllTailers();
+    rmSync(fleetDir, { recursive: true, force: true });
+  });
+
+  it('fans a single line out to two subscribers on the same agent', async () => {
+    const received1: string[] = [];
+    const received2: string[] = [];
+    const cb1 = (line: string) => received1.push(line);
+    const cb2 = (line: string) => received2.push(line);
+
+    await startTailing(agentName, cb1);
+    await startTailing(agentName, cb2);
+
+    // Only one underlying tail should exist for the agent, shared by both.
+    expect(getActiveTailers()).toEqual([agentName]);
+    expect(getSubscriberCount(agentName)).toBe(2);
+
+    appendFileSync(logPath, 'hello from the fleet\n');
+
+    await waitFor(() => received1.length > 0 && received2.length > 0);
+
+    expect(received1).toContain('hello from the fleet');
+    expect(received2).toContain('hello from the fleet');
+
+    stopTailing(agentName, cb1);
+    stopTailing(agentName, cb2);
+  });
+
+  it('does not stop the tail when one of two subscribers closes', async () => {
+    const received1: string[] = [];
+    const received2: string[] = [];
+    const cb1 = (line: string) => received1.push(line);
+    const cb2 = (line: string) => received2.push(line);
+
+    await startTailing(agentName, cb1);
+    await startTailing(agentName, cb2);
+
+    // First viewer disconnects.
+    stopTailing(agentName, cb1);
+
+    // The tail must still be running for the remaining viewer.
+    expect(getActiveTailers()).toEqual([agentName]);
+    expect(getSubscriberCount(agentName)).toBe(1);
+
+    appendFileSync(logPath, 'still streaming\n');
+
+    await waitFor(() => received2.length > 0);
+
+    expect(received2).toContain('still streaming');
+    // The departed subscriber must not have been corrupted/re-invoked.
+    expect(received1).toEqual([]);
+
+    stopTailing(agentName, cb2);
+  });
+
+  it('stops the tail only after the last subscriber leaves', async () => {
+    const cb1 = () => {};
+    const cb2 = () => {};
+
+    await startTailing(agentName, cb1);
+    await startTailing(agentName, cb2);
+    expect(getActiveTailers()).toEqual([agentName]);
+
+    stopTailing(agentName, cb1);
+    expect(getActiveTailers()).toEqual([agentName]); // one subscriber remains
+
+    stopTailing(agentName, cb2);
+    expect(getActiveTailers()).toEqual([]); // last subscriber left — tail stopped
+    expect(getSubscriberCount(agentName)).toBe(0);
+  });
+
+  it('does not leak a subscriber slot on abrupt/duplicate disconnect', async () => {
+    const cb = () => {};
+
+    await startTailing(agentName, cb);
+    expect(getSubscriberCount(agentName)).toBe(1);
+
+    // Simulate an SSE 'close' firing twice (e.g. abrupt disconnect racing
+    // with an explicit stop) — must be idempotent, no negative refcount,
+    // no crash, and the tail must still be fully torn down.
+    stopTailing(agentName, cb);
+    stopTailing(agentName, cb);
+
+    expect(getSubscriberCount(agentName)).toBe(0);
+    expect(getActiveTailers()).toEqual([]);
+
+    // A fresh subscriber afterwards must start a brand-new tail cleanly —
+    // proof there's no orphaned tailer/poller left over from the old one.
+    const received: string[] = [];
+    await startTailing(agentName, (line: string) => received.push(line));
+    expect(getSubscriberCount(agentName)).toBe(1);
+
+    appendFileSync(logPath, 'after leak check\n');
+    await waitFor(() => received.length > 0);
+    expect(received).toContain('after leak check');
+  });
+
+  it('handles a viewer disconnecting before the first subscriber for an agent finishes registering', async () => {
+    const cb = () => {};
+
+    // Start and immediately stop, without awaiting — mirrors an SSE client
+    // that disconnects while startTailing() is still resolving its initial
+    // stat() call. Must not throw and must not leave the tail dangling.
+    const pending = startTailing(agentName, cb);
+    stopTailing(agentName, cb);
+    await pending;
+
+    expect(getActiveTailers()).toEqual([]);
+    expect(getSubscriberCount(agentName)).toBe(0);
+  });
+});

@@ -144,13 +144,20 @@ router.get('/agent-stream/:name', (req, res) => {
 
   initSSE(req, res);
 
-  startTailing(name, (line: string) => {
+  // Named (non-inline) so the exact same reference can be handed to
+  // stopTailing() on disconnect — startTailing() fans a single shared tail
+  // out to every subscribed viewer, and stopTailing(name, onLine) must
+  // remove only THIS viewer's callback, not tear down the tail for others
+  // still watching the same agent.
+  const onLine = (line: string) => {
     writeSSE(res, 'agent_output', {
       agent: name,
       line,
       timestamp: new Date().toISOString(),
     });
-  }).catch((err: unknown) => {
+  };
+
+  startTailing(name, onLine).catch((err: unknown) => {
     // Non-fatal — log server-side and let the client reconnect
     const msg = err instanceof Error ? err.message : String(err);
     log.error(`Tailing failed for ${name}`, { error: msg });
@@ -158,7 +165,7 @@ router.get('/agent-stream/:name', (req, res) => {
   });
 
   req.on('close', () => {
-    stopTailing(name);
+    stopTailing(name, onLine);
     res.end();
   });
 });
