@@ -8,7 +8,7 @@ MCP proxy and live dashboard for Space Molt AI fleets. This file provides contex
 bun install              # install dependencies
 bun run build            # build server + dashboard
 bun run dev              # dev mode with hot reload
-bun test                 # run ~4200 tests
+bun test                 # run ~5300 tests
 ```
 
 Dashboard at `http://localhost:3100`.
@@ -60,7 +60,7 @@ Single Express process on Bun. All data in SQLite (`fleet.db`).
 
 ## Key Concepts
 
-- **Compound tools**: 8 tools (batch_mine, travel_to, jump_route, multi_sell, scan_and_attack, loot_wrecks, battle_readiness, flee) that handle full multi-step game sequences with tick waits and error recovery
+- **Compound tools**: 11 tools (batch_mine, travel_to, jump_route, multi_sell, scan_and_attack, battle_readiness, loot_wrecks, flee, get_craft_profitability, craft_path_to, passenger_run) that handle full multi-step game sequences with tick waits and error recovery
 - **Proxy pipeline**: Request guardrails, injections (fleet orders, battle state, events), decontamination (strips hallucination keywords), and agent tracking
 - **v2 action-dispatch**: All game tools consolidated into 6 namespaces using `spacemolt(action="...")` syntax
 - **Dependency injection**: Each proxy module defines a `*Deps` interface — no global mutable state
@@ -79,9 +79,9 @@ Single Express process on Bun. All data in SQLite (`fleet.db`).
 
 1. **Server changes**: Edit `server/src/`, run `bun run dev` (auto-rebuilds)
 2. **Frontend changes**: Edit `server/src/app/` or `server/src/components/`, run `bun run build:client`
-3. **New API route**: Copy existing route in `server/src/web/routes/`, register in `route-config.ts`
-4. **New compound tool**: Create in `server/src/proxy/compound-tools/`, export from `index.ts`
-5. **New routine**: Create in `server/src/routines/`, add to `ROUTINE_REGISTRY` in `routine-runner.ts`
+3. **New API route**: Copy existing route in `server/src/web/routes/`, add a `router.use(...)` in the `createApiRoutes()` factory in `server/src/web/routes/api-routes.ts`
+4. **New compound tool**: Create in `server/src/proxy/compound-tools/`, export from `index.ts`, register in the `buildCompoundActions` dispatch table in `tool-registry.ts`
+5. **New routine**: Create in `server/src/routines/`, add it to the `BUILTIN_ROUTINES` array in `routine-runner.ts` (populates `ROUTINE_REGISTRY`)
 
 ## Code Conventions
 

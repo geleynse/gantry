@@ -11,16 +11,16 @@ cd gantry/server
 bun install
 bun run build          # server (esbuild) + dashboard (Next.js)
 bun run dev            # dev mode with watch
-bun test               # ~4200 tests
+bun test               # ~5300 tests
 ```
 
 Dashboard at `http://localhost:3100`. Config at `$FLEET_DIR/gantry.json` — see [docs/configuration.md](../docs/configuration.md).
 
 ### Common First Tasks
 
-- **Add a new API route:** Copy an existing route in `src/web/routes/`, add to `ROUTE_REGISTRATIONS` in `src/web/route-config.ts`
-- **Add a new compound tool:** Create file in `src/proxy/compound-tools/`, export from `index.ts`, register in `tool-registry.ts`
-- **Add a new routine:** Create in `src/routines/`, add to `ROUTINE_REGISTRY` in `routine-runner.ts`
+- **Add a new API route:** Copy an existing route in `src/web/routes/`, add a `router.use(...)` line in the `createApiRoutes()` factory in `src/web/routes/api-routes.ts`
+- **Add a new compound tool:** Create file in `src/proxy/compound-tools/`, export from `index.ts`, register in the `buildCompoundActions` dispatch table in `tool-registry.ts`
+- **Add a new routine:** Create in `src/routines/`, add it to the `BUILTIN_ROUTINES` array in `routine-runner.ts` (populates `ROUTINE_REGISTRY`)
 - **Modify proxy behavior:** Start in `src/proxy/pipeline.ts` (guardrails/injections) or `passthrough-handler.ts` (tool execution)
 - **Frontend changes:** Edit `src/app/` or `src/components/`, then `bun run build:client`
 
@@ -73,7 +73,7 @@ The MCP proxy is decomposed into focused modules with dependency injection:
 | `passthrough-handler.ts` | Shared `handlePassthrough()` — nav, auto-undock, execute, tick wait, enrichment |
 | `proxy-constants.ts` | STATE_CHANGING_TOOLS, CONTAMINATION_WORDS, response formatting |
 | `pipeline.ts` | Request pipeline: guardrails, injections, decontamination, agent tracking |
-| `compound-tools/` | 8 compound tools: batch_mine, travel_to, jump_route, multi_sell, scan_and_attack, loot_wrecks, battle_readiness, flee |
+| `compound-tools/` | 11 compound tools: batch_mine, travel_to, jump_route, multi_sell, scan_and_attack, battle_readiness, loot_wrecks, flee, get_craft_profitability, craft_path_to, passenger_run |
 | `auth-handlers.ts` | Login/logout handlers shared by v1 and v2 |
 | `cached-queries.ts` | STATUS_SLICE_EXTRACTORS for cached status queries |
 | `doc-tools.ts` | Handler functions for diary/doc/report/search_memory |
@@ -96,7 +96,7 @@ The MCP proxy is decomposed into focused modules with dependency injection:
 bun run build           # build:server (esbuild) + build:client (next build)
 bun run build:server    # server-only esbuild via build.ts
 bun run build:client    # Next.js static export to dist/public/
-bun test                # bun:test (~4200 tests)
+bun test                # bun:test (~5300 tests)
 bun run dev             # bun watch mode (server only)
 
 # Single-binary build (no Bun runtime needed on target)
