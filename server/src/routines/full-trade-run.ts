@@ -165,17 +165,36 @@ async function run(ctx: RoutineContext, params: FullTradeRunParams): Promise<Rou
   const demandItems = extractDemandItems(marketResp.result);
 
   // --- Craft ---
+  // Live POST /craft takes `recipe_id` (string) and `quantity`/`count` (integer)
+  // — there is no `recipe` param, and this call previously sent neither a
+  // recipe nor a valid quantity (`{ count: "ALL" }`), making it a permanent
+  // no-op (see craft-and-sell.ts for the same bug/fix). This routine has no
+  // cargo/materials cache to compute a true "craft everything" count the way
+  // multi-sell.ts resolves ALL against cached cargo quantities (see
+  // compound-tools/multi-sell.ts ~L146-193), so it tries a small fixed set of
+  // generic recipes at quantity 1 each.
+  // ASSUMPTION: recipes=["refine_steel", "refine_copper"] (same defaults as
+  // craft-and-sell.ts DEFAULT_RECIPES) and quantity=1 per call (the schema's
+  // documented default — tool-registry.ts craft schema: "How many to craft
+  // (default 1, max 50)") because a small always-satisfiable request beats
+  // guessing a larger count and having the whole call rejected for
+  // insufficient materials.
+  const CRAFT_RECIPES = ["refine_steel", "refine_copper"];
   const craftPhase = phase("craft");
-  const craftResp = await ctx.client.execute("craft", { count: "ALL" });
-  if(craftResp.result) {
-    // The craft action_result carries the crafted items under `outputs`
-    // (see passthrough-handler waitForActionResult + summarizers.ts craft).
-    // Older shape used `items_crafted`; keep it as a fallback.
-    const r = craftResp.result as any;
-    const crafted = (r.outputs ?? r.items_crafted) as any[];
-    if(crafted) itemsCrafted = crafted.map(c => c.item_id || c.id);
+  const craftPhaseResults: unknown[] = [];
+  for (const recipeId of CRAFT_RECIPES) {
+    const craftResp = await ctx.client.execute("craft", { recipe_id: recipeId, quantity: 1 });
+    craftPhaseResults.push(craftResp.result ?? craftResp.error);
+    if (craftResp.result) {
+      // The craft action_result carries the crafted items under `outputs`
+      // (see passthrough-handler waitForActionResult + summarizers.ts craft).
+      // Older shape used `items_crafted`; keep it as a fallback.
+      const r = craftResp.result as any;
+      const crafted = (r.outputs ?? r.items_crafted) as any[];
+      if (crafted) itemsCrafted.push(...crafted.map(c => c.item_id || c.id));
+    }
   }
-  phases.push(completePhase(craftPhase, craftResp.result ?? craftResp.error));
+  phases.push(completePhase(craftPhase, craftPhaseResults));
 
   // --- Multi-sell ---
   const cargoResp = await ctx.client.execute("get_cargo");

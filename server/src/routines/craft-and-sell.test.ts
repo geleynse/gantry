@@ -83,7 +83,7 @@ describe("craft_and_sell routine", () => {
       const ctx = mockContext(
         async (tool, args) => {
           if (tool === "craft") {
-            craftAttempts.push(args?.recipe as string);
+            craftAttempts.push(args?.recipe_id as string);
             return { error: { code: "no_materials" } };
           }
           if (tool === "analyze_market") return { result: { demand: [] } };
@@ -195,7 +195,7 @@ describe("craft_and_sell routine", () => {
       const ctx = mockContext(
         async (tool, args) => {
           if (tool === "craft") {
-            crafted.push(args?.recipe as string);
+            crafted.push(args?.recipe_id as string);
             return { result: { crafted: 1 } };
           }
           if (tool === "analyze_market") return { result: {} };
@@ -209,6 +209,36 @@ describe("craft_and_sell routine", () => {
       await craftAndSellRoutine.run(ctx, {});
       expect(crafted).toContain("refine_steel");
       expect(crafted).toContain("refine_copper");
+    });
+
+    it("sends recipe_id (not recipe) and an integer quantity/count to craft — regression for the silent no-op bug", async () => {
+      // Live POST /craft accepts recipe_id (string) + quantity/count (integer);
+      // there is no `recipe` param and "ALL" cannot coerce to an integer. This
+      // test fails against the old `{ recipe, count: "ALL" }` payload shape.
+      const craftPayloads: Record<string, unknown>[] = [];
+      const ctx = mockContext(
+        async (tool, args) => {
+          if (tool === "craft") {
+            craftPayloads.push(args ?? {});
+            return { result: { crafted: 1 } };
+          }
+          if (tool === "analyze_market") return { result: {} };
+          if (tool === "get_cargo") return { result: [] };
+          if (tool === "refuel") return { result: {} };
+          return { result: {} };
+        },
+        { player: { docked_at_base: "sol_station" } },
+      );
+
+      await craftAndSellRoutine.run(ctx, { recipes: ["refine_steel"] });
+
+      expect(craftPayloads).toHaveLength(1);
+      const payload = craftPayloads[0];
+      expect(payload.recipe_id).toBe("refine_steel");
+      expect(payload).not.toHaveProperty("recipe");
+      const qty = payload.quantity ?? payload.count;
+      expect(typeof qty).toBe("number");
+      expect(Number.isInteger(qty)).toBe(true);
     });
 
     it("skips dock when already docked via already_docked error", async () => {

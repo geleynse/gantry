@@ -176,6 +176,40 @@ describe("full_trade_run routine", () => {
         expect((orderPhase?.result as Record<string, unknown>).order_errors).toHaveLength(1);
     });
 
+    it("sends recipe_id (not recipe) and an integer quantity/count to craft — regression for the silent no-op bug", async () => {
+      // Live POST /craft accepts recipe_id (string) + quantity/count (integer);
+      // there is no `recipe` param and "ALL" cannot coerce to an integer. This
+      // test fails against the old `{ count: "ALL" }` payload (no recipe_id at
+      // all, and quantity/count is a string, not an integer).
+      const craftPayloads: Record<string, unknown>[] = [];
+      const toolHandler = async (tool: string, args: any) => {
+        if (tool === "craft") {
+          craftPayloads.push(args ?? {});
+          return { result: { outputs: [{ item_id: "STEEL" }] } };
+        }
+        if (tool === "travel_to" || tool === "dock" || tool === "refuel" || tool === "analyze_market" || tool === "multi_sell") {
+          return { result: {} };
+        }
+        if (tool === "batch_mine") return { result: { mines_completed: 1 } };
+        if (tool === "get_cargo") return { result: { cargo: [] } };
+        return { result: {} };
+      };
+      const ctx = mockContext(toolHandler, { player: { credits: 0, current_system: "SYS-A" } });
+
+      const result = await fullTradeRunRoutine.run(ctx, { belt: "B", station: "S" });
+      expect(result.status).toBe("completed");
+
+      expect(craftPayloads.length).toBeGreaterThan(0);
+      for (const payload of craftPayloads) {
+        expect(typeof payload.recipe_id).toBe("string");
+        expect((payload.recipe_id as string).length).toBeGreaterThan(0);
+        expect(payload).not.toHaveProperty("recipe");
+        const qty = payload.quantity ?? payload.count;
+        expect(typeof qty).toBe("number");
+        expect(Number.isInteger(qty)).toBe(true);
+      }
+    });
+
     it("stops mining early when cargo exceeds 90% threshold", async () => {
         let getCargoCount = 0;
         const toolHandler = async (tool: string, args: any) => {

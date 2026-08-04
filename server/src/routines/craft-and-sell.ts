@@ -105,7 +105,16 @@ async function run(ctx: RoutineContext, params: CraftAndSellParams): Promise<Rou
   const itemsCrafted: string[] = [];
   for (const recipe of recipes) {
     const craftPhase = phase(`craft_${recipe}`);
-    const craftArgs: Record<string, unknown> = { recipe, count: "ALL" };
+    // Live POST /craft takes `recipe_id` (string) and `quantity`/`count` (integer) —
+    // there is no `recipe` param, and a string like "ALL" cannot coerce to an
+    // integer. This routine has no cargo/materials cache to compute a true
+    // "craft everything" count the way multi-sell.ts resolves ALL against
+    // cached cargo quantities (see compound-tools/multi-sell.ts ~L146-193).
+    // ASSUMPTION: quantity=1 per craft call, matching the schema's documented
+    // default (tool-registry.ts craft schema: "How many to craft (default 1,
+    // max 50)"), because a small always-satisfiable request beats guessing a
+    // larger count and having the whole call rejected for insufficient materials.
+    const craftArgs: Record<string, unknown> = { recipe_id: recipe, quantity: 1 };
     if (params.deliver_to === "storage") craftArgs.deliver_to = "storage";
     const craftResp = await ctx.client.execute("craft", craftArgs);
     if (craftResp.error) {
