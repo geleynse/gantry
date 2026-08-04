@@ -82,8 +82,8 @@ export const STATIC_GAME_TOOLS = [
   // Previously blocked as a cargo-dump footgun; operator reversed decision (fix/proxy-rescue-actions).
   "jettison",
   "cloak",
-  "buy_ship", "sell_ship", "list_ships", "switch_ship", "get_ship",
-  "shipyard_showroom", "commission_ship", "commission_quote", "claim_commission", "commission_status", "cancel_commission", "supply_commission", "browse_ships", "buy_listed_ship", "list_ship_for_sale", "cancel_ship_listing",
+  "buy_ship", "list_ships", "switch_ship", "get_ship",
+  "shipyard_showroom", "commission_ship", "commission_quote", "commission_status", "cancel_commission", "supply_commission", "browse_ships", "buy_listed_ship", "list_ship_for_sale", "cancel_ship_listing",
   "install_mod", "uninstall_mod",
   "analyze_market", "get_base", "use_item", "send_gift", "claim", "petition",
   "get_insurance_quote", "buy_insurance", "claim_insurance", "reload", "set_home_base",

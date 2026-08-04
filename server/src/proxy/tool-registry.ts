@@ -441,7 +441,6 @@ export const NO_PARAM_DESCRIPTIONS: Record<string, string> = {
   get_nearby: "Get nearby systems and POIs.",
   list_ships: "List your owned ships.",
   get_ship: "Get details of your current ship.",
-  sell_ship: "Sell your current ship.",
   get_skills: "Get your character skills.",
   help: "Get game help information.",
   forum_list: "List forum threads.",

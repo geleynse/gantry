@@ -94,7 +94,9 @@ export const V1_TO_V2_DISPATCH: Record<string, { tool: string; action: string }>
   // salvage namespace
   get_wrecks: { tool: "spacemolt_salvage", action: "wrecks" },
   loot_wreck: { tool: "spacemolt_salvage", action: "loot" },
-  salvage_wreck: { tool: "spacemolt_salvage", action: "salvage" },
+  // salvage_wreck removed v0.478.5 — spacemolt_salvage/salvage no longer exists
+  // on the game server. loot_wreck covers the field-salvage flow (see
+  // compound-tools/loot-wrecks.ts). Do not re-add this mapping.
   scrap_wreck: { tool: "spacemolt_salvage", action: "scrap" },
   tow_wreck: { tool: "spacemolt_salvage", action: "tow" },
   release_tow: { tool: "spacemolt_salvage", action: "release" },
