@@ -10,16 +10,44 @@ import type { CompoundToolDeps, CompoundResult } from "./types.js";
 
 const log = createLogger("compound-tools");
 
+/** Fallback wait, used only when the game omits `combat_state` (older/partial responses). */
+const FLEE_FALLBACK_WAIT_TICKS = 5;
+/** Hard ceiling on the adaptive wait derived from `combat_state.flee_required` — never unbounded. */
+const FLEE_MAX_WAIT_TICKS = 10;
+
+/**
+ * `combat_state` block added to `get_battle_status` in game v0.414.0. All fields are
+ * read defensively (typeof-checked) since older/partial game responses omit it entirely.
+ */
+interface BattleCombatState {
+  /** Whether escape is possible at all. False only when warp disruption (a tackle) holds you in place. */
+  can_escape?: boolean;
+  /** An enemy warp disruptor/scrambler is blocking escape. */
+  warp_disrupted?: boolean;
+  webbed?: boolean;
+  em_disrupted?: boolean;
+  /** Ship speed after disruption penalties; lower than the pursuer's means you're effectively pinned. */
+  effective_speed?: number;
+  /** Consecutive flee-stance ticks accumulated at the outer ring. */
+  flee_counter?: number;
+  /** Flee ticks needed to escape under current conditions. Omitted when warp_disrupted (escape is impossible). */
+  flee_required?: number;
+  max_weapon_reach?: number;
+}
+
 /**
  * Reliable escape mechanism for active combat or critical hull situations.
  *
  * Flow:
  * 1. Check if agent is in battle (via get_battle_status)
- * 2. If in battle: use battle(action="stance", stance="flee") to trigger escape
- * 3. Wait up to 5 ticks for status to change to "fled" or "escaped"
+ * 1.5. Read v0.414.0 combat_state: if can_escape is false (warp disruption holding the
+ *      ship in place), report that directly instead of burning a timeout to find out.
+ * 2. If in battle and escape is possible: use battle(action="stance", stance="flee")
+ * 3. Wait for status to change to "fled"/"escaped", bounded by combat_state.flee_required
+ *    when available (clamped to FLEE_MAX_WAIT_TICKS), else the fixed FLEE_FALLBACK_WAIT_TICKS
  * 4. If fled: call undock() + travel_to(nearest_safe_station) to safety
- * 5. If still in battle after 5 ticks: force undock anyway (prevent stuck state)
- * 6. Return: {status: "success"/"timeout"/"error", escaped: boolean, location_after: {...}}
+ * 5. If still in battle after the wait: force undock anyway (prevent stuck state)
+ * 6. Return: {status: "success"/"timeout"/"cannot_escape"/"error", escaped: boolean, location_after: {...}}
  *
  * Rules:
  * - Only usable mid-battle OR when hull <30%
@@ -110,6 +138,35 @@ export async function flee(
     };
   }
 
+  // Step 1.5: v0.414.0 combat_state — if the game says escape is impossible right now,
+  // say so directly instead of burning a fixed timeout to discover it. combat_state is
+  // optional (older/partial responses omit it); every field is read defensively.
+  const combatState = battleStatus?.combat_state as BattleCombatState | undefined;
+  const canEscape = typeof combatState?.can_escape === "boolean" ? combatState.can_escape : undefined;
+  const warpDisrupted = typeof combatState?.warp_disrupted === "boolean" ? combatState.warp_disrupted : undefined;
+
+  if (canEscape === false) {
+    const reason = warpDisrupted
+      ? "Warp disruption (tackled) is holding your ship in place. Kill the tackler or out-stabilize it before you can flee."
+      : "The game reports escape is not currently possible.";
+    log.warn("flee: cannot escape per combat_state", {
+      agent: agentName,
+      warp_disrupted: warpDisrupted,
+      combat_state: combatState,
+    });
+    upsertNote(
+      agentName,
+      "escape_log",
+      `FLEE BLOCKED: can_escape=false. ${reason}`,
+    );
+    return {
+      status: "cannot_escape",
+      escaped: false,
+      message: reason,
+      combat_state: combatState,
+    };
+  }
+
   // Step 2: Attempt flee stance
   log.debug("flee: attempting flee stance", { agent: agentName });
   const fleeStanceResp = isV2
@@ -125,11 +182,20 @@ export async function flee(
     };
   }
 
-  // Step 3: Wait up to 5 ticks for battle status to change
+  // Step 3: Wait for battle status to change. Bound the wait using the game's own
+  // flee_required estimate when available (clamped to FLEE_MAX_WAIT_TICKS so this can
+  // never spin unbounded); fall back to the fixed timeout when the field is absent.
+  const fleeRequired = typeof combatState?.flee_required === "number" && combatState.flee_required > 0
+    ? combatState.flee_required
+    : undefined;
+  const maxWaitTicks = fleeRequired !== undefined
+    ? Math.min(Math.max(Math.ceil(fleeRequired), 1), FLEE_MAX_WAIT_TICKS)
+    : FLEE_FALLBACK_WAIT_TICKS;
+
   let fleeSucceeded = false;
   let finalBattleStatus = currentBattle;
 
-  for (let tick = 0; tick < 5; tick++) {
+  for (let tick = 0; tick < maxWaitTicks; tick++) {
     await client.waitForTick();
 
     const statusResp = isV2
@@ -201,7 +267,7 @@ export async function flee(
 
   // Step 7: Log escape attempt to notes
   const elapsed = Date.now() - t0;
-  const logEntry = `FLEE ATTEMPT: ${fleeSucceeded ? "escaped" : "timeout after 5 ticks"}. ` +
+  const logEntry = `FLEE ATTEMPT: ${fleeSucceeded ? "escaped" : `timeout after ${maxWaitTicks} ticks`}. ` +
     `Undocked and traveled to safety in ${elapsed}ms. ` +
     `Final location: ${playerFinal?.current_poi ?? "unknown"}@${playerFinal?.current_system ?? "unknown"}.`;
   upsertNote(agentName, "escape_log", logEntry);
@@ -219,5 +285,20 @@ export async function flee(
     battle_status_final: finalBattleStatus,
     fled: fleeSucceeded,
     location_after: locationAfter,
+    // Diagnostic only; present whenever the game supplied combat_state (v0.414.0+).
+    // Does not change status/escaped semantics — just explains the wait bound used.
+    ...(combatState
+      ? {
+          escape_diagnostics: {
+            can_escape: canEscape,
+            warp_disrupted: warpDisrupted,
+            webbed: combatState.webbed,
+            em_disrupted: combatState.em_disrupted,
+            effective_speed: combatState.effective_speed,
+            flee_required: fleeRequired,
+            ticks_waited: maxWaitTicks,
+          },
+        }
+      : {}),
   };
 }
