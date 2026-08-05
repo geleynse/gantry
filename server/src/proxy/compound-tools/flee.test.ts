@@ -306,17 +306,24 @@ describe("flee — v0.414.0 combat_state escape mechanics (real GetBattleStatusR
     expect(getStatusCalls).toBe(4);
   });
 
-  it("defaults zones_to_outer to the documented worst case (3) when participants are absent, distinct from assuming 0", async () => {
+  it("defaults zones_to_outer to the documented worst case (3) when participants are absent, distinct from assuming 0 — and HOLDS there on a genuinely stalled flee (HIGH regression, 2026-08)", async () => {
     // No `participants` field at all (a legitimate partial response). flee_required=10 is well
     // above the 5-tick floor, so the worst-case default is the only thing keeping the budget at
     // 13 instead of 10 — a mutant that defaults to 0 instead of 3 would under-wait here.
-    // flee_counter still increments realistically tick-over-tick so the mid-loop refresh doesn't
-    // spuriously extend the budget from a stale/unrealistic static reading.
+    //
+    // flee_counter is STATIC (0 on every read) — a genuinely stalled flee makes no progress at
+    // all. A previous version of this fixture incremented flee_counter once per refresh
+    // specifically to avoid ever exercising this path; its own comment said so. That made the
+    // test blind to the HIGH regression: the old wait-bound formula combined ELAPSED ticks with
+    // the remaining estimate on every refresh, so with a static counter the bound grew by ~1 tick
+    // every iteration with no new information at all, ratcheting up to FLEE_MAX_WAIT_TICKS (60)
+    // regardless of whether anything had actually changed. The fixed code only extends the bound
+    // in response to a genuine worsening (flee_required or zones-to-outer increasing beyond what
+    // has already been observed) — with both pinned flat here, the budget must hold at its
+    // original value (13), not diverge to 60.
     let getStatusCalls = 0;
-    let gbsCalls = 0;
     const client = makeClient(async (tool) => {
       if (tool === "get_battle_status") {
-        gbsCalls++;
         return {
           result: {
             battle_id: "battle-1",
@@ -328,7 +335,7 @@ describe("flee — v0.414.0 combat_state escape mechanics (real GetBattleStatusR
               webbed: false,
               em_disrupted: false,
               effective_speed: 20,
-              flee_counter: gbsCalls - 1, // 0 on the initial fetch, incrementing once per refresh
+              flee_counter: 0, // static — no progress, ever
               flee_required: 10,
               max_weapon_reach: 3,
             },
@@ -347,10 +354,183 @@ describe("flee — v0.414.0 combat_state escape mechanics (real GetBattleStatusR
     const result = await flee(makeDeps("rust-vane", client));
 
     expect(result.status).toBe("timeout");
+    // Exact count, not "at least" — the whole point of this guard is to catch the bound
+    // reproducing the divergence-to-60 regression.
     expect(getStatusCalls).toBe(13);
     expect((result as Record<string, unknown>).escape_diagnostics).toMatchObject({
       zones_to_outer: 3,
       ticks_waited: 13,
+    });
+  });
+
+  it("HIGH regression (2026-08), Opus probe A shape: participants present but self never identifiable (no row has `stance`) — stalled flee terminates at a small bound, not 60", async () => {
+    // All participants at zone "outer", flee_required: 3, but no row carries the self-only
+    // `stance` field (spec-legal: a partner/enemy snapshot without our own marker). zonesToOuterRing
+    // can't find self, so it falls back to the worst case (3) on every read — consistently, not
+    // escalating. Combined with a static flee_counter (0 always), nothing about the estimate
+    // actually worsens over time, so the fixed bound must hold at its original value
+    // (3 + 3 = 6, floor 5 doesn't apply) instead of ratcheting to FLEE_MAX_WAIT_TICKS (60), which
+    // is what the pre-fix formula did (reproduced live by two independent reviewers).
+    let getStatusCalls = 0;
+    const client = makeClient(async (tool) => {
+      if (tool === "get_battle_status") {
+        return {
+          result: {
+            battle_id: "battle-1",
+            system_id: "sys-1",
+            is_participant: true,
+            combat_state: {
+              can_escape: true,
+              warp_disrupted: false,
+              webbed: false,
+              em_disrupted: false,
+              effective_speed: 20,
+              flee_counter: 0,
+              flee_required: 3,
+              max_weapon_reach: 3,
+            },
+            participants: [
+              { zone: "outer" }, // no `stance` — not identifiable as self
+              { zone: "outer" },
+            ],
+          },
+        };
+      }
+      if (tool === "battle") return { result: { ok: true } };
+      if (tool === "get_status") {
+        getStatusCalls++;
+        return { result: { ship: { battle_id: "battle-1" } } }; // never escapes
+      }
+      return { result: { ok: true } };
+    });
+
+    const result = await flee(makeDeps("rust-vane", client));
+
+    expect(result.status).toBe("timeout");
+    // Exact count: 3 (flee_required) + 3 (worst-case zones, self unmatched) = 6. A regression to
+    // the old elapsed-tick formula would drive this to 60.
+    expect(getStatusCalls).toBe(6);
+    expect((result as Record<string, unknown>).escape_diagnostics).toMatchObject({
+      zones_to_outer: 3,
+      ticks_waited: 6,
+    });
+  });
+
+  it("HIGH regression (2026-08), Opus probe B shape: self matched but pinned at 'engaged' with a static flee_counter — stalled flee terminates at a small bound, not 60", async () => {
+    // Self is identifiable (stance present) but never advances past "engaged" (3 zones from
+    // outer) and flee_counter never increments — a ship that is genuinely pinned in place, not
+    // making progress. Neither term worsens over time, so the bound must hold at its initial
+    // value instead of diverging.
+    let getStatusCalls = 0;
+    const client = makeClient(async (tool) => {
+      if (tool === "get_battle_status") {
+        return {
+          result: {
+            battle_id: "battle-1",
+            system_id: "sys-1",
+            is_participant: true,
+            combat_state: {
+              can_escape: true,
+              warp_disrupted: false,
+              webbed: true,
+              em_disrupted: false,
+              effective_speed: 1,
+              flee_counter: 0,
+              flee_required: 3,
+              max_weapon_reach: 3,
+            },
+            participants: [{ stance: "flee", zone: "engaged" }],
+          },
+        };
+      }
+      if (tool === "battle") return { result: { ok: true } };
+      if (tool === "get_status") {
+        getStatusCalls++;
+        return { result: { ship: { battle_id: "battle-1" } } }; // never escapes
+      }
+      return { result: { ok: true } };
+    });
+
+    const result = await flee(makeDeps("rust-vane", client));
+
+    expect(result.status).toBe("timeout");
+    // Exact count: 3 (flee_required) + 3 (zones from "engaged") = 6.
+    expect(getStatusCalls).toBe(6);
+    expect((result as Record<string, unknown>).escape_diagnostics).toMatchObject({
+      zones_to_outer: 3,
+      ticks_waited: 6,
+    });
+  });
+
+  it("LOW: ticks_waited reports ticks ACTUALLY waited, not the (possibly much larger) bound, on an early success after a mid-loop extension", async () => {
+    // The bound gets extended way up (to 51, from a genuine flee_required jump to 50) on the very
+    // first refresh, but the ship escapes on tick index 2 (the 3rd poll) anyway. escape_diagnostics
+    // must report 3, not the inflated bound (51) — a mutant that reports the bound here would pass
+    // every timeout-path test (where bound == actual by definition) while silently misreporting on
+    // every early-success path.
+    let gbsCalls = 0;
+    let getStatusCalls = 0;
+    const client = makeClient(async (tool) => {
+      if (tool === "get_battle_status") {
+        gbsCalls++;
+        if (gbsCalls === 1) {
+          return {
+            result: {
+              battle_id: "battle-1",
+              system_id: "sys-1",
+              is_participant: true,
+              combat_state: {
+                can_escape: true,
+                warp_disrupted: false,
+                webbed: false,
+                em_disrupted: false,
+                effective_speed: 20,
+                flee_counter: 0,
+                flee_required: 1,
+                max_weapon_reach: 3,
+              },
+              participants: [{ stance: "flee", zone: "outer" }],
+            },
+          };
+        }
+        // Every in-loop refresh: flee_required jumped to 50 (extends the bound way past what
+        // will actually be used).
+        return {
+          result: {
+            battle_id: "battle-1",
+            system_id: "sys-1",
+            is_participant: true,
+            combat_state: {
+              can_escape: true,
+              warp_disrupted: false,
+              webbed: false,
+              em_disrupted: false,
+              effective_speed: 20,
+              flee_counter: 0,
+              flee_required: 50,
+              max_weapon_reach: 3,
+            },
+            participants: [{ stance: "flee", zone: "outer" }],
+          },
+        };
+      }
+      if (tool === "battle") return { result: { ok: true } };
+      if (tool === "get_status") {
+        getStatusCalls++;
+        // Escapes on the 3rd poll (tick index 2).
+        const battleId = getStatusCalls >= 3 ? null : "battle-1";
+        return { result: { ship: { battle_id: battleId } } };
+      }
+      return { result: { ok: true } };
+    });
+
+    const result = await flee(makeDeps("rust-vane", client));
+
+    expect(result.status).toBe("success");
+    expect(result.fled).toBe(true);
+    expect(getStatusCalls).toBe(3);
+    expect((result as Record<string, unknown>).escape_diagnostics).toMatchObject({
+      ticks_waited: 3,
     });
   });
 
@@ -469,10 +649,16 @@ describe("flee — v0.414.0 combat_state escape mechanics (real GetBattleStatusR
     expect((result as Record<string, unknown>).escape_diagnostics).toBeUndefined();
   });
 
-  it("MED-2: reports timeout (not error) when a premature undock fails while still in combat, and still clears battle cache", async () => {
+  it("MED-2: reports timeout (not error) when a premature undock fails with in_combat while still in battle, and does NOT clear the battle cache", async () => {
     // A timeout that leaves the ship still in battle causes undock to legitimately fail with
     // in_combat. That's the timeout outcome surfacing, not a distinct error — it must be reported
-    // as status "timeout" with diagnostics preserved, and the battle cache must still be cleared.
+    // as status "timeout" with diagnostics preserved.
+    //
+    // It must NOT clear the battle cache (revised, codex review 2026-08): every poll in the loop
+    // reported an active battle, so persisting `null` here would tell a restarted proxy the ship
+    // is out of combat when it demonstrably is not. A prior version of this test asserted the
+    // opposite (that persistBattleState(null) fired) — that assertion enshrined the staleness bug
+    // rather than catching it.
     let persistedNull = false;
     let gbsCalls = 0;
     const client = makeClient(async (tool) => {
@@ -513,7 +699,96 @@ describe("flee — v0.414.0 combat_state escape mechanics (real GetBattleStatusR
     expect(result.status).toBe("timeout");
     expect(result.escaped).toBe(false);
     expect((result as Record<string, unknown>).escape_diagnostics).toMatchObject({ ticks_waited: 5 });
-    expect(persistedNull).toBe(true);
+    expect(persistedNull).toBe(false);
+  });
+
+  it("HIGH (codex review, 2026-08): a non-combat undock failure after a timed-out flee surfaces as a distinct error, not a masked timeout", async () => {
+    // The undock failure here is session_invalid, not in_combat — a stale/expired session, not a
+    // combat block. Reclassifying it as "timeout" would hide a real, more actionable failure
+    // behind a combat-sounding message. Only a genuinely combat-blocked undock failure (in_combat)
+    // may be reported as the timeout outcome surfacing.
+    const client = makeClient(async (tool) => {
+      if (tool === "get_battle_status") {
+        return {
+          result: {
+            battle_id: "battle-1",
+            system_id: "sys-1",
+            is_participant: true,
+            combat_state: {
+              can_escape: true,
+              warp_disrupted: false,
+              webbed: false,
+              em_disrupted: false,
+              effective_speed: 20,
+              flee_counter: 0,
+              flee_required: 1,
+              max_weapon_reach: 3,
+            },
+            participants: [{ stance: "flee", zone: "outer" }],
+          },
+        };
+      }
+      if (tool === "battle") return { result: { ok: true } };
+      if (tool === "get_status") return { result: { ship: { battle_id: "battle-1" } } }; // never escapes
+      if (tool === "undock") return { error: { code: "session_invalid", message: "Session expired, please re-login" } };
+      return { result: { ok: true } };
+    });
+
+    const result = await flee(makeDeps("rust-vane", client));
+
+    expect(result.status).toBe("error");
+    expect(result.status).not.toBe("timeout");
+    expect(String(result.error)).toContain("session_invalid");
+  });
+
+  it("HIGH (codex review, 2026-08): flee_counter is only credited when self is confirmed at the outer ring, not while pinned elsewhere (e.g. 'engaged')", async () => {
+    // flee_required=10 with a nonzero flee_counter=8 but self at "engaged" (not outer) the whole
+    // time: the counter has NOT actually banked any progress (it only accumulates AT THE OUTER
+    // RING per spec), so the budget must be based on the full flee_required (10) plus the 3 zones
+    // from "engaged", not on (10 - 8). A mutant that subtracts the counter unconditionally would
+    // under-budget to 5 (floored) instead of 13 — the same failure class as the original CRIT-2
+    // under-wait bug.
+    let getStatusCalls = 0;
+    const client = makeClient(async (tool) => {
+      if (tool === "get_battle_status") {
+        return {
+          result: {
+            battle_id: "battle-1",
+            system_id: "sys-1",
+            is_participant: true,
+            combat_state: {
+              can_escape: true,
+              warp_disrupted: false,
+              webbed: false,
+              em_disrupted: false,
+              effective_speed: 20,
+              flee_counter: 8, // stale/non-banked — self is NOT at outer, so this must be ignored
+              flee_required: 10,
+              max_weapon_reach: 3,
+            },
+            participants: [{ stance: "flee", zone: "engaged" }],
+          },
+        };
+      }
+      if (tool === "battle") return { result: { ok: true } };
+      if (tool === "get_status") {
+        getStatusCalls++;
+        return { result: { ship: { battle_id: "battle-1" } } }; // never escapes
+      }
+      return { result: { ok: true } };
+    });
+
+    const result = await flee(makeDeps("rust-vane", client));
+
+    expect(result.status).toBe("timeout");
+    // Exact count: 10 (full flee_required, counter NOT credited) + 3 (zones from "engaged") = 13.
+    // A regression that credits flee_counter unconditionally would under-budget to 5 (floored).
+    expect(getStatusCalls).toBe(13);
+    expect((result as Record<string, unknown>).escape_diagnostics).toMatchObject({
+      flee_required: 10,
+      zones_to_outer: 3,
+      ticks_waited: 13,
+    });
   });
 
   it("reads zones_to_outer from the participant identified as self (via the self-only stance field), not the documented worst-case default", async () => {
@@ -687,5 +962,135 @@ describe("flee — v0.414.0 combat_state escape mechanics (real GetBattleStatusR
     expect((result as Record<string, unknown>).escape_diagnostics).toMatchObject({
       ticks_waited: 12,
     });
+  });
+
+  it("MED: mid-loop can_escape re-check bails out with cannot_escape when a tackle lands after the flee stance was already set (Opus probe E shape)", async () => {
+    // can_escape starts true (so the stance change is attempted) and flips to false on the first
+    // in-loop refresh — a tackle landing mid-flight. The old code only checked can_escape ONCE,
+    // before the wait loop, so this flip was invisible until the loop ran out the clock and
+    // reported a bare "timeout". It must bail immediately with "cannot_escape" instead.
+    let gbsCalls = 0;
+    let getStatusCalls = 0;
+    const client = makeClient(async (tool) => {
+      if (tool === "get_battle_status") {
+        gbsCalls++;
+        if (gbsCalls === 1) {
+          return {
+            result: {
+              battle_id: "battle-1",
+              system_id: "sys-1",
+              is_participant: true,
+              combat_state: {
+                can_escape: true,
+                warp_disrupted: false,
+                webbed: false,
+                em_disrupted: false,
+                effective_speed: 20,
+                flee_counter: 0,
+                flee_required: 3,
+                max_weapon_reach: 3,
+              },
+              participants: [{ stance: "flee", zone: "outer" }],
+            },
+          };
+        }
+        // First in-loop refresh onward: tackled.
+        return {
+          result: {
+            battle_id: "battle-1",
+            system_id: "sys-1",
+            is_participant: true,
+            combat_state: {
+              can_escape: false,
+              warp_disrupted: true,
+              webbed: false,
+              em_disrupted: false,
+              effective_speed: 20,
+              flee_counter: 0,
+              max_weapon_reach: 3,
+              // flee_required omitted per spec while warp_disrupted
+            },
+            participants: [{ stance: "flee", zone: "outer" }],
+          },
+        };
+      }
+      if (tool === "battle") return { result: { ok: true } };
+      if (tool === "get_status") {
+        getStatusCalls++;
+        return { result: { ship: { battle_id: "battle-1" } } }; // never escapes
+      }
+      return { result: { ok: true } };
+    });
+
+    const result = await flee(makeDeps("rust-vane", client));
+
+    expect(result.status).toBe("cannot_escape");
+    expect(result.escaped).toBe(false);
+    expect(result.message).toContain("Warp disruption");
+    // Bailed on the FIRST in-loop refresh — never even reached the get_status poll for that tick.
+    expect(getStatusCalls).toBe(0);
+  });
+
+  it("MED: treats 'combat_state present, flee_required absent, warp_disrupted true' as tackled even when can_escape itself is missing on that read", async () => {
+    // Explicit case called out in the brief: flee_required is OMITTED (not just falsy) while
+    // warp_disrupted is true, per the OpenAPI spec ("escape is impossible until the tackle is
+    // removed"). This must be treated as the tackled case even if can_escape is absent/stale on
+    // this particular read, rather than falling through to "no update" and running out the clock.
+    let gbsCalls = 0;
+    let getStatusCalls = 0;
+    const client = makeClient(async (tool) => {
+      if (tool === "get_battle_status") {
+        gbsCalls++;
+        if (gbsCalls === 1) {
+          return {
+            result: {
+              battle_id: "battle-1",
+              system_id: "sys-1",
+              is_participant: true,
+              combat_state: {
+                can_escape: true,
+                warp_disrupted: false,
+                webbed: false,
+                em_disrupted: false,
+                effective_speed: 20,
+                flee_counter: 0,
+                flee_required: 3,
+                max_weapon_reach: 3,
+              },
+              participants: [{ stance: "flee", zone: "outer" }],
+            },
+          };
+        }
+        return {
+          result: {
+            battle_id: "battle-1",
+            system_id: "sys-1",
+            is_participant: true,
+            combat_state: {
+              // can_escape omitted entirely on this read — only warp_disrupted + missing
+              // flee_required signal the tackle.
+              warp_disrupted: true,
+              webbed: false,
+              em_disrupted: false,
+              effective_speed: 20,
+              flee_counter: 0,
+              max_weapon_reach: 3,
+            },
+            participants: [{ stance: "flee", zone: "outer" }],
+          },
+        };
+      }
+      if (tool === "battle") return { result: { ok: true } };
+      if (tool === "get_status") {
+        getStatusCalls++;
+        return { result: { ship: { battle_id: "battle-1" } } };
+      }
+      return { result: { ok: true } };
+    });
+
+    const result = await flee(makeDeps("rust-vane", client));
+
+    expect(result.status).toBe("cannot_escape");
+    expect(getStatusCalls).toBe(0);
   });
 });
