@@ -11,7 +11,7 @@ import { formatAbsolute, relativeTime } from "@/lib/time";
 // Types
 // ---------------------------------------------------------------------------
 
-interface FacilityRecord {
+export interface FacilityRecord {
   id?: string;
   name?: string;
   type?: string;
@@ -19,7 +19,20 @@ interface FacilityRecord {
   system?: string;
   poi?: string;
   owner?: string;
+  /** Only populated for faction-tab entries (live-spec FacilityFactionEntry:
+   *  "under_construction" | "damaged" | "active"). Station/owned/build-tab
+   *  entries come from FacilityEntry, which has no `status` property at all —
+   *  on those tabs this stays undefined and the status badge below simply
+   *  doesn't render; `damaged` is the only signal available there. */
   status?: string;
+  /** v0.551.1: true for faction facilities knocked out in battle — damaged
+   *  facilities produce nothing even though they still show up in listings.
+   *  Present on both FacilityEntry and FacilityFactionEntry. */
+  damaged?: boolean;
+  /** v0.550.0 upkeep rework: stock-on-hand level, not a consumption rate. */
+  maintenanceLevel?: unknown;
+  /** v0.550.0: rent tracks real, live station costs. */
+  rentPerCycle?: unknown;
   production?: unknown;
   upgrades?: unknown;
   raw?: unknown;
@@ -90,10 +103,13 @@ function classifyError(err: unknown, selectedAgent: string): ErrorState {
 // Facility row
 // ---------------------------------------------------------------------------
 
-function FacilityRow({ facility }: { facility: FacilityRecord }) {
+export function FacilityRow({ facility }: { facility: FacilityRecord }) {
   const [expanded, setExpanded] = useState(false);
   const name = facility.name ?? facility.id ?? "Unknown Facility";
-  const hasExtra = facility.production != null || facility.upgrades != null;
+  // v0.551.1: a facility can be reported damaged either via status === "damaged"
+  // or the separate boolean flag — treat either as knocked out, not working.
+  const isDamaged = facility.damaged === true || facility.status === "damaged";
+  const hasExtra = facility.production != null || facility.upgrades != null || facility.rentPerCycle != null;
 
   return (
     <div className="border border-border/50 bg-secondary/20 hover:bg-secondary/40 transition-colors">
@@ -112,16 +128,35 @@ function FacilityRow({ facility }: { facility: FacilityRecord }) {
                 Lv {facility.level}
               </span>
             )}
+            {/* `status` (FacilityFactionEntry only — see the field comment above)
+                gets three distinct treatments, not two: "active" (success),
+                "damaged" (destructive), and "under_construction" (warning) are
+                all expected-but-different states. under_construction is
+                normal, not-yet-producing — it must NOT share the same neutral
+                styling as a plain unknown/idle status, or an operator can't
+                tell "still building" from "something's wrong but unlabeled". */}
             {facility.status && (
               <span
                 className={cn(
                   "text-[10px] uppercase tracking-wider px-1.5 py-0.5 shrink-0",
                   facility.status === "active"
                     ? "text-success bg-success/10"
+                    : facility.status === "under_construction"
+                    ? "text-warning bg-warning/10"
+                    : isDamaged
+                    ? "text-destructive bg-destructive/10"
                     : "text-muted-foreground bg-secondary"
                 )}
               >
                 {facility.status}
+              </span>
+            )}
+            {/* v0.551.1: surface the damaged flag even if status wasn't reported as
+                "damaged" (e.g. an older/aliased status string), so a knocked-out
+                facility is never mistaken for a working one. */}
+            {isDamaged && facility.status !== "damaged" && (
+              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 shrink-0 text-destructive bg-destructive/10">
+                Damaged
               </span>
             )}
           </div>
@@ -154,6 +189,12 @@ function FacilityRow({ facility }: { facility: FacilityRecord }) {
             <div>
               <span className="text-foreground/50">Upgrades: </span>
               {JSON.stringify(facility.upgrades)}
+            </div>
+          )}
+          {facility.rentPerCycle != null && (
+            <div>
+              <span className="text-foreground/50">Rent per cycle: </span>
+              {JSON.stringify(facility.rentPerCycle)}
             </div>
           )}
         </div>

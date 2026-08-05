@@ -73,6 +73,31 @@ function summarizeModules(modules: unknown): unknown {
   return (modules as Record<string, unknown>[]).map(m => discoverPick("module", m, MODULE_KEYS));
 }
 
+// Full union of live-spec FacilityEntry + FacilityFactionEntry properties
+// (https://game.spacemolt.com/api/openapi.json, fetched 2026-08-04), plus
+// pre-existing proxy/legacy fields that aren't part of either schema
+// ("id", "owner", "system", "poi", "station", "output", "input",
+// "idle_reason" — the latter from v0.342.0). See the facility_list /
+// faction_facility_list summarizers below for the discovery-log rationale.
+const FACILITY_KNOWN_FIELDS = [
+  // pre-existing proxy/legacy fields (not in either live schema)
+  "id", "owner", "system", "poi", "station", "output", "input",
+  "idle_reason", "labor_credits", "upgrades",
+  // shared across FacilityEntry and FacilityFactionEntry
+  "facility_id", "name", "type", "level", "status", "damaged",
+  "capacity", "custom_name", "faction_service", "missed_rent_cycles",
+  "rent_per_cycle", "production",
+  // FacilityEntry-only
+  "bonus_type", "bonus_value", "category", "description", "dining_points",
+  "faction_id", "is_recycler", "labor_per_cycle",
+  "leisure_points", "maintenance_level", "maintenance_per_cycle",
+  "maintenance_satisfied", "owner_id", "personal_service",
+  "power_throttled", "recipe_id", "rent_paid_until_tick",
+  "repair_complete_tick", "service", "tourism_upkeep", "under_construction",
+  // FacilityFactionEntry-only
+  "rental_fee_per_run", "ticks_until_complete",
+];
+
 const SUMMARIZERS: Record<string, Summarizer> = {
   get_status: (r) => {
     const d = (r && typeof r === "object") ? r as Record<string, unknown> : {};
@@ -282,13 +307,29 @@ const SUMMARIZERS: Record<string, Summarizer> = {
   },
 
   // ---------------------------------------------------------------------------
-  // spacemolt_facility action="list" / action="faction_list" (v0.342.0 idle_reason)
+  // spacemolt_facility action="list" / action="faction_list" (v0.342.0 idle_reason,
+  // v0.551.1 damaged status)
   // ---------------------------------------------------------------------------
   // v0.342.0 adds idle_reason per facility: one of no_inputs, no_maintenance,
   // insufficient_labor_credits, no_fuel_bunker, fuel_tank_full, output_storage_full,
   // unprofitable (station-owned), stockpile_full (station-owned).
+  // v0.551.1: faction_list now reports status: "damaged" (instead of "active") for
+  // faction facilities knocked out in battle, plus a boolean `damaged` flag. Only
+  // "active" facilities produce/provide their service — repair via
+  // facility action=repair.
   // The v1ToolName that reaches summarizeToolResult is the action string extracted
   // from the spacemolt_facility call — so "list" and "faction_list".
+  //
+  // FACILITY_KNOWN_FIELDS below is the full union of the live-spec FacilityEntry
+  // and FacilityFactionEntry properties (fetched from
+  // https://game.spacemolt.com/api/openapi.json, 2026-08-04), plus a handful of
+  // pre-existing proxy/legacy fields ("id", "owner", "system", "poi", "station",
+  // "output", "input", "idle_reason", "labor_credits", "upgrades") that aren't
+  // in either schema. This whitelists the whole facility-health field class
+  // (under_construction, power_throttled, repair_complete_tick,
+  // maintenance_satisfied, maintenance_per_cycle, etc.) so none of it gets
+  // logged as discovery noise. NOTE: "maintenance" (singular) was previously
+  // whitelisted here but does not exist in the live schema — removed.
   list: (r) => {
     const d = (r && typeof r === "object") ? r as Record<string, unknown> : {};
     const facilities = (
@@ -298,14 +339,7 @@ const SUMMARIZERS: Record<string, Summarizer> = {
     );
     const summarized = discoverPick("facility_list", d, ["facilities", "items", "count", "message"]);
     summarized.facilities = facilities.map((f) =>
-      discoverPick("facility", f as Record<string, unknown>, [
-        "id", "facility_id", "name", "type", "level", "status", "owner",
-        "system", "poi", "station",
-        "production", "output", "input", "upgrades",
-        "labor_credits", "maintenance",
-        // v0.342.0 idle diagnosis
-        "idle_reason",
-      ])
+      discoverPick("facility", f as Record<string, unknown>, FACILITY_KNOWN_FIELDS)
     );
     return summarized;
   },
@@ -318,14 +352,7 @@ const SUMMARIZERS: Record<string, Summarizer> = {
     );
     const summarized = discoverPick("faction_facility_list", d, ["facilities", "items", "count", "message"]);
     summarized.facilities = facilities.map((f) =>
-      discoverPick("facility", f as Record<string, unknown>, [
-        "id", "facility_id", "name", "type", "level", "status", "owner",
-        "system", "poi", "station",
-        "production", "output", "input", "upgrades",
-        "labor_credits", "maintenance",
-        // v0.342.0 idle diagnosis
-        "idle_reason",
-      ])
+      discoverPick("facility", f as Record<string, unknown>, FACILITY_KNOWN_FIELDS)
     );
     return summarized;
   },

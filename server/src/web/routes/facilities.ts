@@ -31,6 +31,17 @@ export interface FacilityRecord {
   poi?: string;
   owner?: string;
   status?: string;
+  /** v0.551.1: true for faction facilities knocked out in battle. Only
+   *  status === "active" facilities produce/provide their service — a
+   *  damaged facility must never be treated as working. Repair via
+   *  `facility action=repair`. */
+  damaged?: boolean;
+  /** v0.550.0 upkeep rework: stock-on-hand level, not a consumption rate. */
+  maintenanceLevel?: unknown;
+  /** v0.550.0: rent tracks real, live station costs. Already reachable via
+   *  `raw` before this field existed; this promotes it to a typed,
+   *  ergonomic top-level field rather than fixing a data-loss bug. */
+  rentPerCycle?: unknown;
   production?: unknown;
   upgrades?: unknown;
   raw?: unknown;
@@ -72,6 +83,9 @@ function normaliseFacility(raw: unknown): FacilityRecord {
     poi: f.poi as string | undefined ?? f.station as string | undefined,
     owner: f.owner as string | undefined,
     status: f.status as string | undefined,
+    damaged: f.damaged as boolean | undefined,
+    maintenanceLevel: f.maintenance_level,
+    rentPerCycle: f.rent_per_cycle,
     production: f.production,
     upgrades: f.upgrades,
     raw,

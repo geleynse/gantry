@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, spyOn } from "bun:test";
 import { summarizeToolResult } from "./summarizers.js";
 
 describe("summarizeToolResult", () => {
@@ -339,5 +339,138 @@ describe("summarizeToolResult", () => {
     const result = summarizeToolResult("get_status", raw) as Record<string, unknown>;
     // standings should be undefined, not null or {}
     expect(result.standings).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// facility list / faction_list — v0.551.1 damaged status
+// ---------------------------------------------------------------------------
+//
+// v0.551.1: faction_list now reports status: "damaged" (instead of "active")
+// for faction facilities knocked out in battle, plus a separate boolean
+// `damaged` flag. Only "active" facilities produce/provide their service —
+// a script that filters on status == "active" now correctly skips damaged
+// ones. discoverPick is non-destructive (it forwards every field regardless
+// of whether it's "known"), so these tests pin two independent things:
+//   1. the fields survive the round-trip (would pass even before this fix)
+//   2. status/damaged/maintenance_level do NOT trigger a "[discovery] New
+//      field" log — which is the actual behavior this fix adds.
+describe("summarizeToolResult — facility damaged status (v0.551.1)", () => {
+  const DAMAGED_FACILITY = {
+    id: "faction_hub_1",
+    name: "Faction Refinery",
+    type: "refinery",
+    status: "damaged",
+    damaged: true,
+    owner: "Iron Brotherhood",
+    maintenance_level: 0.4,
+    rent_per_cycle: 250,
+  };
+
+  it("faction_list preserves damaged status, damaged flag, maintenance_level, rent_per_cycle", () => {
+    const raw = { facilities: [DAMAGED_FACILITY] };
+    const result = summarizeToolResult("faction_list", raw) as Record<string, unknown>;
+    const facilities = result.facilities as Record<string, unknown>[];
+    expect(facilities).toHaveLength(1);
+    expect(facilities[0].status).toBe("damaged");
+    expect(facilities[0].damaged).toBe(true);
+    expect(facilities[0].maintenance_level).toBe(0.4);
+    expect(facilities[0].rent_per_cycle).toBe(250);
+  });
+
+  it("list preserves damaged status, damaged flag, maintenance_level, rent_per_cycle", () => {
+    const raw = { facilities: [DAMAGED_FACILITY] };
+    const result = summarizeToolResult("list", raw) as Record<string, unknown>;
+    const facilities = result.facilities as Record<string, unknown>[];
+    expect(facilities[0].status).toBe("damaged");
+    expect(facilities[0].damaged).toBe(true);
+    expect(facilities[0].maintenance_level).toBe(0.4);
+    expect(facilities[0].rent_per_cycle).toBe(250);
+  });
+
+  it("does NOT log status/damaged/maintenance_level as unexpected discovery fields", () => {
+    const prevTestLogs = process.env.TEST_LOGS;
+    process.env.TEST_LOGS = "1"; // logger suppresses console output in test mode unless this is set
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const raw = { facilities: [DAMAGED_FACILITY] };
+      summarizeToolResult("faction_list", raw);
+      const discoveryCalls = logSpy.mock.calls
+        .map((args) => String(args[0]))
+        .filter((line) => line.includes("[discovery]"));
+      const flaggedFields = discoveryCalls.filter(
+        (line) => line.includes('"status"') || line.includes('"damaged"') || line.includes('"maintenance_level"')
+      );
+      expect(flaggedFields).toEqual([]);
+    } finally {
+      logSpy.mockRestore();
+      if (prevTestLogs === undefined) delete process.env.TEST_LOGS;
+      else process.env.TEST_LOGS = prevTestLogs;
+    }
+  });
+
+  it("MUTATION CONTROL: a genuinely unknown facility field DOES trigger the discovery log", () => {
+    // Proves the spy above is capable of catching a discovery-log call at all —
+    // without this control, the previous test passing would be meaningless.
+    const prevTestLogs = process.env.TEST_LOGS;
+    process.env.TEST_LOGS = "1";
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const raw = { facilities: [{ ...DAMAGED_FACILITY, totally_new_field_xyz: 123 }] };
+      summarizeToolResult("faction_list", raw);
+      const discoveryCalls = logSpy.mock.calls
+        .map((args) => String(args[0]))
+        .filter((line) => line.includes("[discovery]") && line.includes("totally_new_field_xyz"));
+      expect(discoveryCalls.length).toBeGreaterThan(0);
+    } finally {
+      logSpy.mockRestore();
+      if (prevTestLogs === undefined) delete process.env.TEST_LOGS;
+      else process.env.TEST_LOGS = prevTestLogs;
+    }
+  });
+
+  // Full union of live-spec FacilityEntry + FacilityFactionEntry properties
+  // (https://game.spacemolt.com/api/openapi.json, fetched 2026-08-04). A
+  // prior version of this whitelist only covered 3 of these fields (damaged,
+  // maintenance_level, rent_per_cycle) — 26 others, including the rest of the
+  // facility-health class (under_construction, power_throttled,
+  // repair_complete_tick, maintenance_satisfied, maintenance_per_cycle),
+  // still logged as discovery noise. This pins the full set.
+  const LIVE_SPEC_FACILITY_FIELDS = {
+    facility_id: "fac1", name: "Refinery", type: "refinery", level: 3,
+    status: "active", damaged: false,
+    capacity: 100, custom_name: "My Refinery", faction_service: "trade",
+    missed_rent_cycles: 0, rent_per_cycle: 250, production: { output: "ore" },
+    bonus_type: "speed", bonus_value: 1.2, category: "industrial",
+    description: "A refinery.", dining_points: 0, faction_id: "iron_brotherhood",
+    is_recycler: false, labor_per_cycle: 5, leisure_points: 0,
+    maintenance_level: 0.8, maintenance_per_cycle: [{ item: "steel", qty: 1 }],
+    maintenance_satisfied: true, owner_id: "agent1", personal_service: "none",
+    power_throttled: false, recipe_id: "recipe1", rent_paid_until_tick: 1000,
+    repair_complete_tick: 0, service: "refining", tourism_upkeep: false,
+    under_construction: false, rental_fee_per_run: 10, ticks_until_complete: 0,
+  };
+
+  it("does NOT log any live-spec FacilityEntry/FacilityFactionEntry field as discovery noise", () => {
+    const prevTestLogs = process.env.TEST_LOGS;
+    process.env.TEST_LOGS = "1";
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const raw = { facilities: [LIVE_SPEC_FACILITY_FIELDS] };
+      summarizeToolResult("faction_list", raw);
+      summarizeToolResult("list", raw);
+      const discoveryFieldNames = logSpy.mock.calls
+        .map((args) => String(args[0]))
+        .filter((line) => line.includes("[discovery]") && line.includes(" facility"))
+        .map((line) => {
+          const m = line.match(/New field in \w+: "([^"]+)"/);
+          return m ? m[1] : line;
+        });
+      expect(discoveryFieldNames).toEqual([]);
+    } finally {
+      logSpy.mockRestore();
+      if (prevTestLogs === undefined) delete process.env.TEST_LOGS;
+      else process.env.TEST_LOGS = prevTestLogs;
+    }
   });
 });
