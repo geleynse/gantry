@@ -430,9 +430,19 @@ describe("handleLogin", () => {
     expect(turnStartTime.getTime()).toBeGreaterThan(now.getTime() - 5000); // Within 5 seconds
   });
 
-  it("onEvent wires combat_update into battleCache", async () => {
+  it("onEvent wires combat_update into battleCache, normalizing absolute hull to a percentage", async () => {
+    // combat_update's `hull` field is an ABSOLUTE hp value (unlike scan-and-attack.ts's
+    // BattleParticipant.hull_pct producer, which is a 0-100 percentage per the live OpenAPI
+    // spec) — both write the same BattleState.hull field, which reaches an LLM prompt verbatim
+    // (injection-registry.ts extractBattleStatus). The handler must convert using the
+    // last-known ship.max_hull from statusCache so both producers agree on units (reviewer
+    // MUST-FIX 5, 2026-08).
     const deps = makeDeps();
     await handleLogin(deps, "sess-ev", "test-agent", "pass");
+    deps.statusCache.set("test-agent", {
+      data: { ship: { max_hull: 100 } },
+      fetchedAt: Date.now(),
+    });
 
     // Simulate a combat_update push
     const client = deps._client;
@@ -453,7 +463,35 @@ describe("handleLogin", () => {
     const bs = deps.battleCache.get("test-agent");
     expect(bs).toBeDefined();
     expect(bs?.battle_id).toBe("battle-1");
+    // 75 absolute hp / 100 max_hull -> 75% — same numeric value here only because max_hull is
+    // 100; the case below (no cached max_hull) proves this is a real conversion, not a passthrough.
     expect(bs?.hull).toBe(75);
+  });
+
+  it("onEvent combat_update falls back to the -1 unknown sentinel when max_hull isn't cached yet", async () => {
+    const deps = makeDeps();
+    await handleLogin(deps, "sess-ev", "test-agent", "pass");
+    // No statusCache entry seeded — max_hull is unavailable, so the absolute `hull: 240` reading
+    // cannot be converted to a percentage. Emitting it unconverted would reintroduce the unit
+    // mismatch; emitting a wrong percentage would be worse. Must degrade to the same -1 sentinel
+    // scan-and-attack.ts already uses for "unknown".
+    const client = deps._client;
+    client.onEvent?.({
+      type: "combat_update",
+      payload: {
+        battle_id: "battle-1",
+        zone: "sector-A",
+        stance: "aggressive",
+        hull: 240,
+        shields: 50,
+        target: { name: "Pirate" },
+        status: "active",
+      },
+      receivedAt: Date.now(),
+    });
+
+    const bs = deps.battleCache.get("test-agent");
+    expect(bs?.hull).toBe(-1);
   });
 
   it("onEvent wires player_died: clears battleCache and flags death enrichment", async () => {

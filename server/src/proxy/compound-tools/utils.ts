@@ -235,7 +235,8 @@ export async function waitForDockCacheUpdate(
 export interface BattleParticipant {
   player_id?: string;
   username?: string;
-  side_id?: string;
+  /** Integer per the live OpenAPI spec — was mistyped `string` here (LOW, 2026-08 review). */
+  side_id?: number;
   auto_pilot?: boolean;
   is_npc?: boolean;
   kind?: string;

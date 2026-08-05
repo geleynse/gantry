@@ -78,7 +78,10 @@ describe("patrol_and_attack routine", () => {
       const ctx = mockContext(
         async (tool) => {
           if (tool === "get_status") return { result: { ship: { hull: 100, hull_max: 100 } } };
-          if (tool === "scan_and_attack") return { result: { outcome: "victory", kills: 1 } };
+          // Deliberately no `kills` field — the real scan_and_attack tool never returns one; this
+          // exercises the `outcome === "victory" ? 1 : 0` fallback, which requires reading the
+          // correct `status` key (regression test for the outcome/status key-name bug).
+          if (tool === "scan_and_attack") return { result: { status: "victory" } };
           if (tool === "loot_wrecks") return { result: { credits_looted: 600, total_value: 600 } };
           return { result: {} };
         },
@@ -100,7 +103,10 @@ describe("patrol_and_attack routine", () => {
         async (tool) => {
           if (tool === "get_status") return { result: { ship: { hull: 100, hull_max: 100 } } };
           if (tool === "jump") { jumpCount++; return { result: { status: "jumped" } }; }
-          if (tool === "scan_and_attack") return { result: { outcome: "victory", kills: 1 } };
+          // Deliberately no `kills` field — the real scan_and_attack tool never returns one; this
+          // exercises the `outcome === "victory" ? 1 : 0` fallback, which requires reading the
+          // correct `status` key (regression test for the outcome/status key-name bug).
+          if (tool === "scan_and_attack") return { result: { status: "victory" } };
           if (tool === "loot_wrecks") return { result: { credits_looted: 400, total_value: 400 } };
           return { result: {} };
         },
@@ -137,7 +143,7 @@ describe("patrol_and_attack routine", () => {
       const ctx = mockContext(
         async (tool) => {
           if (tool === "get_status") return { result: { ship: { hull: 80, hull_max: 100 } } };
-          if (tool === "scan_and_attack") return { result: { outcome: "defeat", kills: 0 } };
+          if (tool === "scan_and_attack") return { result: { status: "defeat" } };
           return { result: {} };
         },
         { player: { current_system: "sol" } },
@@ -152,7 +158,7 @@ describe("patrol_and_attack routine", () => {
       const ctx = mockContext(
         async (tool) => {
           if (tool === "get_status") return { result: { ship: { hull: 50, hull_max: 100 } } };
-          if (tool === "scan_and_attack") return { result: { outcome: "fled", kills: 0 } };
+          if (tool === "scan_and_attack") return { result: { status: "fled" } };
           return { result: {} };
         },
         { player: { current_system: "sol" } },
@@ -173,7 +179,10 @@ describe("patrol_and_attack routine", () => {
             if (statusCallCount === 1) return { result: { ship: { hull: 80, hull_max: 100 } } };
             return { result: { ship: { hull: 25, hull_max: 100 } } };
           }
-          if (tool === "scan_and_attack") return { result: { outcome: "victory", kills: 1 } };
+          // Deliberately no `kills` field — the real scan_and_attack tool never returns one; this
+          // exercises the `outcome === "victory" ? 1 : 0` fallback, which requires reading the
+          // correct `status` key (regression test for the outcome/status key-name bug).
+          if (tool === "scan_and_attack") return { result: { status: "victory" } };
           if (tool === "loot_wrecks") return { result: { credits_looted: 200, total_value: 200 } };
           return { result: {} };
         },
@@ -205,7 +214,7 @@ describe("patrol_and_attack routine", () => {
       const ctx = mockContext(
         async (tool) => {
           if (tool === "get_status") return { result: { ship: { hull: 100, hull_max: 100 } } };
-          if (tool === "scan_and_attack") { combatCalls++; return { result: { outcome: "victory", kills: 1 } }; }
+          if (tool === "scan_and_attack") { combatCalls++; return { result: { status: "victory" } }; }
           if (tool === "loot_wrecks") return { result: { credits_looted: 100, total_value: 100 } };
           return { result: {} };
         },

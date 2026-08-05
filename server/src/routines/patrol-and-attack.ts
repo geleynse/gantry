@@ -131,7 +131,11 @@ async function run(ctx: RoutineContext, params: PatrolAndAttackParams): Promise<
     }
 
     const combatResult = combatResp.result as Record<string, unknown> | undefined;
-    const outcome = combatResult?.outcome as string | undefined;
+    // scan_and_attack returns its outcome under `status`, not `outcome` — this read the wrong key,
+    // so `outcome` was always undefined: `kills` stayed 0 and the defeat/fled handoff below could
+    // never fire. Harmless while scan_and_attack itself only ever returned "unknown"/"ended", but
+    // now that it produces real victory/defeat/fled outcomes, patrol was silently discarding them.
+    const outcome = combatResult?.status as string | undefined;
     const kills = typeof combatResult?.kills === "number" ? combatResult.kills : (outcome === "victory" ? 1 : 0);
 
     phases.push(completePhase(combatPhase, combatResult));
