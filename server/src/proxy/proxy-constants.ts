@@ -21,8 +21,8 @@ export const STATE_CHANGING_TOOLS = new Set([
   "sell", "buy", "deposit_items", "withdraw_items", "view_storage",
   "create_sell_order", "create_buy_order", "cancel_order", "modify_order",
   "craft", "accept_mission", "complete_mission", "decline_mission", "abandon_mission",
-  "attack", "battle", "loot_wreck", "salvage_wreck", "sell_wreck", "scrap_wreck", "tow_wreck", "release_tow",
-  "buy_ship", "sell_ship", "switch_ship", "commission_ship", "claim_commission", "cancel_commission", "supply_commission", "buy_listed_ship", "list_ship_for_sale", "cancel_ship_listing",
+  "attack", "battle", "loot_wreck", "sell_wreck", "scrap_wreck", "tow_wreck", "release_tow",
+  "buy_ship", "switch_ship", "commission_ship", "cancel_commission", "supply_commission", "buy_listed_ship", "list_ship_for_sale", "cancel_ship_listing",
   "install_mod", "uninstall_mod", "faction_build", "faction_upgrade", "personal_build",
   "get_insurance_quote", "buy_insurance", "claim_insurance", "reload",
   "trade_offer", "trade_accept", "trade_decline", "trade_cancel",
@@ -30,6 +30,10 @@ export const STATE_CHANGING_TOOLS = new Set([
   // v0.327 Recycling Processor — not yet in live game action enum (verified absent 2026-05-30),
   // pre-declared so passthrough routes it the moment the game publishes it.
   "configure_recycler",
+  // Passenger loop (v0.354.0+) — boarding/dropping passengers changes ship
+  // manifest state; must go through the cache-refresh path like other
+  // state-changing tools. See compound-tools/passenger-run.ts.
+  "load_passenger", "unload_passenger",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -43,13 +47,13 @@ export const MUTATION_COMMANDS = new Set([
   // Financial
   "buy", "sell", "create_sell_order", "create_buy_order", "cancel_order", "modify_order",
   // Combat
-  "attack", "loot_wreck", "salvage_wreck", "sell_wreck", "scrap_wreck",
+  "attack", "loot_wreck", "sell_wreck", "scrap_wreck",
   // Crafting
   "craft",
   // Trade
   "trade_offer", "trade_accept",
   // Ship
-  "buy_ship", "sell_ship", "commission_ship", "buy_listed_ship", "list_ship_for_sale",
+  "buy_ship", "commission_ship", "buy_listed_ship", "list_ship_for_sale",
   // Insurance
   "buy_insurance", "claim_insurance",
   // Inventory

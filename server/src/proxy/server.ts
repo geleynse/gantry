@@ -77,13 +77,15 @@ export const STATIC_GAME_TOOLS = [
   "get_missions", "accept_mission", "complete_mission", "get_active_missions", "decline_mission", "abandon_mission",
   "view_market", "view_storage", "estimate_purchase",
   "scan", "survey_system", "search_systems", "get_nearby", "get_map", "get_poi", "find_route",
-  "attack", "battle", "get_battle_status", "get_wrecks", "loot_wreck", "salvage_wreck", "sell_wreck", "scrap_wreck", "tow_wreck", "release_tow",
+  // salvage_wreck removed from the game v0.449.0 — do not re-add (see
+  // dispatch-v1-to-v2.ts and schema-drift.test.ts INTENTIONALLY_SKIPPED).
+  "attack", "battle", "get_battle_status", "get_wrecks", "loot_wreck", "sell_wreck", "scrap_wreck", "tow_wreck", "release_tow",
   // Rescue action: jettison(item_id, qty) to create a wreck; stranded ship loots it to refuel.
   // Previously blocked as a cargo-dump footgun; operator reversed decision (fix/proxy-rescue-actions).
   "jettison",
   "cloak",
-  "buy_ship", "sell_ship", "list_ships", "switch_ship", "get_ship",
-  "shipyard_showroom", "commission_ship", "commission_quote", "claim_commission", "commission_status", "cancel_commission", "supply_commission", "browse_ships", "buy_listed_ship", "list_ship_for_sale", "cancel_ship_listing",
+  "buy_ship", "list_ships", "switch_ship", "get_ship",
+  "shipyard_showroom", "commission_ship", "commission_quote", "commission_status", "cancel_commission", "supply_commission", "browse_ships", "buy_listed_ship", "list_ship_for_sale", "cancel_ship_listing",
   "install_mod", "uninstall_mod",
   "analyze_market", "get_base", "use_item", "send_gift", "claim", "petition",
   "get_insurance_quote", "buy_insurance", "claim_insurance", "reload", "set_home_base",
@@ -103,6 +105,12 @@ export const STATIC_GAME_TOOLS = [
   // Read-only informational tools
   "get_system_agents",  // list agents/players in the current system
   "view_insurance",     // view current insurance policy details
+  // Passenger loop (v0.354.0+) — list_station_passengers/load_passenger/
+  // list_passengers are called directly by the passenger_run compound tool
+  // (compound-tools/passenger-run.ts); unload_passenger is the agent-facing
+  // delivery step it hands back in `next_action`. Must stay here so the
+  // static-fallback path (game unreachable at startup) can still serve them.
+  "list_station_passengers", "load_passenger", "list_passengers", "unload_passenger",
 ];
 
 interface GameHealth {

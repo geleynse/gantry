@@ -249,6 +249,41 @@ describe("tool-registry", () => {
     it("refuel is NOT in NO_PARAM_DESCRIPTIONS (moved to TOOL_SCHEMAS)", () => {
       expect(NO_PARAM_DESCRIPTIONS.refuel).toBeUndefined();
     });
+
+    // -----------------------------------------------------------------------
+    // salvage_wreck — removed from the game v0.449.0, do not re-add
+    // -----------------------------------------------------------------------
+
+    it("does NOT contain salvage_wreck (removed from the game, v0.449.0)", () => {
+      // Regression guard for the fallback-registration path: registerPassthroughTools
+      // (server.ts:340) iterates STATIC_GAME_TOOLS and looks up each name here —
+      // if salvage_wreck were still defined here AND still in STATIC_GAME_TOOLS,
+      // agents would see "Salvage a wreck for materials." for a call the game
+      // rejects, on any startup where the game server is unreachable.
+      expect(TOOL_SCHEMAS.salvage_wreck).toBeUndefined();
+    });
+
+    // -----------------------------------------------------------------------
+    // Passenger loop (v0.354.0+) — load_passenger/unload_passenger schemas
+    // -----------------------------------------------------------------------
+
+    it("load_passenger is in TOOL_SCHEMAS with a destination param", () => {
+      const entry = TOOL_SCHEMAS.load_passenger;
+      expect(entry).toBeDefined();
+      expect(entry.description).toMatch(/passenger/i);
+      const schema = entry.schema;
+      expect(schema.safeParse({ destination: "station-alpha" }).success).toBe(true);
+      expect(schema.safeParse({}).success).toBe(false);
+    });
+
+    it("unload_passenger is in TOOL_SCHEMAS with a name param", () => {
+      const entry = TOOL_SCHEMAS.unload_passenger;
+      expect(entry).toBeDefined();
+      expect(entry.description).toMatch(/passenger/i);
+      const schema = entry.schema;
+      expect(schema.safeParse({ name: "all" }).success).toBe(true);
+      expect(schema.safeParse({}).success).toBe(false);
+    });
   });
 
   describe("NO_PARAM_DESCRIPTIONS", () => {
@@ -257,6 +292,11 @@ describe("tool-registry", () => {
       expect(NO_PARAM_DESCRIPTIONS.mine).toBeTruthy();
       expect(NO_PARAM_DESCRIPTIONS.dock).toBeTruthy();
       expect(NO_PARAM_DESCRIPTIONS.undock).toBeTruthy();
+    });
+
+    it("contains list_station_passengers and list_passengers (passenger loop, v0.354.0+)", () => {
+      expect(NO_PARAM_DESCRIPTIONS.list_station_passengers).toBeTruthy();
+      expect(NO_PARAM_DESCRIPTIONS.list_passengers).toBeTruthy();
     });
   });
 

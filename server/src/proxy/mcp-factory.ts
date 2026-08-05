@@ -177,7 +177,7 @@ export const OUR_SCHEMA_PARAMS: Record<string, string[]> = {
   decline_mission: ["template_id"],
   attack: ["target_id"],
   loot_wreck: ["wreck_id", "item_id", "quantity"],
-  salvage_wreck: ["wreck_id"],
+  // salvage_wreck removed from the game v0.449.0 — do not re-add.
   chat: ["channel", "content", "target_id"],
   get_chat_history: ["channel", "target_id", "before", "limit"],
   find_route: ["destination_system_id"],

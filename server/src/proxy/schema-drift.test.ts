@@ -4,13 +4,18 @@
  * STALE commands (we proxy something the server no longer has) → hard fail.
  * MISSING commands (server has something we don't proxy) → warning only.
  *
- * Skipped gracefully on:
- *   - Network errors (game server unreachable)
- *   - HTTP 429 (rate limited)
- *   - SKIP_API_SYNC=1 environment variable
+ * Skipped ONLY on:
+ *   - SKIP_API_SYNC=1 environment variable (explicit operator opt-out)
+ *
+ * Network errors, HTTP 429 (rate limited), and any other fetch failure are a
+ * HARD FAILURE when SKIP_API_SYNC is not set. This test exists to catch drift
+ * against the live server — quietly turning "the server was unreachable" into
+ * a pass (or an indistinguishable skip) would let real STALE/MISSING drift go
+ * undetected for as long as CI's network path to game.spacemolt.com is down.
  */
 
 import { describe, it, expect } from "bun:test";
+import { INTENTIONALLY_SKIPPED as DRIFT_MONITOR_INTENTIONALLY_SKIPPED } from "../services/api-drift-monitor.js";
 
 // ---- What we proxy -------------------------------------------------------
 
@@ -34,8 +39,8 @@ const V1_PROXIED_TOOLS = new Set([
   // Rescue action: jettison fuel cells → stranded ship loots wreck → refuels from cargo cells.
   // Previously skipped as a cargo-dump footgun; operator reversed decision (fix/proxy-rescue-actions).
   "jettison",
-  "sell_ship", "list_ships", "switch_ship", "get_ship",
-  "commission_ship", "commission_quote", "claim_commission",
+  "list_ships", "switch_ship", "get_ship",
+  "commission_ship", "commission_quote",
   "commission_status", "cancel_commission", "supply_commission", "browse_ships",
   "buy_listed_ship", "list_ship_for_sale", "cancel_ship_listing",
   "install_mod", "uninstall_mod",
@@ -66,6 +71,17 @@ const V1_PROXIED_TOOLS = new Set([
   // Read-only informational tools — safe passthrough, no side effects
   "get_system_agents",  // list of agents/players in the current system
   "view_insurance",     // view current insurance policy details
+  // Passenger loop (v0.354.0+) — list_station_passengers/load_passenger/
+  // list_passengers are called directly by the passenger_run compound tool
+  // (compound-tools/passenger-run.ts); unload_passenger is the agent-facing
+  // delivery step it hands back in `next_action`. All four have dedicated
+  // result summarizers (passenger-summarizer.ts) and are registered in
+  // STATIC_GAME_TOOLS (server.ts) plus TOOL_SCHEMAS/NO_PARAM_DESCRIPTIONS
+  // (tool-registry.ts), so the static-fallback path can actually serve them.
+  // This set here only drives the STALE/MISSING drift check below — it does
+  // NOT itself register or proxy anything. If the game drops one of these,
+  // remove it from all three production lists too, not just this one.
+  "list_station_passengers", "load_passenger", "list_passengers", "unload_passenger",
 ]);
 
 // ---- Intentional skip list -----------------------------------------------
@@ -128,6 +144,8 @@ const INTENTIONALLY_SKIPPED = new Set([
   "personal_build",    // removed
   "types",             // removed (was facility sub-tool)
   "upgrades",          // removed (was facility sub-tool)
+  "sell_ship",         // v0.508.0 — replaced by sell_ship_to_order
+  "claim_commission",  // v0.376.0 — removed
 
   // New server tools not yet evaluated for proxying
   "get_action_log",           // new — action history log
@@ -196,6 +214,33 @@ interface ServerTool {
   inputSchema?: { type?: string; properties?: Record<string, unknown> };
 }
 
+/**
+ * Hard upper bound on the whole live-fetch attempt, independent of the
+ * per-request `AbortSignal.timeout()` calls below.
+ *
+ * Measured directly against a black-holed host (TCP SYN dropped, no RST):
+ * `AbortSignal.timeout()` does NOT reliably cancel an in-flight connect() in
+ * every environment — one observed run took 135s to reject with a plain
+ * connection error instead of aborting at the requested 10s. Since this fetch
+ * now runs once at module scope (see below) instead of inside an `it()`, it
+ * is no longer bounded by bun's own per-test timeout either. Without this
+ * explicit deadline, a hung/black-holed game server could stall this test
+ * file's module load — and therefore the whole `bun test` run — for however
+ * long the OS connect timeout takes, rather than failing fast.
+ */
+const OVERALL_FETCH_TIMEOUT_MS = 15_000;
+
+/** Resolve with `fallback` if `promise` hasn't settled within `ms`. Never rejects. */
+function withDeadline<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      () => { clearTimeout(timer); resolve(fallback); },
+    );
+  });
+}
+
 async function fetchServerTools(): Promise<ServerTool[] | null> {
   try {
     const initResp = await fetch(GAME_MCP_URL, {
@@ -257,16 +302,51 @@ async function fetchServerTools(): Promise<ServerTool[] | null> {
 const skipSync = process.env.SKIP_API_SYNC === "1";
 const maybeDescribe = skipSync ? describe.skip : describe;
 
+// Fetched once, up front, instead of once per `it()`.
+//
+// IMPORTANT: `liveServerTools === null` (fetch failed, timed out, hit a
+// non-2xx status, or was rate-limited) is NOT a reason to skip. The only
+// legitimate skip is the explicit operator opt-out (SKIP_API_SYNC=1, which
+// short-circuits this to `null` without even trying the fetch, and which
+// `maybeDescribe` turns into a real `describe.skip`). If SKIP_API_SYNC is
+// unset and the live fetch still failed, `requireLiveServerTools()` below
+// throws inside each live test, producing a hard, visible failure — never a
+// silent pass or an easy-to-miss skip. A CI run against a hung/unreachable
+// game server must go RED, not green, or this file's drift protection can
+// vanish for weeks with nothing but a log line to notice.
+const liveServerTools: ServerTool[] | null = skipSync
+  ? null
+  : await withDeadline(fetchServerTools(), OVERALL_FETCH_TIMEOUT_MS, null);
+
+if (!skipSync && liveServerTools === null) {
+  console.error(
+    "\n" +
+    "############################################################\n" +
+    "# [schema-drift] game.spacemolt.com was unreachable, timed out,\n" +
+    "# or was rate-limited. The STALE / MISSING / tool-count checks\n" +
+    "# below are about to FAIL LOUDLY rather than skip — this file's\n" +
+    "# live drift protection did NOT execute this run and that is\n" +
+    "# being treated as a hard failure, not a pass.\n" +
+    "# Set SKIP_API_SYNC=1 to explicitly opt out instead.\n" +
+    "############################################################\n",
+  );
+}
+
+/** Returns the fetched live server tools, or throws if unavailable (see banner above). */
+function requireLiveServerTools(): ServerTool[] {
+  if (liveServerTools === null) {
+    throw new Error(
+      "[schema-drift] live game server tools unavailable (unreachable/timed out/rate-limited) " +
+      "and SKIP_API_SYNC=1 was not set — failing loudly instead of silently skipping. " +
+      "Set SKIP_API_SYNC=1 to explicitly opt out of this check.",
+    );
+  }
+  return liveServerTools;
+}
+
 maybeDescribe("API sync — live game server schema", () => {
-  it("no STALE proxied commands (hard fail if server dropped something we rely on)", async () => {
-    const serverTools = await fetchServerTools();
-
-    if (serverTools === null) {
-      // Game server unreachable or rate-limited — skip gracefully
-      console.log("[schema-drift] Game server unreachable or rate-limited — skipping API sync");
-      return;
-    }
-
+  it("no STALE proxied commands (hard fail if server dropped something we rely on)", () => {
+    const serverTools = requireLiveServerTools();
     const serverToolNames = new Set(serverTools.map((t) => t.name));
 
     // STALE: we proxy it, server no longer has it, not on the skip list
@@ -288,14 +368,8 @@ maybeDescribe("API sync — live game server schema", () => {
     expect(stale).toEqual([]);
   });
 
-  it("report MISSING commands (warning — server has tools we don't proxy)", async () => {
-    const serverTools = await fetchServerTools();
-
-    if (serverTools === null) {
-      console.log("[schema-drift] Game server unreachable or rate-limited — skipping API sync");
-      return;
-    }
-
+  it("report MISSING commands (warning — server has tools we don't proxy)", () => {
+    const serverTools = requireLiveServerTools();
     const serverToolNames = serverTools.map((t) => t.name);
 
     // MISSING: server has it, we don't proxy it, not intentionally skipped
@@ -318,14 +392,8 @@ maybeDescribe("API sync — live game server schema", () => {
     expect(true).toBe(true);
   });
 
-  it("server tool count is within expected range (sanity check)", async () => {
-    const serverTools = await fetchServerTools();
-
-    if (serverTools === null) {
-      console.log("[schema-drift] Game server unreachable or rate-limited — skipping API sync");
-      return;
-    }
-
+  it("server tool count is within expected range (sanity check)", () => {
+    const serverTools = requireLiveServerTools();
     const count = serverTools.length;
     console.log(`[schema-drift] Game server exposes ${count} tools`);
 
@@ -405,5 +473,42 @@ describe("schema-drift — static consistency checks", () => {
     // Only jettison was unblocked; self_destruct stays denied.
     expect(INTENTIONALLY_SKIPPED.has("self_destruct")).toBe(true);
     expect(V1_PROXIED_TOOLS.has("self_destruct")).toBe(false);
+  });
+
+  it("sell_ship remains in INTENTIONALLY_SKIPPED (removed v0.508.0, replaced by sell_ship_to_order)", () => {
+    // Regression guard — on its own, deleting this entry trips no other test:
+    // sell_ship no longer exists on the live server, so the MISSING check
+    // (server has it, we don't proxy it) can never see it either. Without
+    // this explicit assertion the entry is pure documentation. Mirrors the
+    // self_destruct/jettison guards above.
+    expect(INTENTIONALLY_SKIPPED.has("sell_ship")).toBe(true);
+    expect(V1_PROXIED_TOOLS.has("sell_ship")).toBe(false);
+  });
+
+  it("claim_commission remains in INTENTIONALLY_SKIPPED (removed v0.376.0)", () => {
+    // Same reasoning as sell_ship above.
+    expect(INTENTIONALLY_SKIPPED.has("claim_commission")).toBe(true);
+    expect(V1_PROXIED_TOOLS.has("claim_commission")).toBe(false);
+  });
+
+  it("mirrors api-drift-monitor.ts's INTENTIONALLY_SKIPPED exactly", () => {
+    // api-drift-monitor.ts keeps its own copy of this list (TODO there: extract
+    // to a shared constants module). Nothing enforced the two staying in sync —
+    // sell_ship/claim_commission were added here without updating the other
+    // copy. Assert set equality so the two files cannot silently diverge again.
+    const here = [...INTENTIONALLY_SKIPPED].sort();
+    const there = [...DRIFT_MONITOR_INTENTIONALLY_SKIPPED].sort();
+    const onlyHere = here.filter((t) => !DRIFT_MONITOR_INTENTIONALLY_SKIPPED.has(t));
+    const onlyThere = there.filter((t) => !INTENTIONALLY_SKIPPED.has(t));
+    if (onlyHere.length > 0 || onlyThere.length > 0) {
+      console.error(
+        "[schema-drift] INTENTIONALLY_SKIPPED mirror mismatch between " +
+        "schema-drift.test.ts and services/api-drift-monitor.ts:\n" +
+        (onlyHere.length > 0 ? `  only here: ${onlyHere.join(", ")}\n` : "") +
+        (onlyThere.length > 0 ? `  only in api-drift-monitor.ts: ${onlyThere.join(", ")}\n` : ""),
+      );
+    }
+    expect(onlyHere).toEqual([]);
+    expect(onlyThere).toEqual([]);
   });
 });

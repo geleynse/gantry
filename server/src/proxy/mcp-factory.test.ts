@@ -35,6 +35,23 @@ describe("mcp-factory", () => {
     expect(STATIC_GAME_TOOLS).toContain("configure_recycler");
   });
 
+  it("STATIC_GAME_TOOLS does NOT contain salvage_wreck (removed from the game, v0.449.0)", () => {
+    // Regression guard: registerPassthroughTools (server.ts) iterates this list on the
+    // static-fallback path (game unreachable at startup). If salvage_wreck were still
+    // here it would be registered and agent-visible with a description for a call the
+    // game now rejects.
+    expect(STATIC_GAME_TOOLS).not.toContain("salvage_wreck");
+  });
+
+  it("STATIC_GAME_TOOLS contains the passenger loop (v0.354.0+)", () => {
+    // Must be present so the static-fallback path can serve passenger_run's
+    // underlying calls even when the game server is unreachable at startup.
+    expect(STATIC_GAME_TOOLS).toContain("list_station_passengers");
+    expect(STATIC_GAME_TOOLS).toContain("load_passenger");
+    expect(STATIC_GAME_TOOLS).toContain("list_passengers");
+    expect(STATIC_GAME_TOOLS).toContain("unload_passenger");
+  });
+
   it("OUR_SCHEMA_PARAMS has expected tool entries", () => {
     expect(OUR_SCHEMA_PARAMS.jump).toEqual(["system_id"]);
     expect(OUR_SCHEMA_PARAMS.travel).toEqual(["destination_id"]);
@@ -462,8 +479,8 @@ describe("OUR_SCHEMA_PARAMS — navigation and social tools", () => {
     expect(OUR_SCHEMA_PARAMS.loot_wreck).toContain("quantity");
   });
 
-  it("salvage_wreck has wreck_id param", () => {
-    expect(OUR_SCHEMA_PARAMS.salvage_wreck).toEqual(["wreck_id"]);
+  it("does NOT contain salvage_wreck (removed from the game, v0.449.0)", () => {
+    expect(OUR_SCHEMA_PARAMS.salvage_wreck).toBeUndefined();
   });
 
   it("get_chat_history has channel, target_id, before, limit params", () => {

@@ -159,7 +159,11 @@ describe("MUTATION_COMMANDS", () => {
   it("contains expected combat commands", () => {
     expect(MUTATION_COMMANDS.has("attack")).toBe(true);
     expect(MUTATION_COMMANDS.has("loot_wreck")).toBe(true);
-    expect(MUTATION_COMMANDS.has("salvage_wreck")).toBe(true);
+    expect(MUTATION_COMMANDS.has("sell_wreck")).toBe(true);
+  });
+
+  it("does NOT contain salvage_wreck (removed from the game, v0.449.0)", () => {
+    expect(MUTATION_COMMANDS.has("salvage_wreck")).toBe(false);
   });
 
   it("contains crafting and trade commands", () => {

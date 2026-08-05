@@ -192,10 +192,8 @@ export const TOOL_SCHEMAS: Record<string, { description: string; schema: z.ZodTy
       quantity: z.number().int().min(1).optional().describe("Amount to loot"),
     }),
   },
-  salvage_wreck: {
-    description: "Salvage a wreck for materials.",
-    schema: z.object({ wreck_id: z.string().describe("Wreck ID") }),
-  },
+  // salvage_wreck removed from the game v0.449.0 — do not re-add. Wreck
+  // surface is get_wrecks/loot_wreck/tow_wreck/release_tow/scrap_wreck/sell_wreck.
   chat: {
     description: "Send a chat message.",
     schema: z.object({
@@ -420,6 +418,20 @@ export const TOOL_SCHEMAS: Record<string, { description: string; schema: z.ZodTy
       item_id: z.string().optional().describe("Item ID to consume as fuel (e.g. 'fuel_cell'). Omit for station refuel."),
     }),
   },
+
+  // Passenger loop (v0.354.0+) — see compound-tools/passenger-run.ts.
+  load_passenger: {
+    description: "Board waiting passengers bound for a destination station into a free berth.",
+    schema: z.object({
+      destination: z.string().describe("Destination station ID — loads everyone waiting for this destination."),
+    }),
+  },
+  unload_passenger: {
+    description: "Drop off a passenger currently aboard. Delivering at their destination pays the fare; unloading elsewhere strands them (no pay, costs standing).",
+    schema: z.object({
+      name: z.string().describe("Passenger name/ID to unload, or \"all\" to unload everyone aboard."),
+    }),
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -441,7 +453,6 @@ export const NO_PARAM_DESCRIPTIONS: Record<string, string> = {
   get_nearby: "Get nearby systems and POIs.",
   list_ships: "List your owned ships.",
   get_ship: "Get details of your current ship.",
-  sell_ship: "Sell your current ship.",
   get_skills: "Get your character skills.",
   help: "Get game help information.",
   forum_list: "List forum threads.",
@@ -453,6 +464,9 @@ export const NO_PARAM_DESCRIPTIONS: Record<string, string> = {
   // Informational read-only tools
   get_system_agents: "List agents and players in the current system.",
   view_insurance: "View your current hull insurance policy details.",
+  // Passenger loop (v0.354.0+) — see compound-tools/passenger-run.ts.
+  list_station_passengers: "List citizens waiting to be picked up at your docked station, with destinations and fares.",
+  list_passengers: "List passengers currently aboard your ship, with fare and delivery timer info.",
 };
 
 // ---------------------------------------------------------------------------
