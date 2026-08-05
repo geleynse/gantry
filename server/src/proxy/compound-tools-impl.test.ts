@@ -99,6 +99,48 @@ function makeDeps(
   };
 }
 
+/**
+ * Fixtures below for `get_battle_status` mirror the REAL `GetBattleStatusResponse`/
+ * `BattleParticipant` shapes from the live OpenAPI spec (game.spacemolt.com/api/openapi.json,
+ * x-gameserver-version v0.552.0, verified 2026-08-04): `additionalProperties: false`, no
+ * `status`/`zone`/`stance`/`hull`/`shields`/`target` fields at the top level — only `battle_id`,
+ * `combat_state`, `is_participant`, `participants`, `sides`, `system_id`, `tick_duration`. A
+ * previous version of these fixtures mocked a fictitious top-level `status`/`hull`/`zone` shape
+ * that the real server cannot send — see docs/api-drift-2026-08.md, item 5.
+ */
+function selfBattleRow(
+  hullPct: number,
+  opts: { zone?: string; shieldPct?: number; stance?: string } = {},
+): Record<string, unknown> {
+  return {
+    player_id: "self_pid",
+    username: "agent",
+    side_id: "side_a",
+    auto_pilot: false,
+    // `stance` is the ONLY self-identifying signal on a participant row ("self only" per the
+    // spec) — present here to mark this as "our" row.
+    stance: opts.stance ?? "fire",
+    zone: opts.zone ?? "outer",
+    hull_pct: hullPct,
+    shield_pct: opts.shieldPct ?? 100,
+  };
+}
+
+function enemyBattleRow(
+  hullPct: number,
+  playerId = "p1",
+): Record<string, unknown> {
+  return {
+    player_id: playerId,
+    username: "pirate_player",
+    side_id: "side_b",
+    auto_pilot: true,
+    zone: "outer",
+    hull_pct: hullPct,
+    // Deliberately no `stance` — only OUR row carries it.
+  };
+}
+
 // ---------------------------------------------------------------------------
 // stripPendingFields
 // ---------------------------------------------------------------------------
@@ -1150,19 +1192,29 @@ describe("multiSell", () => {
 describe("scanAndAttack", () => {
   const OUR_AGENTS = new Set<string>();
 
+  /**
+   * `battleStatuses[0]` is always consumed by the pre-loop battle-init check
+   * (`BATTLE_INIT_MAX_TICKS` loop); `battleStatuses[1..]` are consumed by the main battle loop,
+   * one per tick. Real `is_participant`/`participants[]` shapes only — see the fixture-shape note
+   * above `selfBattleRow`/`enemyBattleRow`.
+   */
   function makeFullCombatClient(overrides: {
     battleStatuses?: Array<Record<string, unknown>>;
     attackError?: unknown;
     nearbyEntities?: Array<Record<string, unknown>>;
   } = {}): GameClientLike {
-    const statuses = overrides.battleStatuses ?? [{ status: "victory", hull: 80 }];
+    const statuses = overrides.battleStatuses ?? [
+      { is_participant: true, battle_id: "b1", system_id: "sol" },
+      { is_participant: true, battle_id: "b1", system_id: "sol", participants: [selfBattleRow(80), enemyBattleRow(0)] },
+      { is_participant: false, battle_id: "b1", system_id: "sol" },
+    ];
     let statusIdx = 0;
 
     return makeClient({
       execute: async (tool) => {
         if (tool === "get_nearby") {
           const nearby = overrides.nearbyEntities ?? [
-            { username: "pirate_player", player_id: "pid_1", anonymous: false, in_combat: false },
+            { username: "pirate_player", player_id: "p1", anonymous: false, in_combat: false },
           ];
           return { result: { nearby } };
         }
@@ -1272,8 +1324,10 @@ describe("scanAndAttack", () => {
   it("completes a full battle loop and returns victory", async () => {
     const client = makeFullCombatClient({
       battleStatuses: [
-        { status: "active", hull: 80, zone: "outer" },
-        { status: "victory", hull: 75 },
+        { is_participant: true, battle_id: "b1", system_id: "sol" }, // init check
+        { is_participant: true, battle_id: "b1", system_id: "sol", participants: [selfBattleRow(80), enemyBattleRow(50)] }, // tick 0
+        { is_participant: true, battle_id: "b1", system_id: "sol", participants: [selfBattleRow(75), enemyBattleRow(0)] }, // tick 1: enemy destroyed
+        { is_participant: false, battle_id: "b1", system_id: "sol" }, // tick 2: battle over
       ],
     });
     const deps = makeDeps("agent", client, makeCombatCache("agent"));
@@ -1283,18 +1337,173 @@ describe("scanAndAttack", () => {
     expect(result.loot).toBeTruthy();
   });
 
+  it("does not treat a schema-valid is_participant:false init response as battle having started", async () => {
+    // A `get_battle_status` call can succeed (no error) while still reporting
+    // is_participant:false — e.g. a stale read that raced ahead of the server registering the
+    // just-issued attack. Gating "battle started" on `!error` alone (the pre-fix behavior) would
+    // treat this as a started battle; it must instead keep retrying up to BATTLE_INIT_MAX_TICKS
+    // and finally report battle_init_timeout.
+    let getStatusCalls = 0;
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "get_nearby")
+          return { result: { nearby: [{ username: "pirate_player", player_id: "p1", in_combat: false, anonymous: false }] } };
+        if (tool === "attack") return { result: { ok: true } };
+        if (tool === "get_battle_status") {
+          getStatusCalls++;
+          return { result: { is_participant: false, battle_id: "", system_id: "sol" } }; // never starts
+        }
+        return { result: { ok: true } };
+      },
+    });
+    const deps = makeDeps("agent", client, makeCombatCache("agent"));
+
+    const result = await scanAndAttack(deps, OUR_AGENTS);
+
+    expect(result.status).toBe("battle_init_timeout");
+    expect(getStatusCalls).toBe(5); // BATTLE_INIT_MAX_TICKS
+  });
+
+  it("battle-over detection actually fires: loop exits in exactly 3 ticks once is_participant goes false, not MAX_BATTLE_TICKS (30)", async () => {
+    // Before the fix, the loop gated on a `.status` field the real API never sends, so this
+    // exact scenario (is_participant flips false on tick 2) could never be detected — the loop
+    // always ran to MAX_BATTLE_TICKS regardless. Asserting the EXACT get_battle_status call count
+    // (not "at least") is what proves detection fires on the correct tick, not just eventually.
+    let battleStatusCalls = 0;
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "get_nearby")
+          return { result: { nearby: [{ username: "pirate_player", player_id: "p1", in_combat: false, anonymous: false }] } };
+        if (tool === "attack") return { result: { ok: true } };
+        if (tool === "get_battle_status") {
+          battleStatusCalls++;
+          if (battleStatusCalls === 1) return { result: { is_participant: true, battle_id: "b1", system_id: "sol" } }; // init check
+          if (battleStatusCalls === 2) {
+            return { result: { is_participant: true, battle_id: "b1", system_id: "sol", participants: [selfBattleRow(80), enemyBattleRow(50)] } }; // loop tick 0
+          }
+          if (battleStatusCalls === 3) {
+            return { result: { is_participant: true, battle_id: "b1", system_id: "sol", participants: [selfBattleRow(80), enemyBattleRow(0)] } }; // loop tick 1
+          }
+          return { result: { is_participant: false, battle_id: "b1", system_id: "sol" } }; // loop tick 2: ends
+        }
+        if (tool === "get_wrecks") return { result: { wrecks: [] } };
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, makeCombatCache("agent"));
+
+    const result = await scanAndAttack(deps, OUR_AGENTS);
+
+    // 1 init-check call + exactly 3 main-loop ticks = 4 total get_battle_status calls.
+    expect(battleStatusCalls).toBe(4);
+    expect(result.status).toBe("victory");
+  });
+
+  it("degrades safely when self is never identifiable in participants[] (no row carries `stance`)", async () => {
+    // `BattleParticipant.stance` is documented "self only" but is NOT a required field — a
+    // spec-legal response can omit it from every row. The cache must fall back to -1/"unknown"
+    // for hull/shields/zone that tick rather than crash or fabricate a value, and the loop must
+    // still terminate via `is_participant` (which does not depend on self-identification at all).
+    const battleCache = new Map<string, BattleStateForCache | null>();
+    let battleStatusCalls = 0;
+    let midFightSnapshot: BattleStateForCache | null | undefined;
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "get_nearby")
+          return { result: { nearby: [{ username: "pirate_player", player_id: "p1", in_combat: false, anonymous: false }] } };
+        if (tool === "attack") return { result: { ok: true } };
+        if (tool === "get_battle_status") {
+          battleStatusCalls++;
+          if (battleStatusCalls === 1) return { result: { is_participant: true, battle_id: "b1", system_id: "sol" } };
+          if (battleStatusCalls === 2) {
+            // Two participant rows, NEITHER carries `stance` — self is unidentifiable.
+            return {
+              result: {
+                is_participant: true,
+                battle_id: "b1",
+                system_id: "sol",
+                participants: [
+                  { player_id: "self_pid", username: "agent", side_id: "side_a", auto_pilot: false, hull_pct: 60, zone: "outer" },
+                  { player_id: "p1", username: "pirate_player", side_id: "side_b", auto_pilot: true, hull_pct: 40, zone: "outer" },
+                ],
+              },
+            };
+          }
+          // Capture the cache state written for tick 0 (call #2) before the tool clears it.
+          midFightSnapshot = battleCache.get("agent");
+          return { result: { is_participant: false, battle_id: "b1", system_id: "sol" } };
+        }
+        if (tool === "get_wrecks") return { result: { wrecks: [] } };
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, makeCombatCache("agent"), { battleCache });
+
+    const result = await scanAndAttack(deps, OUR_AGENTS);
+
+    // The un-identifiable tick wrote the documented sentinels, not a fabricated/undefined value.
+    expect(midFightSnapshot?.hull).toBe(-1);
+    expect(midFightSnapshot?.shields).toBe(-1);
+    expect(midFightSnapshot?.zone).toBe("unknown");
+
+    // Loop still terminated (is_participant does not depend on self-identification).
+    expect(battleStatusCalls).toBe(3);
+    // No hull/shield data could be attributed to self, and neither side's hull_pct hit 0 from a
+    // row we could confidently call ours — honest "ended", not a fabricated victory/defeat.
+    expect(result.status).toBe("ended");
+    // Cache is cleared after the fight; the point being verified is that the loop never crashed
+    // or got stuck reading undefined.hull_pct while self was unidentifiable mid-fight.
+    expect(battleCache.get("agent")).toBeNull();
+  });
+
+  it("returns defeat when our own hull_pct reaches 0 before the battle ends", async () => {
+    let battleStatusCalls = 0;
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "get_nearby")
+          return { result: { nearby: [{ username: "pirate_player", player_id: "p1", in_combat: false, anonymous: false }] } };
+        if (tool === "attack") return { result: { ok: true } };
+        if (tool === "get_battle_status") {
+          battleStatusCalls++;
+          if (battleStatusCalls === 1) return { result: { is_participant: true, battle_id: "b1", system_id: "sol" } };
+          if (battleStatusCalls === 2) {
+            // Our hull is destroyed this tick; enemy is still healthy.
+            return { result: { is_participant: true, battle_id: "b1", system_id: "sol", participants: [selfBattleRow(0), enemyBattleRow(80)] } };
+          }
+          return { result: { is_participant: false, battle_id: "b1", system_id: "sol" } };
+        }
+        if (tool === "get_wrecks") return { result: { wrecks: [] } };
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, makeCombatCache("agent"));
+
+    const result = await scanAndAttack(deps, OUR_AGENTS);
+
+    expect(result.status).toBe("defeat");
+    // Defeat must win the classification even though loot_wrecks would still be reachable via
+    // the "ended" bucket — self hull_pct<=0 must be checked BEFORE the target-hull victory check.
+    expect(result.loot).toBeNull();
+  });
+
   it("switches stance to brace when hull drops below 30%", async () => {
     const stanceCalls: string[] = [];
+    let battleStatusCalls = 0;
     const client = makeClient({
       execute: async (tool, args) => {
         if (tool === "get_nearby")
           return { result: { nearby: [{ username: "pirate_player", player_id: "p1", in_combat: false, anonymous: false }] } };
         if (tool === "attack") return { result: {} };
-        if (tool === "get_battle_status" && stanceCalls.length === 0) {
-          return { result: { status: "active", hull: 25, zone: "outer" } };
-        }
         if (tool === "get_battle_status") {
-          return { result: { status: "victory", hull: 25 } };
+          battleStatusCalls++;
+          if (battleStatusCalls === 1) return { result: { is_participant: true, battle_id: "b1", system_id: "sol" } }; // init
+          if (battleStatusCalls === 2) {
+            return { result: { is_participant: true, battle_id: "b1", system_id: "sol", participants: [selfBattleRow(25), enemyBattleRow(50)] } };
+          }
+          if (battleStatusCalls === 3) {
+            return { result: { is_participant: true, battle_id: "b1", system_id: "sol", participants: [selfBattleRow(25), enemyBattleRow(0)] } };
+          }
+          return { result: { is_participant: false, battle_id: "b1", system_id: "sol" } };
         }
         if (tool === "battle" && args?.action === "stance") {
           stanceCalls.push(String(args.stance));
@@ -1313,8 +1522,7 @@ describe("scanAndAttack", () => {
 
   it("switches stance to flee when hull drops below 20%", async () => {
     const stanceCalls: string[] = [];
-    // Use a state machine: first N get_battle_status calls are for battle init
-    // (up to BATTLE_INIT_MAX_TICKS=3), then the real battle loop starts.
+    // Use a state machine: first call is battle init, then the real battle loop starts.
     let battleInitDone = false;
     let battleLoopTick = 0;
     const client = makeClient({
@@ -1324,14 +1532,14 @@ describe("scanAndAttack", () => {
         if (tool === "attack") return { result: {} };
         if (tool === "get_battle_status") {
           if (!battleInitDone) {
-            // First call: battle is initialised (init check succeeds)
             battleInitDone = true;
-            return { result: { status: "active", hull: 80 } };
+            return { result: { is_participant: true, battle_id: "b1", system_id: "sol" } };
           }
-          // Battle loop ticks
           battleLoopTick++;
-          if (battleLoopTick === 1) return { result: { status: "active", hull: 15, zone: "outer" } };
-          return { result: { status: "fled", hull: 15 } };
+          if (battleLoopTick === 1) {
+            return { result: { is_participant: true, battle_id: "b1", system_id: "sol", participants: [selfBattleRow(15), enemyBattleRow(50)] } };
+          }
+          return { result: { is_participant: false, battle_id: "b1", system_id: "sol" } };
         }
         if (tool === "battle" && args?.action === "stance") {
           stanceCalls.push(String(args.stance));
@@ -1342,12 +1550,16 @@ describe("scanAndAttack", () => {
     });
     const deps = makeDeps("agent", client, makeCombatCache("agent"));
 
-    await scanAndAttack(deps, OUR_AGENTS);
+    const result = await scanAndAttack(deps, OUR_AGENTS);
     expect(stanceCalls).toContain("flee");
+    // Enemy hull was never observed at 0 and our hull stayed above 0 — the only signal left is
+    // that WE commanded flee, so the honest classification is "fled".
+    expect(result.status).toBe("fled");
   });
 
   it("targets specific entity when targetArg is provided", async () => {
     const attackTargets: string[] = [];
+    let battleStatusCalls = 0;
     const client = makeClient({
       execute: async (tool, args) => {
         if (tool === "get_nearby")
@@ -1356,7 +1568,11 @@ describe("scanAndAttack", () => {
           attackTargets.push(String(args?.target_id));
           return { result: {} };
         }
-        if (tool === "get_battle_status") return { result: { status: "victory", hull: 80 } };
+        if (tool === "get_battle_status") {
+          battleStatusCalls++;
+          if (battleStatusCalls === 1) return { result: { is_participant: true, battle_id: "b1", system_id: "sol" } };
+          return { result: { is_participant: false, battle_id: "b1", system_id: "sol" } };
+        }
         if (tool === "get_wrecks") return { result: { wrecks: [] } };
         return { result: {} };
       },
@@ -1379,6 +1595,52 @@ describe("scanAndAttack", () => {
     expect(battleCache.get("agent")).toBeNull();
   });
 
+  it("writes real hull_pct/zone (not -1/'unknown' placeholders) into the battle cache while self is identifiable", async () => {
+    // This is the dashboard-facing regression from the bug report: the cache used to be written
+    // with constants (hull:-1, zone:"unknown") every tick because it read nonexistent top-level
+    // fields. Capture the cache snapshot mid-fight and assert it carries the real participant data.
+    const battleCache = new Map<string, BattleStateForCache | null>();
+    let battleStatusCalls = 0;
+    let midFightSnapshot: BattleStateForCache | null | undefined;
+    const client = makeClient({
+      execute: async (tool) => {
+        if (tool === "get_nearby")
+          return { result: { nearby: [{ username: "pirate_player", player_id: "p1", in_combat: false, anonymous: false }] } };
+        if (tool === "attack") return { result: { ok: true } };
+        if (tool === "get_battle_status") {
+          battleStatusCalls++;
+          if (battleStatusCalls === 1) return { result: { is_participant: true, battle_id: "b1", system_id: "sol" } };
+          if (battleStatusCalls === 2) {
+            return {
+              result: {
+                is_participant: true,
+                battle_id: "b1",
+                system_id: "sol",
+                participants: [selfBattleRow(66, { zone: "mid", shieldPct: 40 }), enemyBattleRow(50)],
+              },
+            };
+          }
+          // By the time this (3rd) call arrives, the loop has already written tick 0's cache
+          // state synchronously (the write happens before the next `await client.waitForTick()`)
+          // — capture it here rather than after the fight, since the tool nulls the cache once
+          // the loop exits.
+          midFightSnapshot = battleCache.get("agent");
+          return { result: { is_participant: false, battle_id: "b1", system_id: "sol" } };
+        }
+        if (tool === "get_wrecks") return { result: { wrecks: [] } };
+        return { result: {} };
+      },
+    });
+    const deps = makeDeps("agent", client, makeCombatCache("agent"), { battleCache });
+
+    await scanAndAttack(deps, OUR_AGENTS);
+
+    expect(midFightSnapshot?.hull).toBe(66);
+    expect(midFightSnapshot?.zone).toBe("mid");
+    expect(midFightSnapshot?.shields).toBe(40);
+    expect(midFightSnapshot?.battle_id).toBe("b1");
+  });
+
   it("sends combat alert via upsertNote when hull drops below 30%", async () => {
     const notes: Array<{ type: string; content: string }> = [];
     let battleInitDone = false;
@@ -1391,11 +1653,16 @@ describe("scanAndAttack", () => {
         if (tool === "get_battle_status") {
           if (!battleInitDone) {
             battleInitDone = true;
-            return { result: { status: "active", hull: 80 } };
+            return { result: { is_participant: true, battle_id: "b1", system_id: "sol" } };
           }
           battleLoopTick++;
-          if (battleLoopTick === 1) return { result: { status: "active", hull: 25, zone: "outer" } };
-          return { result: { status: "victory", hull: 25 } };
+          if (battleLoopTick === 1) {
+            return { result: { is_participant: true, battle_id: "b1", system_id: "sol", participants: [selfBattleRow(25), enemyBattleRow(50)] } };
+          }
+          if (battleLoopTick === 2) {
+            return { result: { is_participant: true, battle_id: "b1", system_id: "sol", participants: [selfBattleRow(25), enemyBattleRow(0)] } };
+          }
+          return { result: { is_participant: false, battle_id: "b1", system_id: "sol" } };
         }
         if (tool === "get_wrecks") return { result: { wrecks: [] } };
         return { result: {} };
@@ -2191,11 +2458,22 @@ describe("scanAndAttack Phase 4 enhancements", () => {
         if (tool === "get_battle_status") {
           battleTick++;
           if (battleTick === 1) {
-            // First call: battle is active
-            return { result: { status: "active", hull: 85, stance: "fire", zone: "mid" } };
+            // Battle-init check
+            return { result: { is_participant: true, battle_id: "b1", system_id: "sol" } };
           }
-          // Second call: battle ends in victory
-          return { result: { status: "victory", hull: 75, stance: "fire", zone: "mid" } };
+          if (battleTick === 2) {
+            // Main loop tick 0: still fighting, enemy destroyed this tick
+            return {
+              result: {
+                is_participant: true,
+                battle_id: "b1",
+                system_id: "sol",
+                participants: [selfBattleRow(85, { zone: "mid" }), enemyBattleRow(0)],
+              },
+            };
+          }
+          // Main loop tick 1: battle over
+          return { result: { is_participant: false, battle_id: "b1", system_id: "sol" } };
         }
         if (tool === "get_wrecks") {
           return { result: { wrecks: [] } };
@@ -2239,7 +2517,7 @@ describe("scanAndAttack Phase 4 enhancements", () => {
 
     expect(battleEndLog).toBeTruthy();
     expect(battleEndLog?.content).toContain("BATTLE END - VICTORY");
-    expect(battleEndLog?.content).toContain("Final hull: 75%");
+    expect(battleEndLog?.content).toContain("Final hull: 85%");
   });
 });
 

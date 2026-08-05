@@ -7,6 +7,7 @@
 
 import { createLogger } from "../../lib/logger.js";
 import type { CompoundToolDeps, CompoundResult } from "./types.js";
+import { findSelfParticipant } from "./utils.js";
 
 const log = createLogger("compound-tools");
 
@@ -75,14 +76,6 @@ interface BattleCombatState {
   speed_penalty_pct?: number;
 }
 
-/** Minimal shape of a `GetBattleStatusResponse.participants[]` entry that we read. */
-interface BattleParticipantLike {
-  zone?: string;
-  /** Populated ("self only" per the OpenAPI spec) on the row that corresponds to the calling
-   *  player; omitted/empty on every other combatant's row. Used to pick out our own row. */
-  stance?: string;
-}
-
 /**
  * Best-effort read of how many zones separate us from the outer ring right now, using
  * `participants[]` from a `get_battle_status`/`spacemolt_battle(action="status")` result.
@@ -90,10 +83,7 @@ interface BattleParticipantLike {
  * or our own row can't be identified — understating this value is what caused CRIT-2.
  */
 function zonesToOuterRing(battleStatus: Record<string, unknown> | undefined): number {
-  const participants = Array.isArray(battleStatus?.participants)
-    ? (battleStatus!.participants as BattleParticipantLike[])
-    : undefined;
-  const self = participants?.find((p) => typeof p.stance === "string" && p.stance.length > 0);
+  const self = findSelfParticipant(battleStatus);
   const zone = typeof self?.zone === "string" ? self.zone.toLowerCase() : undefined;
   const idx = zone ? (ZONE_ORDER as readonly string[]).indexOf(zone) : -1;
   return idx >= 0 ? idx : MAX_ZONES_TO_OUTER;
@@ -110,10 +100,7 @@ function zonesToOuterRing(battleStatus: Record<string, unknown> | undefined): nu
  * "engaged" must budget ~13 ticks, not 5).
  */
 function isSelfAtOuterRing(battleStatus: Record<string, unknown> | undefined): boolean {
-  const participants = Array.isArray(battleStatus?.participants)
-    ? (battleStatus!.participants as BattleParticipantLike[])
-    : undefined;
-  const self = participants?.find((p) => typeof p.stance === "string" && p.stance.length > 0);
+  const self = findSelfParticipant(battleStatus);
   return typeof self?.zone === "string" && self.zone.toLowerCase() === "outer";
 }
 
