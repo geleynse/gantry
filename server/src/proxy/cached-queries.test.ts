@@ -241,7 +241,10 @@ describe("STATUS_SLICE_EXTRACTORS", () => {
     it("passes v0.280 standings from player object through to the result", () => {
       const standings = {
         solarian: { reputation: 20, baseline: 20, bounty: 0 },
-        pirates: { reputation: -30, baseline: -30, bounty: 0 },
+        // v0.548.0: pirate reputation is tracked per-stronghold (pirate_voss, pirate_kael, …),
+        // not a single "pirates" key. standings is a generic record, so this is just a fixture
+        // refresh — the extractor itself doesn't special-case any key name.
+        pirate_voss: { reputation: -30, baseline: -30, bounty: 0 },
       };
       const data = {
         tick: 99,
@@ -260,7 +263,7 @@ describe("STATUS_SLICE_EXTRACTORS", () => {
       expect(result.standings).toBeDefined();
       const s = result.standings as typeof standings;
       expect(s.solarian).toEqual({ reputation: 20, baseline: 20, bounty: 0 });
-      expect(s.pirates).toEqual({ reputation: -30, baseline: -30, bounty: 0 });
+      expect(s.pirate_voss).toEqual({ reputation: -30, baseline: -30, bounty: 0 });
     });
 
     it("omits standings key when player has no standings (pre-v0.280 or stripped)", () => {

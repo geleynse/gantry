@@ -35,11 +35,14 @@ describe('StandingsPanel', () => {
   it('renders empire name and reputation for non-zero standing', () => {
     const standings: Standings = {
       solarian: { reputation: 20, baseline: 20, bounty: 0 },
-      pirates: { reputation: -30, baseline: -30, bounty: 0 },
+      // v0.548.0: pirate reputation is per-stronghold (pirate_voss, pirate_kael, …),
+      // not a single "pirates" key. StandingsPanel iterates Object.entries so any
+      // key name renders the same way — this is just a fixture refresh.
+      pirate_voss: { reputation: -30, baseline: -30, bounty: 0 },
     };
     render(<StandingsPanel standings={standings} />);
     expect(screen.getByText(/solarian/)).toBeDefined();
-    expect(screen.getByText(/pirates/)).toBeDefined();
+    expect(screen.getByText(/pirate_voss/)).toBeDefined();
   });
 
   it('displays reputation value', () => {
@@ -91,27 +94,46 @@ describe('StandingsPanel', () => {
     expect(screen.getByText(/bounty/i)).toBeDefined();
   });
 
-  it('renders pirates row', () => {
+  it('renders a pirate stronghold row', () => {
     const standings: Standings = {
-      pirates: { reputation: -30, baseline: -30, bounty: 0 },
+      pirate_voss: { reputation: -30, baseline: -30, bounty: 0 },
     };
     render(<StandingsPanel standings={standings} />);
-    expect(screen.getByText(/pirates/i)).toBeDefined();
+    expect(screen.getByText(/pirate_voss/i)).toBeDefined();
+  });
+
+  it('renders all nine per-stronghold pirate rows (v0.548.0)', () => {
+    const standings: Standings = {
+      pirate_voss: { reputation: -30, baseline: -30, bounty: 0 },
+      pirate_kael: { reputation: -30, baseline: -30, bounty: 0 },
+      pirate_thane: { reputation: -30, baseline: -30, bounty: 0 },
+      pirate_mera: { reputation: -30, baseline: -30, bounty: 0 },
+      pirate_dross: { reputation: -30, baseline: -30, bounty: 0 },
+      pirate_crix: { reputation: -30, baseline: -30, bounty: 0 },
+      pirate_sable: { reputation: -30, baseline: -30, bounty: 0 },
+      pirate_nyx: { reputation: -30, baseline: -30, bounty: 0 },
+      pirate_korr: { reputation: -30, baseline: -30, bounty: 0 },
+    };
+    render(<StandingsPanel standings={standings} />);
+    for (const key of Object.keys(standings)) {
+      expect(screen.getByText(new RegExp(key))).toBeDefined();
+    }
   });
 
   it('renders full live-data example without crashing', () => {
-    // Shape captured from live server log (2026-06-01)
+    // Shape captured from live server log (2026-06-01), refreshed for v0.548.0's
+    // per-stronghold pirate standings (pirate_voss replaces the old "pirates" key).
     const standings: Standings = {
       solarian: { reputation: 20, baseline: 20, bounty: 0 },
       voidborn: { reputation: 10, baseline: 10, bounty: 0 },
       crimson: { reputation: 10, baseline: 10, bounty: 0 },
       nebula: { reputation: 10, baseline: 10, bounty: 0 },
       outerrim: { reputation: 10, baseline: 10, bounty: 0 },
-      pirates: { reputation: -30, baseline: -30, bounty: 0 },
+      pirate_voss: { reputation: -30, baseline: -30, bounty: 0 },
     };
     render(<StandingsPanel standings={standings} />);
-    // solarian (rep 20) and pirates (rep -30) show; others are rep=10 (non-zero)
+    // solarian (rep 20) and pirate_voss (rep -30) show; others are rep=10 (non-zero)
     expect(screen.getByText(/solarian/)).toBeDefined();
-    expect(screen.getByText(/pirates/)).toBeDefined();
+    expect(screen.getByText(/pirate_voss/)).toBeDefined();
   });
 });

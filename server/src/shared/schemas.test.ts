@@ -270,7 +270,7 @@ describe('EmpireStandingSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts negative reputation (pirates default is -30)', () => {
+  it('accepts negative reputation (pirate stronghold default is -30)', () => {
     const result = EmpireStandingSchema.safeParse({ reputation: -30, baseline: -30, bounty: 0 });
     expect(result.success).toBe(true);
   });
@@ -290,7 +290,9 @@ describe('StandingsSchema', () => {
   it('accepts a map of empire → standing', () => {
     const standings = {
       solarian: { reputation: 20, baseline: 20, bounty: 0 },
-      pirates: { reputation: -30, baseline: -30, bounty: 0 },
+      // v0.548.0: pirate reputation is tracked per-stronghold, not a single "pirates" key.
+      pirate_voss: { reputation: -30, baseline: -30, bounty: 0 },
+      pirate_kael: { reputation: -30, baseline: -30, bounty: 0 },
     };
     const result = StandingsSchema.safeParse(standings);
     expect(result.success).toBe(true);
@@ -317,13 +319,35 @@ describe('AgentGameStateSchema with standings', () => {
       ...base,
       standings: {
         solarian: { reputation: 20, baseline: 20, bounty: 0 },
-        pirates: { reputation: -30, baseline: -30, bounty: 0 },
+        pirate_voss: { reputation: -30, baseline: -30, bounty: 0 },
       },
     });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.standings?.solarian?.reputation).toBe(20);
-      expect(result.data.standings?.pirates?.reputation).toBe(-30);
+      expect(result.data.standings?.pirate_voss?.reputation).toBe(-30);
+    }
+  });
+
+  it('accepts game state with all nine per-stronghold pirate standings (v0.548.0)', () => {
+    const result = AgentGameStateSchema.safeParse({
+      ...base,
+      standings: {
+        pirate_voss: { reputation: -30, baseline: -30, bounty: 0 },
+        pirate_kael: { reputation: -30, baseline: -30, bounty: 0 },
+        pirate_thane: { reputation: -30, baseline: -30, bounty: 0 },
+        pirate_mera: { reputation: -30, baseline: -30, bounty: 0 },
+        pirate_dross: { reputation: -30, baseline: -30, bounty: 0 },
+        pirate_crix: { reputation: -30, baseline: -30, bounty: 0 },
+        pirate_sable: { reputation: -30, baseline: -30, bounty: 0 },
+        pirate_nyx: { reputation: -30, baseline: -30, bounty: 0 },
+        pirate_korr: { reputation: -30, baseline: -30, bounty: 0 },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(Object.keys(result.data.standings ?? {})).toHaveLength(9);
+      expect(result.data.standings?.pirate_korr?.reputation).toBe(-30);
     }
   });
 

@@ -207,3 +207,113 @@ describe("game-text-parser: parseGetStatusText", () => {
     expect(p.username).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// v0.548.0 / v0.520.1 column-insertion audit
+//
+// The game changelog (v0.548.0) warned: "The pirate tables in get_nearby and
+// get_state gained a `crew` column — if you parse those tables by column
+// position rather than by header, update your parser." (v0.520.1 made the same
+// kind of change to the facility owned/faction_owned tables: a new `type`
+// column.)
+//
+// AUDIT FINDING: gantry has no parser — here or anywhere else in the codebase —
+// that reads get_nearby/get_state pirate data or facility owned/faction_owned
+// data by column position. That data is JSON today (summarizers.ts picks fields
+// by NAME via discoverPick; facilities.ts/threat-assessment.ts read named
+// object properties), which is immune-by-construction to an inserted field.
+// There is nothing to convert to header-driven parsing for those two tables.
+//
+// The tests below don't fix a bug — they lock in the CORRECT pattern (reuse
+// the shared parseTextTable primitive + header.findIndex) for the day gantry
+// *does* need to parse one of these as a formatted-text table, the way
+// get_status/get_cargo/analyze_market already had to. They prove the pattern
+// survives an inserted column, and — via the sibling "naive" helper — that a
+// column-position read of the exact same data does not.
+// ---------------------------------------------------------------------------
+describe("game-text-parser: header-driven pattern survives an inserted column (v0.548.0/v0.520.1 audit)", () => {
+  // Pirate table shape BEFORE v0.548.0: no crew column.
+  const PIRATE_TABLE_BEFORE =
+    "name\tclass\thull\tfaction\n" +
+    "Voss Reaver\tfrigate\t320\tpirate_voss\n" +
+    "Kael Marauder\tcruiser\t900\tpirate_kael";
+
+  // Pirate table shape AFTER v0.548.0: `crew` inserted BETWEEN class and hull —
+  // exactly the kind of mid-table insertion that breaks a hardcoded index.
+  const PIRATE_TABLE_AFTER =
+    "name\tclass\tcrew\thull\tfaction\n" +
+    "Voss Reaver\tfrigate\t4\t320\tpirate_voss\n" +
+    "Kael Marauder\tcruiser\t12\t900\tpirate_kael";
+
+  // A header-driven reader in the same style as parseCargoText/parseMarketDemandText:
+  // resolve each column index from the header row by name, once, then index by
+  // that resolved position for every row. This is the pattern any future
+  // pirate/facility text-table parser should copy.
+  function readHullByHeader(text: string): number[] {
+    const { headers, rows } = parseTextTable(text);
+    const hullIdx = headers.findIndex((h) => h === "hull");
+    if (hullIdx === -1) return [];
+    return rows.map((cols) => parseInt(cols[hullIdx], 10));
+  }
+
+  // The WRONG pattern the changelog is warning about: hardcode "hull is column 2"
+  // because that was true in the pre-crew-column table.
+  function readHullByFixedPosition(text: string): number[] {
+    const { rows } = parseTextTable(text);
+    return rows.map((cols) => parseInt(cols[2], 10));
+  }
+
+  it("header-driven: reads the correct hull values before AND after the crew column is inserted", () => {
+    expect(readHullByHeader(PIRATE_TABLE_BEFORE)).toEqual([320, 900]);
+    expect(readHullByHeader(PIRATE_TABLE_AFTER)).toEqual([320, 900]);
+  });
+
+  it("MUTATION PROOF: the fixed-position reader is correct before the column insertion (control)", () => {
+    // Establishes the naive reader isn't just broken outright — it works fine
+    // until the table shape changes, which is exactly why this class of bug
+    // survives review: it passes every test written against the old shape.
+    expect(readHullByFixedPosition(PIRATE_TABLE_BEFORE)).toEqual([320, 900]);
+  });
+
+  it("MUTATION PROOF: the fixed-position reader goes RED (silently wrong) once crew is inserted", () => {
+    // cols[2] is now the crew count (4, 12), not hull (320, 900) — this is the
+    // live failure mode the changelog warned about: no exception, just silently
+    // wrong data flowing into threat assessment / combat decisions.
+    expect(readHullByFixedPosition(PIRATE_TABLE_AFTER)).toEqual([4, 12]);
+    expect(readHullByFixedPosition(PIRATE_TABLE_AFTER)).not.toEqual([320, 900]);
+  });
+
+  // Facility owned/faction_owned table: v0.520.1 inserted a `type` column.
+  const FACILITY_TABLE_BEFORE =
+    "id\tname\towner\n" +
+    "fac-1\tRefinery Alpha\tacme-corp\n" +
+    "fac-2\tShipyard Beta\tacme-corp";
+
+  const FACILITY_TABLE_AFTER =
+    "id\tname\ttype\towner\n" +
+    "fac-1\tRefinery Alpha\trefinery\tacme-corp\n" +
+    "fac-2\tShipyard Beta\tshipyard\tacme-corp";
+
+  function readOwnerByHeader(text: string): string[] {
+    const { headers, rows } = parseTextTable(text);
+    const ownerIdx = headers.findIndex((h) => h === "owner");
+    if (ownerIdx === -1) return [];
+    return rows.map((cols) => cols[ownerIdx]);
+  }
+
+  function readOwnerByFixedPosition(text: string): string[] {
+    const { rows } = parseTextTable(text);
+    return rows.map((cols) => cols[2]);
+  }
+
+  it("header-driven: reads the correct owner before AND after the facility `type` column is inserted", () => {
+    expect(readOwnerByHeader(FACILITY_TABLE_BEFORE)).toEqual(["acme-corp", "acme-corp"]);
+    expect(readOwnerByHeader(FACILITY_TABLE_AFTER)).toEqual(["acme-corp", "acme-corp"]);
+  });
+
+  it("MUTATION PROOF: fixed-position owner read goes RED once `type` is inserted", () => {
+    expect(readOwnerByFixedPosition(FACILITY_TABLE_BEFORE)).toEqual(["acme-corp", "acme-corp"]);
+    expect(readOwnerByFixedPosition(FACILITY_TABLE_AFTER)).toEqual(["refinery", "shipyard"]);
+    expect(readOwnerByFixedPosition(FACILITY_TABLE_AFTER)).not.toEqual(["acme-corp", "acme-corp"]);
+  });
+});
