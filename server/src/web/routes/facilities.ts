@@ -38,7 +38,9 @@ export interface FacilityRecord {
   damaged?: boolean;
   /** v0.550.0 upkeep rework: stock-on-hand level, not a consumption rate. */
   maintenanceLevel?: unknown;
-  /** v0.550.0: rent tracks real, live station costs — surface it, don't drop it. */
+  /** v0.550.0: rent tracks real, live station costs. Already reachable via
+   *  `raw` before this field existed; this promotes it to a typed,
+   *  ergonomic top-level field rather than fixing a data-loss bug. */
   rentPerCycle?: unknown;
   production?: unknown;
   upgrades?: unknown;

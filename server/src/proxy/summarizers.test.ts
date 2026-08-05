@@ -428,4 +428,49 @@ describe("summarizeToolResult — facility damaged status (v0.551.1)", () => {
       else process.env.TEST_LOGS = prevTestLogs;
     }
   });
+
+  // Full union of live-spec FacilityEntry + FacilityFactionEntry properties
+  // (https://game.spacemolt.com/api/openapi.json, fetched 2026-08-04). A
+  // prior version of this whitelist only covered 3 of these fields (damaged,
+  // maintenance_level, rent_per_cycle) — 26 others, including the rest of the
+  // facility-health class (under_construction, power_throttled,
+  // repair_complete_tick, maintenance_satisfied, maintenance_per_cycle),
+  // still logged as discovery noise. This pins the full set.
+  const LIVE_SPEC_FACILITY_FIELDS = {
+    facility_id: "fac1", name: "Refinery", type: "refinery", level: 3,
+    status: "active", damaged: false,
+    capacity: 100, custom_name: "My Refinery", faction_service: "trade",
+    missed_rent_cycles: 0, rent_per_cycle: 250, production: { output: "ore" },
+    bonus_type: "speed", bonus_value: 1.2, category: "industrial",
+    description: "A refinery.", dining_points: 0, faction_id: "iron_brotherhood",
+    is_recycler: false, labor_per_cycle: 5, leisure_points: 0,
+    maintenance_level: 0.8, maintenance_per_cycle: [{ item: "steel", qty: 1 }],
+    maintenance_satisfied: true, owner_id: "agent1", personal_service: "none",
+    power_throttled: false, recipe_id: "recipe1", rent_paid_until_tick: 1000,
+    repair_complete_tick: 0, service: "refining", tourism_upkeep: false,
+    under_construction: false, rental_fee_per_run: 10, ticks_until_complete: 0,
+  };
+
+  it("does NOT log any live-spec FacilityEntry/FacilityFactionEntry field as discovery noise", () => {
+    const prevTestLogs = process.env.TEST_LOGS;
+    process.env.TEST_LOGS = "1";
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const raw = { facilities: [LIVE_SPEC_FACILITY_FIELDS] };
+      summarizeToolResult("faction_list", raw);
+      summarizeToolResult("list", raw);
+      const discoveryFieldNames = logSpy.mock.calls
+        .map((args) => String(args[0]))
+        .filter((line) => line.includes("[discovery]") && line.includes(" facility"))
+        .map((line) => {
+          const m = line.match(/New field in \w+: "([^"]+)"/);
+          return m ? m[1] : line;
+        });
+      expect(discoveryFieldNames).toEqual([]);
+    } finally {
+      logSpy.mockRestore();
+      if (prevTestLogs === undefined) delete process.env.TEST_LOGS;
+      else process.env.TEST_LOGS = prevTestLogs;
+    }
+  });
 });

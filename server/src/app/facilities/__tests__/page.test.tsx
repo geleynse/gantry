@@ -83,9 +83,39 @@ describe("FacilityRow — damaged status (v0.551.1)", () => {
   test("renders explicit Damaged badge when damaged flag is set but status disagrees", () => {
     // Defensive case: some other status string ("idle", legacy alias, etc.) paired
     // with damaged: true must still surface as damaged, not silently pass as OK.
+    // This makes the `facility.damaged === true` half of isDamaged independently
+    // load-bearing: mutating it away (dropping the boolean check) makes this go RED.
     const facility: FacilityRecord = { id: "f3", name: "Old Mine", status: "idle", damaged: true };
     render(<FacilityRow facility={facility} />);
     expect(screen.getByText("Damaged")).toBeTruthy();
+  });
+
+  test("renders damaged facility with destructive styling when status says damaged but the boolean flag is absent", () => {
+    // FacilityFactionEntry does not require `damaged`; a facility can report
+    // status: "damaged" with `damaged` left undefined. This makes the
+    // `facility.status === "damaged"` half of isDamaged independently
+    // load-bearing: mutating it away (dropping the status check) makes this go RED.
+    const facility: FacilityRecord = { id: "f5", name: "Shattered Hub", status: "damaged" };
+    const { container } = render(<FacilityRow facility={facility} />);
+    expect(screen.getByText("damaged")).toBeTruthy();
+    expect(container.querySelector(".text-success")).toBeNull();
+    expect(container.querySelector(".text-destructive")).toBeTruthy();
+    // status already says "damaged", so the defensive extra badge should not
+    // also render — it's reserved for the disagreeing case.
+    expect(screen.queryByText("Damaged")).toBeNull();
+  });
+
+  test("renders under_construction with distinct warning styling, not success or destructive", () => {
+    // v0.551.1 live status enum is under_construction | damaged | active.
+    // under_construction is expected/normal (not yet producing) — it must get
+    // its own honest treatment, not be lumped in with the generic
+    // muted/idle branch that also covers unlabeled problem states.
+    const facility: FacilityRecord = { id: "f6", name: "New Foundry", status: "under_construction" };
+    const { container } = render(<FacilityRow facility={facility} />);
+    expect(screen.getByText("under_construction")).toBeTruthy();
+    expect(container.querySelector(".text-success")).toBeNull();
+    expect(container.querySelector(".text-destructive")).toBeNull();
+    expect(container.querySelector(".text-warning")).toBeTruthy();
   });
 
   test("shows rent_per_cycle in expanded details when present", () => {

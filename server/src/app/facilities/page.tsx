@@ -19,9 +19,15 @@ export interface FacilityRecord {
   system?: string;
   poi?: string;
   owner?: string;
+  /** Only populated for faction-tab entries (live-spec FacilityFactionEntry:
+   *  "under_construction" | "damaged" | "active"). Station/owned/build-tab
+   *  entries come from FacilityEntry, which has no `status` property at all —
+   *  on those tabs this stays undefined and the status badge below simply
+   *  doesn't render; `damaged` is the only signal available there. */
   status?: string;
   /** v0.551.1: true for faction facilities knocked out in battle — damaged
-   *  facilities produce nothing even though they still show up in listings. */
+   *  facilities produce nothing even though they still show up in listings.
+   *  Present on both FacilityEntry and FacilityFactionEntry. */
   damaged?: boolean;
   /** v0.550.0 upkeep rework: stock-on-hand level, not a consumption rate. */
   maintenanceLevel?: unknown;
@@ -122,12 +128,21 @@ export function FacilityRow({ facility }: { facility: FacilityRecord }) {
                 Lv {facility.level}
               </span>
             )}
+            {/* `status` (FacilityFactionEntry only — see the field comment above)
+                gets three distinct treatments, not two: "active" (success),
+                "damaged" (destructive), and "under_construction" (warning) are
+                all expected-but-different states. under_construction is
+                normal, not-yet-producing — it must NOT share the same neutral
+                styling as a plain unknown/idle status, or an operator can't
+                tell "still building" from "something's wrong but unlabeled". */}
             {facility.status && (
               <span
                 className={cn(
                   "text-[10px] uppercase tracking-wider px-1.5 py-0.5 shrink-0",
                   facility.status === "active"
                     ? "text-success bg-success/10"
+                    : facility.status === "under_construction"
+                    ? "text-warning bg-warning/10"
                     : isDamaged
                     ? "text-destructive bg-destructive/10"
                     : "text-muted-foreground bg-secondary"
