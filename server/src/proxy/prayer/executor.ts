@@ -149,6 +149,10 @@ function classifyResult(result: unknown): "ok" | "skip" | "transient" | "fatal" 
   if (stopped === "cargo_full" || stopped === "depleted") return "skip";
   if (status === "no_wrecks" || status === "not_in_battle") return "skip";
   if (stopped === "shutdown_signal") return "fatal";
+  // cannot_escape means the game reports escape is impossible right now (e.g. warp-disrupted) —
+  // a definitive failure, not a benign no-op. Falling through to the "ok" catch-all below would
+  // let the script continue to its next statement while still tackled (CRIT-adjacent, 2026-08).
+  if (status === "cannot_escape") return "fatal";
   if (!error && status !== "error" && stopped !== "error") return "ok";
 
   const text = JSON.stringify(error ?? obj).toLowerCase();
