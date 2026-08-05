@@ -226,6 +226,63 @@ export async function waitForDockCacheUpdate(
 }
 
 /**
+ * Minimal shape of a `GetBattleStatusResponse.participants[]` entry (`BattleParticipant` in the
+ * live OpenAPI spec, game.spacemolt.com/api/openapi.json, x-gameserver-version v0.552.0, verified
+ * 2026-08-04). Required fields there are `player_id`/`username`/`side_id`/`auto_pilot`; everything
+ * else — including `stance` — is optional, so every field here must be read defensively
+ * (typeof-checked) by callers.
+ */
+export interface BattleParticipant {
+  player_id?: string;
+  username?: string;
+  /** Integer per the live OpenAPI spec — was mistyped `string` here (LOW, 2026-08 review). */
+  side_id?: number;
+  auto_pilot?: boolean;
+  is_npc?: boolean;
+  kind?: string;
+  ship_class?: string;
+  ship_name?: string;
+  zone?: string;
+  zone_distance?: number;
+  /** Percentage (0-100), not an absolute HP value — see the field's doc comment in the spec. */
+  hull_pct?: number;
+  /** Percentage (0-100). */
+  shield_pct?: number;
+  target_id?: string;
+  damage_dealt?: number;
+  damage_taken?: number;
+  kill_count?: number;
+  /**
+   * Populated ("Combat stance this tick (self only)" per the spec) on the row that corresponds to
+   * the calling player; omitted/empty on every other combatant's row. This is the ONLY
+   * self-identifying signal `GetBattleStatusResponse` provides, and it is NOT a required field —
+   * it can be absent on a spec-legal payload, so every caller must treat self as unidentifiable in
+   * that case rather than assume this field is always present.
+   */
+  stance?: string;
+}
+
+/**
+ * Best-effort identification of "our own row" in a `get_battle_status`/
+ * `spacemolt_battle(action="status")` response's `participants[]`. Shared by `flee.ts` and
+ * `scan-and-attack.ts` so both tools use one implementation of the same lookup instead of two that
+ * can silently diverge (extracted 2026-08 — previously duplicated inline in flee.ts).
+ *
+ * Returns undefined when `participants` is absent/empty or no row can be identified as self —
+ * that is an expected, spec-legal outcome (see `BattleParticipant.stance` above), not an error.
+ * Callers must degrade gracefully (e.g. skip a self-dependent calculation for that tick) rather
+ * than assume a result.
+ */
+export function findSelfParticipant(
+  battleStatus: Record<string, unknown> | undefined,
+): BattleParticipant | undefined {
+  const participants = Array.isArray(battleStatus?.participants)
+    ? (battleStatus!.participants as BattleParticipant[])
+    : undefined;
+  return participants?.find((p) => typeof p.stance === "string" && p.stance.length > 0);
+}
+
+/**
  * Find PvP-attackable targets from nearby entities.
  *
  * IMPORTANT: NPC/pirate combat is AUTOMATIC in SpaceMolt — the game server resolves

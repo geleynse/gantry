@@ -216,11 +216,34 @@ export async function handleLogin(
     // Track battle state from combat_update events
     if (event.type === "combat_update" && event.payload && typeof event.payload === "object") {
       const p = event.payload as Record<string, unknown>;
+      // BattleState.hull has two producers: this combat_update WS event and
+      // scan-and-attack.ts's get_battle_status poll loop. The latter writes
+      // BattleParticipant.hull_pct — a documented 0-100 PERCENTAGE (live OpenAPI spec,
+      // x-gameserver-version v0.552.0). This event's `p.hull` is an ABSOLUTE hp value, not a
+      // percentage (reviewer-confirmed unit mismatch, 2026-08) — both producers feed the same
+      // field, which injection-registry.ts's extractBattleStatus forwards VERBATIM as `hull: X`
+      // into an LLM prompt, so a 550-hp reading and a 55%-hp reading are indistinguishable text
+      // to the model reading it.
+      // ASSUMPTION: normalize this producer to the same 0-100 percentage convention (rather than
+      // renaming the field everywhere, which would touch shared/types.ts, every route/consumer,
+      // and dozens of test fixtures for a field no consumer currently does arithmetic on) —
+      // because this is the smaller, lower-risk change that still makes the two producers agree.
+      // Uses the last-known ship.max_hull from statusCache; when that isn't available yet (e.g.
+      // this event arrives before the first status refresh), falls back to the -1 "unknown"
+      // sentinel scan-and-attack.ts already uses rather than emitting a misleading absolute number.
+      const rawHull = typeof p.hull === "number" ? p.hull : undefined;
+      const cachedShip = (statusCache.get(agentName)?.data?.ship ?? {}) as Record<string, unknown>;
+      const maxHull = typeof cachedShip.max_hull === "number" && cachedShip.max_hull > 0
+        ? cachedShip.max_hull
+        : undefined;
+      const hullPct = rawHull !== undefined && maxHull !== undefined
+        ? Math.max(0, Math.min(100, (rawHull / maxHull) * 100))
+        : undefined;
       const bs: BattleState = {
         battle_id: String(p.battle_id ?? ""),
         zone: String(p.zone ?? "unknown"),
         stance: String(p.stance ?? "unknown"),
-        hull: typeof p.hull === "number" ? p.hull : -1,
+        hull: hullPct ?? -1,
         shields: typeof p.shields === "number" ? p.shields : -1,
         target: p.target ?? null,
         status: String(p.status ?? "active"),

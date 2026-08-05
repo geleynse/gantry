@@ -15,7 +15,15 @@
 
 import { createLogger } from "../../lib/logger.js";
 import type { CompoundToolDeps, CompoundResult, BattleStateForCache } from "./types.js";
-import { MAX_BATTLE_TICKS, BATTLE_INIT_MAX_TICKS, stripPendingFields, findTargets, isAmmoItem } from "./utils.js";
+import {
+  MAX_BATTLE_TICKS,
+  BATTLE_INIT_MAX_TICKS,
+  stripPendingFields,
+  findTargets,
+  isAmmoItem,
+  findSelfParticipant,
+  type BattleParticipant,
+} from "./utils.js";
 import { battleReadiness } from "./battle-readiness.js";
 import { lootWrecks } from "./loot-wrecks.js";
 
@@ -232,7 +240,12 @@ export async function scanAndAttack(
     const initCheck = isV2
       ? await client.execute("spacemolt_battle", { action: "status" })
       : await client.execute("get_battle_status");
-    if (!initCheck.error) {
+    // Gate on `is_participant` (required on GetBattleStatusResponse per the live OpenAPI spec,
+    // x-gameserver-version v0.552.0), not merely "the call didn't error" — a schema-valid response
+    // can succeed with is_participant:false (e.g. a stale read raced ahead of the server actually
+    // registering the battle). Same gate flee.ts already uses to decide "are we in a battle".
+    const initResult = initCheck.result as Record<string, unknown> | undefined;
+    if (!initCheck.error && initResult?.is_participant === true) {
       battleStarted = true;
       log.debug("scan_and_attack battle started", {
         agent: agentName,
@@ -293,11 +306,84 @@ export async function scanAndAttack(
     });
   }
 
-  // Step 3: Battle loop — poll get_battle_status until battle ends
-  let battleOutcome = "unknown";
+  // Step 3: Battle loop — poll get_battle_status until battle ends.
+  //
+  // GetBattleStatusResponse has NO outcome/status field at all (additionalProperties: false;
+  // required: battle_id/system_id/is_participant only — verified against the live OpenAPI spec,
+  // x-gameserver-version v0.552.0, 2026-08-04). This loop used to gate on `.status`/`.zone`/
+  // `.stance`/`.hull`/`.shields`/`.target`, none of which exist on the response — the
+  // victory/defeat/fled comparisons therefore always compared against `undefined`/empty string and
+  // could never match, so every battle ran to MAX_BATTLE_TICKS regardless of actual outcome, and
+  // the cache written for the dashboard was constants (hull:-1, zone:"unknown", status:"active")
+  // every tick. Same defect class as the flee gate this tool's `is_participant` gating mirrors.
+  //
+  // Fix: gate "still in battle" on `is_participant` (the field flee.ts already gates on), and read
+  // per-ship state from `participants[]` (`BattleParticipant.hull_pct`/`shield_pct`/`zone` — see
+  // findSelfParticipant in utils.ts). `stance` self-identification there is optional per the spec
+  // (BattleParticipant.stance, "self only", not a required field), so self can be unidentifiable on
+  // a spec-legal payload; every self-dependent read below is typeof-guarded and degrades to -1/
+  // "unknown" rather than assuming a result (ASSUMPTION: reuse flee.ts's exact self-detection
+  // signal via the shared findSelfParticipant helper rather than inventing a new one, per the
+  // "reuse, don't reinvent" guidance — a stronger signal exists, i.e. matching `participants[].
+  // username` against our logged-in username in statusCache, but that touches a file that has
+  // already been hardened through several rounds of CRIT/HIGH review and is out of scope here).
+  //
+  // CORRECTED 2026-08 (review round 2): the claim that follows used to say there is "no field
+  // distinguishing victory/defeat/fled" — that claim was FALSE. Real signals exist and are used
+  // below:
+  //   - `BattleParticipant.kill_count` ("Ships you have destroyed this battle (self only)") —
+  //     self identified AND kill_count > 0 at any point is direct proof of a kill.
+  //   - `hull_pct <= 0` on a positively-identified row — the corroborating destruction signal.
+  //   - `combat_state.flee_counter >= combat_state.flee_required` — the same threshold flee.ts
+  //     itself waits on before declaring an escape; reaching it here is real evidence of an
+  //     actual escape, unlike merely having *commanded* a flee stance (see below).
+  // A caller-supplied or hull-triggered flee STANCE is not evidence of anything — it is a request,
+  // not an outcome. The previous version of this function treated `currentStance === "flee"` as
+  // proof of escape, which meant a dying agent (hull auto-switches to flee below 20%) or a caller
+  // that simply passed `stance: "flee"` could be told "fled" while actually being destroyed
+  // (reviewer probes B/D, 2026-08). Self-identification is also load-bearing: if self can never be
+  // matched in `participants[]` (stance optional, spec-legal to omit), NONE of our own signals
+  // (hull_pct, kill_count) can be trusted, and the target's hull_pct alone must not be allowed to
+  // produce a confident "victory" — a battle where both ships hit hull_pct 0 but our own row is
+  // unidentifiable is NOT distinguishable from a genuine win, so it must fall through to the
+  // honest "ended" bucket instead (reviewer probe, mutual-kill inversion, 2026-08).
+  let battleOutcome: "victory" | "defeat" | "fled" | "ended" | "unknown" | "status_unavailable" = "unknown";
   let lastStatus: Record<string, unknown> = {};
   let currentStance: string = gameStance;
   let combatAlertSent = false;
+  // Last real reading of hull_pct for us / the target, captured from whichever tick actually
+  // carried `participants[]` data. The terminal tick that flips `is_participant` to false may
+  // carry only `{battle_id, system_id, is_participant}` with no participant rows at all, so the
+  // classification below reads these last-known values rather than losing the data.
+  let lastSelfHullPct: number | undefined;
+  let lastTargetHullPct: number | undefined;
+  /** True once `findSelfParticipant` has matched a row on ANY tick. Gates every self-dependent
+   *  classification below — see the mutual-kill inversion note above. */
+  let selfEverIdentified = false;
+  /** Highest self-only `kill_count` observed. Monotonic per battle per the spec's own
+   *  description ("destroyed this battle"), so the last/highest reading is authoritative. */
+  let lastSelfKillCount: number | undefined;
+  /** Set once a real escape threshold is observed: `combat_state.flee_counter >= flee_required`
+   *  on some tick — the same condition flee.ts itself treats as "escaped". This is genuine
+   *  evidence, unlike merely having commanded a flee stance. */
+  let fleeEvidenceObserved = false;
+
+  // Honest battle-end classification. See the corrected block comment above for why each branch
+  // is gated the way it is. Precedence: a confirmed self-kill (defeat) always wins over a
+  // confirmed victory/flee reading from the same tick — you can still lose the fight while your
+  // last commanded stance was flee, or even after landing a kill.
+  const classifyBattleEnd = (): "victory" | "defeat" | "fled" | "ended" => {
+    if (!selfEverIdentified) return "ended";
+    if (typeof lastSelfHullPct === "number" && lastSelfHullPct <= 0) return "defeat";
+    if (
+      (typeof lastSelfKillCount === "number" && lastSelfKillCount > 0) ||
+      (typeof lastTargetHullPct === "number" && lastTargetHullPct <= 0)
+    ) {
+      return "victory";
+    }
+    if (fleeEvidenceObserved) return "fled";
+    return "ended";
+  };
 
   for (let i = 0; i < MAX_BATTLE_TICKS; i++) {
     await client.waitForTick();
@@ -306,11 +392,20 @@ export async function scanAndAttack(
       ? await client.execute("spacemolt_battle", { action: "status" })
       : await client.execute("get_battle_status");
     if (statusResp.error) {
-      log.debug("scan_and_attack battle ended (status error)", {
+      // A transport/RPC failure (rate-limit, session expiry, network blip) tells us nothing about
+      // how the battle ended — it may not have ended at all. Routing this through
+      // classifyBattleEnd() used to let it borrow whatever last-known signal happened to be lying
+      // around (e.g. a hull-triggered flee stance), which meant a mid-fight session hiccup could
+      // report a confident "fled" for an agent that was, as far as we can tell, still fighting or
+      // dying (reviewer probe C, 2026-08). Report a status distinct from every real outcome AND
+      // from "unknown" (which means "our own tick budget ran out while still a participant") so
+      // callers can tell "the game told us nothing conclusive" apart from "we couldn't even ask".
+      log.debug("scan_and_attack battle status unavailable (transport error)", {
         agent: agentName,
         tick: i,
+        error: statusResp.error,
       });
-      battleOutcome = "ended";
+      battleOutcome = "status_unavailable";
       break;
     }
 
@@ -321,66 +416,81 @@ export async function scanAndAttack(
     }
     lastStatus = statusData;
 
-    // Update battle cache for UI
+    const participants = Array.isArray(statusData.participants)
+      ? (statusData.participants as BattleParticipant[])
+      : [];
+    const self = findSelfParticipant(statusData);
+    if (self) selfEverIdentified = true;
+    const selfHullPct = typeof self?.hull_pct === "number" ? self.hull_pct : undefined;
+    const selfShieldPct = typeof self?.shield_pct === "number" ? self.shield_pct : undefined;
+    const selfZone = typeof self?.zone === "string" ? self.zone : undefined;
+    const selfKillCount = typeof self?.kill_count === "number" ? self.kill_count : undefined;
+    if (typeof selfHullPct === "number") lastSelfHullPct = selfHullPct;
+    if (typeof selfKillCount === "number") lastSelfKillCount = selfKillCount;
+    // Match the target row on player_id OR username: `targetId` can itself be a username (the
+    // `?? match.username` fallback above, or the raw targetArg when no nearby-entity match was
+    // found), and a row that never carried `player_id` would otherwise never match, leaving a real
+    // kill unclassified (reviewer probe A, 2026-08).
+    const targetRow = participants.find(
+      (p) => String(p.player_id ?? "") === targetId || String(p.username ?? "") === targetId,
+    );
+    if (targetRow && typeof targetRow.hull_pct === "number") lastTargetHullPct = targetRow.hull_pct;
+
+    // Real evidence of an actual escape (not merely a commanded stance) — see the
+    // classifyBattleEnd block comment above. `combat_state` is optional (older/partial responses
+    // omit it) and its fields are self-scoped to the calling agent, not per-participant.
+    const combatState = statusData.combat_state as
+      | { flee_counter?: number; flee_required?: number }
+      | undefined;
+    const fleeCounter = typeof combatState?.flee_counter === "number" ? combatState.flee_counter : undefined;
+    const fleeRequired = typeof combatState?.flee_required === "number" ? combatState.flee_required : undefined;
+    if (fleeCounter !== undefined && fleeRequired !== undefined && fleeCounter >= fleeRequired) {
+      fleeEvidenceObserved = true;
+    }
+
+    // Update battle cache for UI. Only fields the live response can actually supply: `battle_id`
+    // (required top-level field) and our own hull_pct/shield_pct/zone from participants[]
+    // (best-effort — see the self-identification note above). `stance` and `target` are what THIS
+    // tool commanded, not read back from the response, since the response has no such fields.
     const battleState: BattleStateForCache = {
-      battle_id: String(statusData.battle_id ?? ""),
-      zone: String(statusData.zone ?? "unknown"),
-      stance: String(statusData.stance ?? currentStance),
-      hull: typeof statusData.hull === "number" ? statusData.hull : -1,
-      shields: typeof statusData.shields === "number" ? statusData.shields : -1,
-      target: statusData.target ?? null,
-      status: String(statusData.status ?? "active"),
+      battle_id: typeof statusData.battle_id === "string" ? statusData.battle_id : "",
+      zone: selfZone ?? "unknown",
+      stance: currentStance,
+      hull: selfHullPct ?? -1,
+      shields: selfShieldPct ?? -1,
+      target: targetId,
+      status: statusData.is_participant === true ? "active" : "ended",
       updatedAt: Date.now(),
     };
     battleCache.set(agentName, battleState);
     persistBattleState(agentName, battleState);
 
-    const status = String(statusData.status ?? "").toLowerCase();
-    if (
-      status === "victory" ||
-      status === "won" ||
-      status === "completed" ||
-      status === "ended"
-    ) {
-      battleOutcome = "victory";
-      log.info("scan_and_attack battle won", { agent: agentName, tick: i });
-      break;
-    }
-    if (
-      status === "defeated" ||
-      status === "lost" ||
-      status === "dead"
-    ) {
-      battleOutcome = "defeat";
-      log.info("scan_and_attack battle lost", { agent: agentName, tick: i });
-      break;
-    }
-    if (
-      status === "fled" ||
-      status === "escaped" ||
-      status === "retreated"
-    ) {
-      battleOutcome = "fled";
-      log.info("scan_and_attack battle fled", { agent: agentName, tick: i });
+    if (statusData.is_participant !== true) {
+      battleOutcome = classifyBattleEnd();
+      log.info("scan_and_attack battle ended", {
+        agent: agentName,
+        tick: i,
+        outcome: battleOutcome,
+      });
       break;
     }
 
-    // Hull-based stance switching
-    const hull = statusData.hull as number | undefined;
-    if (typeof hull === "number") {
-      if (hull < 20 && currentStance !== "flee") {
+    // Hull-based stance switching (self hull_pct only — degrade silently when self isn't
+    // identifiable this tick rather than acting on a sentinel/undefined value).
+    if (typeof selfHullPct === "number") {
+      if (selfHullPct < 20 && currentStance !== "flee") {
         log.warn("scan_and_attack switching to flee", {
           agent: agentName,
-          hull_percent: hull,
+          hull_percent: selfHullPct,
         });
         const fleeResp = isV2
           ? await client.execute("spacemolt_battle", { action: "stance", stance: "flee" })
           : await client.execute("battle", { action: "stance", stance: "flee" });
         if (!fleeResp.error) currentStance = "flee";
-      } else if (hull < 30 && (currentStance === "fire" || currentStance === "aggressive")) {
+      } else if (selfHullPct < 30 && (currentStance === "fire" || currentStance === "aggressive")) {
         log.warn("scan_and_attack switching to brace", {
           agent: agentName,
-          hull_percent: hull,
+          hull_percent: selfHullPct,
         });
         const braceResp = isV2
           ? await client.execute("spacemolt_battle", { action: "stance", stance: "brace" })
@@ -389,9 +499,9 @@ export async function scanAndAttack(
       }
 
       // Zone advance: move to inner zone when hull is healthy for better hit chance
-      const zone = String(statusData.zone ?? "").toLowerCase();
+      const zone = (selfZone ?? "").toLowerCase();
       if (
-        hull > 50 &&
+        selfHullPct > 50 &&
         (currentStance === "fire" || currentStance === "aggressive") &&
         (zone === "outer" || zone === "mid")
       ) {
@@ -403,7 +513,7 @@ export async function scanAndAttack(
       }
 
       // Combat alert: auto-report when hull drops below 30%
-      if (hull < 30 && !combatAlertSent) {
+      if (selfHullPct < 30 && !combatAlertSent) {
         combatAlertSent = true;
         const cachedStatus = statusCache.get(agentName);
         const player = (cachedStatus?.data?.player ??
@@ -411,7 +521,7 @@ export async function scanAndAttack(
           {}) as Record<string, unknown>;
         const system = String(player.current_system ?? "unknown");
         const poi = String(player.current_poi ?? "unknown");
-        const alertContent = `COMBAT ALERT: Hull critical (${hull}%) fighting ${targetName} at ${system}/${poi}. Stance: ${currentStance}.`;
+        const alertContent = `COMBAT ALERT: Hull critical (${selfHullPct}%) fighting ${targetName} at ${system}/${poi}. Stance: ${currentStance}.`;
 
         try {
           upsertNote(agentName, "report", alertContent);
@@ -424,7 +534,7 @@ export async function scanAndAttack(
 
         log.warn("combat alert: hull critical", {
           agent: agentName,
-          hull_percent: hull,
+          hull_percent: selfHullPct,
           target: targetName,
           location: `${system}/${poi}`,
           stance: currentStance,
@@ -437,8 +547,9 @@ export async function scanAndAttack(
   battleCache.set(agentName, null);
   persistBattleState(agentName, null);
 
-  // Log battle end event
-  const finalHull = typeof lastStatus.hull === "number" ? lastStatus.hull : -1;
+  // Log battle end event (lastStatus has no `.hull` field on the real response — use the last
+  // known self hull_pct captured from participants[] during the loop).
+  const finalHull = typeof lastSelfHullPct === "number" ? lastSelfHullPct : -1;
   const battleEndLog = `BATTLE END - ${battleOutcome.toUpperCase()}. Final hull: ${finalHull}%.`;
   try {
     upsertNote(agentName, "report", battleEndLog);
@@ -449,9 +560,15 @@ export async function scanAndAttack(
     });
   }
 
-  // Step 4: Post-kill loot — salvage up to 5 wrecks
+  // Step 4: Post-kill loot — salvage up to 5 wrecks. ONLY on a positively-evidenced victory.
+  // `lootWrecks` issues mutating `loot_wreck` calls against up to 5 nearby wrecks (loot-wrecks.ts)
+  // — it does not verify they belong to this kill. Previously "ended" (the honest-unknown bucket)
+  // also authorized looting, which meant an indeterminate outcome — including, before this fix, a
+  // transport error routed through classifyBattleEnd() — could still trigger mutating calls
+  // against wrecks that were never ours (codex review, 2026-08). An indeterminate/unknown
+  // termination must never authorize a mutation that a real outcome would.
   let lootResult: unknown = null;
-  if (battleOutcome === "victory" || battleOutcome === "ended") {
+  if (battleOutcome === "victory") {
     lootResult = await lootWrecks(deps, 5);
   }
 
@@ -470,6 +587,8 @@ export async function scanAndAttack(
           ? "You were defeated. Dock for repairs before continuing."
           : battleOutcome === "fled"
             ? "Escaped. Consider repairing before re-engaging."
-            : "Battle ended. Check your status. Note: scan_and_attack is PvP only — for NPC loot, use loot_wrecks after traveling through lawless space.",
+            : battleOutcome === "status_unavailable"
+              ? "Could not confirm how the battle ended (status check failed). Check your status directly before continuing."
+              : "Battle ended. Check your status. Note: scan_and_attack is PvP only — for NPC loot, use loot_wrecks after traveling through lawless space.",
   };
 }
