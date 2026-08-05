@@ -112,6 +112,30 @@ classification list. If the game removed one, the drift test would not notice.
 **Fix:** make the drift test fail loudly (not skip) when it cannot reach the game, and add the
 passenger commands to `V1_PROXIED_TOOLS`.
 
+### 5. CI does not gate on tests at all
+
+`.github/workflows/ci.yml:31` sets `continue-on-error: true` on the test step, with the comment
+"Known cross-file test pollution — all tests pass individually". The observation is accurate — the
+failures below do each pass in isolation — but the consequence is that **no test failure has ever
+failed a build**. Only `bun install` and `bun run build` gate CI.
+
+This makes the drift-test enforcement above effectively local-only: the test can now fail loudly and
+CI will still go green.
+
+Two distinct problems are tangled together here and should be separated:
+
+1. **Real cross-file pollution.** On a full `bun test src/` run, `agent-manager > staggers agent
+   starts` and `__tests__/agent-lifecycle.test.ts > requestShutdown emits a __system_event record`
+   fail; both pass in isolation. Shared singleton/DB state, not real defects.
+2. **Self-inflicted rate limiting.** The three `API sync — live game server schema` tests hit the
+   live game. Under a 292-file concurrent run they get throttled and — correctly, by the new
+   behaviour — fail. In isolation they pass (15/15) against a reachable server.
+
+Blanket `continue-on-error` hides both, plus every genuine regression. Better: quarantine the known
+polluting files (or fix the shared state), give the live-sync tests their own serialized step, and
+let the rest of the suite actually gate the build. Note this repo has ~5,400 tests currently gating
+nothing.
+
 ---
 
 ## P1 — Behavioural drift worth fixing
