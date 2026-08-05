@@ -92,6 +92,34 @@ Single Express process on Bun. All data in SQLite (`fleet.db`).
 - Tests co-located with source files
 - Use supertest for Express route tests (not `fetch()` + `app.listen()`)
 
+## Talking to the game: verify fields against the live spec
+
+The game's OpenAPI spec is public and authoritative:
+`GET https://game.spacemolt.com/api/openapi.json` (`info.x-gameserver-version` gives the live
+version). Most response schemas are `additionalProperties: false`, so a field absent from the spec
+is a field the server will never send.
+
+**Check parameter names, types, and response fields against that spec before writing code that
+depends on them.** A 2026-08 sweep found four bugs of exactly this shape, all silent in production:
+a routine sending a parameter the endpoint does not accept; two compound tools gating on a response
+field that cannot exist; and a routine reading a result key its own callee never returns.
+
+**The reason these survive is fixtures.** Each was covered by a test whose mock supplied the missing
+field or accepted any payload — the suite was green and the behaviour was wrong. So:
+
+- A mock that returns a response shape must return a shape the real server can actually produce.
+- A mock that stands in for an outbound call should assert the payload, not accept anything.
+- When a test supplies a value the production code depends on, ask what supplies it in production.
+  If the answer is "nothing", the test is describing a system that does not exist.
+
+Known live example of the last point: `HttpGameClientV2.waitForTick()` does not wait for a tick — it
+performs a status refresh. Tests stub it as a no-op and advance mock state on every read, which is
+where the appearance of tick pacing comes from. See [docs/api-drift-2026-08.md](docs/api-drift-2026-08.md).
+
+`server/src/proxy/schema-drift.test.ts` diffs the proxied command set against the live server and
+fails on a removed command — but note it needs network, and CI currently does not gate on test
+failures at all (`continue-on-error`), so a green CI run is not evidence the suite passed.
+
 ## Documentation
 
 - [README.md](README.md) — Overview, quick start, installation
