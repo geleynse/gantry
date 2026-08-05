@@ -20,11 +20,21 @@ import { done, handoff, phase, completePhase, extractDemandItems, resolveSellabl
 export interface CraftAndSellParams {
   station?: string;
   recipes?: string[];
+  craft_count?: number; // default: 1, per-recipe `count` sent to the craft tool
   refuel?: boolean; // default: true
   deliver_to?: "cargo" | "storage"; // default: "cargo"
 }
 
-const DEFAULT_RECIPES = ["refine_steel", "refine_copper"];
+// Live catalog check (https://game.spacemolt.com/api/catalog.json, 761 recipes,
+// 2026-08-04): "refine_steel" IS present; "refine_copper" is ABSENT — there is
+// no such recipe. "basic_copper_processing" (copper_ore x8 -> copper_wiring x1)
+// is the closest analogue to refine_steel's shape (iron_ore x5 -> steel_plate
+// x2): a single-input basic ore refine, unlike process_copper_wiring (same
+// output, different ratio) or draw_copper_piping (depends on steel_plate output
+// from the OTHER default recipe, coupling the two entries together).
+// Exported so full-trade-run.ts imports this list instead of hardcoding its own
+// (see full-trade-run.ts craft phase) — one catalog fix, not two lists to drift.
+export const DEFAULT_RECIPES = ["refine_steel", "basic_copper_processing"];
 
 function parseParams(raw: unknown): CraftAndSellParams {
   if (!raw || typeof raw !== "object") {
@@ -45,6 +55,13 @@ function parseParams(raw: unknown): CraftAndSellParams {
       throw new Error("recipes must be an array of strings");
     }
     params.recipes = obj.recipes as string[];
+  }
+
+  if (obj.craft_count !== undefined) {
+    if (typeof obj.craft_count !== "number" || !Number.isInteger(obj.craft_count) || obj.craft_count < 1) {
+      throw new Error("craft_count must be a positive integer");
+    }
+    params.craft_count = obj.craft_count;
   }
 
   if (obj.refuel !== undefined) {
@@ -102,19 +119,22 @@ async function run(ctx: RoutineContext, params: CraftAndSellParams): Promise<Rou
   }
 
   // --- Phase 3: Craft all available recipes ---
+  const craftCount = params.craft_count ?? 1;
   const itemsCrafted: string[] = [];
-  for (const recipe of recipes) {
+  for (let i = 0; i < recipes.length; i++) {
+    const recipe = recipes[i];
     const craftPhase = phase(`craft_${recipe}`);
-    // Live POST /craft takes `recipe_id` (string) and `quantity`/`count` (integer) —
-    // there is no `recipe` param, and a string like "ALL" cannot coerce to an
-    // integer. This routine has no cargo/materials cache to compute a true
-    // "craft everything" count the way multi-sell.ts resolves ALL against
-    // cached cargo quantities (see compound-tools/multi-sell.ts ~L146-193).
-    // ASSUMPTION: quantity=1 per craft call, matching the schema's documented
-    // default (tool-registry.ts craft schema: "How many to craft (default 1,
-    // max 50)"), because a small always-satisfiable request beats guessing a
-    // larger count and having the whole call rejected for insufficient materials.
-    const craftArgs: Record<string, unknown> = { recipe_id: recipe, quantity: 1 };
+    // Live POST /craft takes `recipe_id` (string) and `count` (integer) — there
+    // is no `recipe` param, and a string like "ALL" cannot coerce to an integer.
+    // gantry's OWN declared schema (mcp-factory.ts: craft: ["recipe_id", "count",
+    // "deliver_to"]) names the param `count`, not `quantity` — sending `count`
+    // keeps drift detection able to see this param if the game ever removes it.
+    // This routine has no cargo/materials cache to compute a true "craft
+    // everything" count the way multi-sell.ts resolves ALL against cached cargo
+    // quantities (see compound-tools/multi-sell.ts ~L146-193), so `craft_count`
+    // defaults to 1, matching the schema's documented default (tool-registry.ts
+    // craft schema: "How many to craft (default 1, max 50)").
+    const craftArgs: Record<string, unknown> = { recipe_id: recipe, count: craftCount };
     if (params.deliver_to === "storage") craftArgs.deliver_to = "storage";
     const craftResp = await ctx.client.execute("craft", craftArgs);
     if (craftResp.error) {
@@ -125,6 +145,12 @@ async function run(ctx: RoutineContext, params: CraftAndSellParams): Promise<Rou
       itemsCrafted.push(recipe);
       phases.push(completePhase(craftPhase, craftResp.result));
       ctx.log("info", `craft_and_sell: crafted ${recipe}`);
+    }
+    // Same action-queue lock/throttle every other multi-call loop in this
+    // codebase waits out (see full-trade-run.ts jump/mine loops) — wait between
+    // consecutive craft calls, but not after the last one.
+    if (i < recipes.length - 1) {
+      await ctx.client.waitForTick();
     }
   }
 

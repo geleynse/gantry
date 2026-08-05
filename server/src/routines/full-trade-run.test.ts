@@ -1,5 +1,6 @@
 import { describe, it, expect, mock } from "bun:test";
 import { fullTradeRunRoutine } from "./full-trade-run.js";
+import { DEFAULT_RECIPES } from "./craft-and-sell.js";
 import type { RoutineContext } from "./types.js";
 
 type ToolHandler = (tool: string, args?: Record<string, unknown>) => Promise<{ result?: unknown; error?: unknown }>;
@@ -176,11 +177,16 @@ describe("full_trade_run routine", () => {
         expect((orderPhase?.result as Record<string, unknown>).order_errors).toHaveLength(1);
     });
 
-    it("sends recipe_id (not recipe) and an integer quantity/count to craft — regression for the silent no-op bug", async () => {
-      // Live POST /craft accepts recipe_id (string) + quantity/count (integer);
-      // there is no `recipe` param and "ALL" cannot coerce to an integer. This
-      // test fails against the old `{ count: "ALL" }` payload (no recipe_id at
-      // all, and quantity/count is a string, not an integer).
+    it("sends recipe_id (not recipe) and an integer count (not quantity) to craft — regression for the silent no-op bug", async () => {
+      // Live POST /craft accepts recipe_id (string) + count (integer); there is
+      // no `recipe` param and "ALL" cannot coerce to an integer. gantry's OWN
+      // declared schema (mcp-factory.ts craft: ["recipe_id", "count",
+      // "deliver_to"]) names the param `count`, not `quantity`. This test fails
+      // against the old `{ count: "ALL" }` payload (no recipe_id, string count)
+      // AND against a `{ recipe_id, quantity: 1 }` shape drift detection can't see.
+      // Also pins the recipe list to craft-and-sell.ts's canonical, catalog-valid
+      // DEFAULT_RECIPES (imported, not duplicated) so a bad id like the
+      // pre-existing "refine_copper" can't silently slip back in.
       const craftPayloads: Record<string, unknown>[] = [];
       const toolHandler = async (tool: string, args: any) => {
         if (tool === "craft") {
@@ -199,15 +205,100 @@ describe("full_trade_run routine", () => {
       const result = await fullTradeRunRoutine.run(ctx, { belt: "B", station: "S" });
       expect(result.status).toBe("completed");
 
-      expect(craftPayloads.length).toBeGreaterThan(0);
+      expect(craftPayloads).toHaveLength(DEFAULT_RECIPES.length);
+      expect(craftPayloads.map((p) => p.recipe_id)).toEqual(DEFAULT_RECIPES);
       for (const payload of craftPayloads) {
-        expect(typeof payload.recipe_id).toBe("string");
-        expect((payload.recipe_id as string).length).toBeGreaterThan(0);
-        expect(payload).not.toHaveProperty("recipe");
-        const qty = payload.quantity ?? payload.count;
-        expect(typeof qty).toBe("number");
-        expect(Number.isInteger(qty)).toBe(true);
+        expect(payload).toEqual({ recipe_id: payload.recipe_id, count: 1 });
       }
+    });
+
+    it("craft_count param: defaults to 1, and a custom value is sent as `count` for every recipe", async () => {
+      const craftPayloads: Record<string, unknown>[] = [];
+      const toolHandler = async (tool: string, args: any) => {
+        if (tool === "craft") { craftPayloads.push(args ?? {}); return { result: {} }; }
+        if (tool === "travel_to" || tool === "dock" || tool === "refuel" || tool === "analyze_market" || tool === "multi_sell") return { result: {} };
+        if (tool === "batch_mine") return { result: { mines_completed: 1 } };
+        if (tool === "get_cargo") return { result: { cargo: [] } };
+        return { result: {} };
+      };
+      const ctx = mockContext(toolHandler, { player: { credits: 0, current_system: "SYS-A" } });
+
+      await fullTradeRunRoutine.run(ctx, { belt: "B", station: "S", craft_count: 4 });
+
+      expect(craftPayloads).toEqual(DEFAULT_RECIPES.map((recipe_id) => ({ recipe_id, count: 4 })));
+    });
+
+    it("rejects a non-positive-integer craft_count", () => {
+      expect(() => fullTradeRunRoutine.parseParams({ belt: "B", station: "S", craft_count: 0 })).toThrow("positive integer");
+      expect(() => fullTradeRunRoutine.parseParams({ belt: "B", station: "S", craft_count: 2.5 })).toThrow("positive integer");
+      expect(() => fullTradeRunRoutine.parseParams({ belt: "B", station: "S", craft_count: "5" })).toThrow("positive integer");
+    });
+
+    it("waits a tick between craft calls but not after the last one", async () => {
+      const callLog: string[] = [];
+      const toolHandler = async (tool: string, args: any) => {
+        if (tool === "craft") { callLog.push(`craft:${args?.recipe_id}`); return { result: {} }; }
+        if (tool === "get_cargo") { callLog.push("get_cargo"); return { result: { cargo: [] } }; }
+        if (tool === "travel_to" || tool === "dock" || tool === "refuel" || tool === "multi_sell") return { result: {} };
+        if (tool === "analyze_market") return { result: {} };
+        if (tool === "batch_mine") return { result: { mines_completed: 1 } };
+        return { result: {} };
+      };
+      // cycles: 1 keeps the mine loop from issuing its own waitForTick calls
+      // (only fires when i < maxCycles - 1), isolating the craft-loop wait.
+      const ctx = mockContext(toolHandler, { player: { credits: 0, current_system: "SYS-A" } });
+      (ctx.client.waitForTick as any).mockImplementation(async () => { callLog.push("wait"); });
+
+      await fullTradeRunRoutine.run(ctx, { belt: "B", station: "S", cycles: 1 });
+
+      // One wait from travelAndDock's dock phase, then exactly one wait between
+      // the two craft calls (DEFAULT_RECIPES has 2 entries) — none after the last.
+      const craftSlice = callLog.slice(callLog.indexOf("craft:" + DEFAULT_RECIPES[0]));
+      expect(craftSlice).toEqual([
+        `craft:${DEFAULT_RECIPES[0]}`,
+        "wait",
+        `craft:${DEFAULT_RECIPES[1]}`,
+        "get_cargo",
+      ]);
+    });
+
+    it("attributes each craft phase result to its recipe_id, even when one fails", async () => {
+      const toolHandler = async (tool: string, args: any) => {
+        if (tool === "craft") {
+          if (args?.recipe_id === DEFAULT_RECIPES[0]) return { result: { outputs: [{ item_id: "STEEL_PLATE" }] } };
+          return { error: { code: "no_materials" } };
+        }
+        if (tool === "travel_to" || tool === "dock" || tool === "refuel" || tool === "analyze_market" || tool === "multi_sell") return { result: {} };
+        if (tool === "batch_mine") return { result: { mines_completed: 1 } };
+        if (tool === "get_cargo") return { result: { cargo: [] } };
+        return { result: {} };
+      };
+      const ctx = mockContext(toolHandler, { player: { credits: 0, current_system: "SYS-A" } });
+
+      const result = await fullTradeRunRoutine.run(ctx, { belt: "B", station: "S" });
+      const craftPhase = result.phases.find((p) => p.name === "craft");
+      expect(craftPhase?.result).toEqual([
+        { recipe_id: DEFAULT_RECIPES[0], result: { outputs: [{ item_id: "STEEL_PLATE" }] } },
+        { recipe_id: DEFAULT_RECIPES[1], error: { code: "no_materials" } },
+      ]);
+    });
+
+    it("dedupes items_crafted by item id instead of counting duplicate outputs as extra types", async () => {
+      // Both recipes yield the SAME item_id here. Before the fix, itemsCrafted
+      // was a plain array pushed across recipes with no dedup, so .length (used
+      // as "types of items crafted" in the summary) double-counted.
+      const toolHandler = async (tool: string, args: any) => {
+        if (tool === "craft") return { result: { outputs: [{ item_id: "SAME_ITEM" }] } };
+        if (tool === "travel_to" || tool === "dock" || tool === "refuel" || tool === "analyze_market" || tool === "multi_sell") return { result: {} };
+        if (tool === "batch_mine") return { result: { mines_completed: 1 } };
+        if (tool === "get_cargo") return { result: { cargo: [] } };
+        return { result: {} };
+      };
+      const ctx = mockContext(toolHandler, { player: { credits: 0, current_system: "SYS-A" } });
+
+      const result = await fullTradeRunRoutine.run(ctx, { belt: "B", station: "S" });
+      expect(result.data.items_crafted).toEqual(["SAME_ITEM"]);
+      expect(result.summary).toContain("crafted 1 types of items");
     });
 
     it("stops mining early when cargo exceeds 90% threshold", async () => {

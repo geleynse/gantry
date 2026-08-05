@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { craftAndSellRoutine } from "./craft-and-sell.js";
+import { describe, it, expect, mock } from "bun:test";
+import { craftAndSellRoutine, DEFAULT_RECIPES } from "./craft-and-sell.js";
 import type { RoutineContext } from "./types.js";
 
 type ToolHandler = (tool: string, args?: Record<string, unknown>) => Promise<{ result?: unknown; error?: unknown }>;
@@ -11,7 +11,7 @@ function mockContext(toolHandler: ToolHandler, cacheData?: Record<string, unknow
   }
   return {
     agentName: "test-agent",
-    client: { execute: toolHandler, waitForTick: async () => {} },
+    client: { execute: mock(toolHandler), waitForTick: mock(async () => {}) },
     statusCache,
     log: () => {},
   };
@@ -94,10 +94,10 @@ describe("craft_and_sell routine", () => {
         { player: { docked_at_base: "sol_station", current_poi: "sol_station" } },
       );
 
-      const result = await craftAndSellRoutine.run(ctx, { recipes: ["refine_steel", "refine_copper"] });
+      const result = await craftAndSellRoutine.run(ctx, { recipes: ["refine_steel", "basic_copper_processing"] });
       expect(result.status).toBe("completed");
       expect(result.data.items_crafted).toEqual([]);
-      expect(craftAttempts).toEqual(["refine_steel", "refine_copper"]);
+      expect(craftAttempts).toEqual(["refine_steel", "basic_copper_processing"]);
     });
 
     it("hands off when not docked and no station provided", async () => {
@@ -207,14 +207,17 @@ describe("craft_and_sell routine", () => {
       );
 
       await craftAndSellRoutine.run(ctx, {});
-      expect(crafted).toContain("refine_steel");
-      expect(crafted).toContain("refine_copper");
+      expect(crafted).toEqual(DEFAULT_RECIPES);
+      expect(DEFAULT_RECIPES).toEqual(["refine_steel", "basic_copper_processing"]);
     });
 
-    it("sends recipe_id (not recipe) and an integer quantity/count to craft — regression for the silent no-op bug", async () => {
-      // Live POST /craft accepts recipe_id (string) + quantity/count (integer);
-      // there is no `recipe` param and "ALL" cannot coerce to an integer. This
-      // test fails against the old `{ recipe, count: "ALL" }` payload shape.
+    it("sends recipe_id (not recipe) and an integer count (not quantity) to craft — regression for the silent no-op bug", async () => {
+      // Live POST /craft accepts recipe_id (string) + count (integer); there is
+      // no `recipe` param and "ALL" cannot coerce to an integer. gantry's OWN
+      // declared schema (mcp-factory.ts craft: ["recipe_id", "count",
+      // "deliver_to"]) names the param `count`, not `quantity` — this test
+      // fails against both the old `{ recipe, count: "ALL" }` shape AND a
+      // `{ recipe_id, quantity: 1 }` shape that drift detection can't see.
       const craftPayloads: Record<string, unknown>[] = [];
       const ctx = mockContext(
         async (tool, args) => {
@@ -234,11 +237,113 @@ describe("craft_and_sell routine", () => {
 
       expect(craftPayloads).toHaveLength(1);
       const payload = craftPayloads[0];
-      expect(payload.recipe_id).toBe("refine_steel");
-      expect(payload).not.toHaveProperty("recipe");
-      const qty = payload.quantity ?? payload.count;
-      expect(typeof qty).toBe("number");
-      expect(Number.isInteger(qty)).toBe(true);
+      expect(payload).toEqual({ recipe_id: "refine_steel", count: 1 });
+    });
+
+    it("craft_count param: defaults to 1, and a custom value is sent as `count` for every recipe", async () => {
+      const craftPayloads: Record<string, unknown>[] = [];
+      const ctx = mockContext(
+        async (tool, args) => {
+          if (tool === "craft") {
+            craftPayloads.push(args ?? {});
+            return { result: { crafted: 1 } };
+          }
+          if (tool === "analyze_market") return { result: {} };
+          if (tool === "get_cargo") return { result: [] };
+          if (tool === "refuel") return { result: {} };
+          return { result: {} };
+        },
+        { player: { docked_at_base: "sol_station" } },
+      );
+
+      await craftAndSellRoutine.run(ctx, { recipes: ["refine_steel", "basic_copper_processing"], craft_count: 7 });
+
+      expect(craftPayloads).toEqual([
+        { recipe_id: "refine_steel", count: 7 },
+        { recipe_id: "basic_copper_processing", count: 7 },
+      ]);
+    });
+
+    it("rejects a non-positive-integer craft_count", () => {
+      expect(() => craftAndSellRoutine.parseParams({ craft_count: 0 })).toThrow("positive integer");
+      expect(() => craftAndSellRoutine.parseParams({ craft_count: 1.5 })).toThrow("positive integer");
+      expect(() => craftAndSellRoutine.parseParams({ craft_count: "3" })).toThrow("positive integer");
+    });
+
+    it("parses a valid craft_count", () => {
+      const p = craftAndSellRoutine.parseParams({ craft_count: 5 });
+      expect(p.craft_count).toBe(5);
+    });
+
+    it("waits a tick between craft calls but not after the last one", async () => {
+      const callLog: string[] = [];
+      const ctx = mockContext(
+        async (tool, args) => {
+          if (tool === "craft") {
+            callLog.push(`craft:${args?.recipe_id}`);
+            return { result: { crafted: 1 } };
+          }
+          if (tool === "analyze_market") { callLog.push("analyze_market"); return { result: {} }; }
+          if (tool === "get_cargo") return { result: [] };
+          if (tool === "refuel") return { result: {} };
+          return { result: {} };
+        },
+        { player: { docked_at_base: "sol_station" } }, // already docked: no dock-phase waitForTick to confound the count
+      );
+      (ctx.client.waitForTick as any).mockImplementation(async () => { callLog.push("wait"); });
+
+      await craftAndSellRoutine.run(ctx, { recipes: ["refine_steel", "basic_copper_processing"] });
+
+      // Exactly one wait, sandwiched between the two craft calls — not before, not after.
+      expect(callLog).toEqual(["craft:refine_steel", "wait", "craft:basic_copper_processing", "analyze_market"]);
+      expect((ctx.client.waitForTick as any).mock.calls.length).toBe(1);
+    });
+
+    it("does not wait after craft when there is only one recipe", async () => {
+      const callLog: string[] = [];
+      const ctx = mockContext(
+        async (tool, args) => {
+          if (tool === "craft") { callLog.push(`craft:${args?.recipe_id}`); return { result: {} }; }
+          if (tool === "analyze_market") { callLog.push("analyze_market"); return { result: {} }; }
+          if (tool === "get_cargo") return { result: [] };
+          if (tool === "refuel") return { result: {} };
+          return { result: {} };
+        },
+        { player: { docked_at_base: "sol_station" } },
+      );
+      (ctx.client.waitForTick as any).mockImplementation(async () => { callLog.push("wait"); });
+
+      await craftAndSellRoutine.run(ctx, { recipes: ["refine_steel"] });
+
+      expect(callLog).toEqual(["craft:refine_steel", "analyze_market"]);
+    });
+
+    it("sends deliver_to: storage only when deliver_to param is storage (mutation-verified branch)", async () => {
+      const craftPayloads: Record<string, unknown>[] = [];
+      const runWith = async (deliver_to?: "cargo" | "storage") => {
+        craftPayloads.length = 0;
+        const ctx = mockContext(
+          async (tool, args) => {
+            if (tool === "craft") { craftPayloads.push(args ?? {}); return { result: {} }; }
+            if (tool === "analyze_market") return { result: {} };
+            if (tool === "get_cargo") return { result: [] };
+            if (tool === "refuel") return { result: {} };
+            return { result: {} };
+          },
+          { player: { docked_at_base: "sol_station" } },
+        );
+        await craftAndSellRoutine.run(ctx, { recipes: ["refine_steel"], deliver_to });
+      };
+
+      await runWith("storage");
+      expect(craftPayloads[0]).toEqual({ recipe_id: "refine_steel", count: 1, deliver_to: "storage" });
+
+      await runWith("cargo");
+      expect(craftPayloads[0]).toEqual({ recipe_id: "refine_steel", count: 1 });
+      expect(craftPayloads[0]).not.toHaveProperty("deliver_to");
+
+      await runWith(undefined);
+      expect(craftPayloads[0]).not.toHaveProperty("deliver_to");
     });
 
     it("skips dock when already docked via already_docked error", async () => {
