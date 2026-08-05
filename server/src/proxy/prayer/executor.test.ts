@@ -444,4 +444,44 @@ describe("PrayerLang executor", () => {
     expect(result.status).toBe("error");
     expect(result.error?.code).toBe("tool_fatal");
   });
+
+  test("a tool result reporting cannot_escape classifies as fatal, not ok", async () => {
+    // Guards against the generic result classifier treating a definitive "escape is impossible"
+    // outcome (e.g. from the flee compound tool) as an ok no-op — which would let a script march
+    // on to its next statement while the ship is still tackled (CRIT-adjacent, 2026-08).
+    const result = await runPrayerScript("dock;", {
+      agentName: "test-agent",
+      client: makeClient(),
+      compoundActions: {},
+      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { credits: 5 }, ship: { fuel: 10, cargo: [] } } }]]),
+      agentDeniedTools: {},
+      handlePassthrough: async () => ({ status: "cannot_escape", escaped: false, message: "Warp disruption is holding your ship in place." }),
+      maxSteps: 10,
+      maxLoopIters: 10,
+      maxWallClockMs: 60_000,
+    });
+    expect(result.status).toBe("error");
+    expect(result.error?.code).toBe("tool_fatal");
+  });
+
+  test("a tool result reporting status: timeout classifies as fatal, not ok", async () => {
+    // Guards against the generic result classifier treating a failed-escape "timeout" (the flee
+    // compound tool's outcome when the wait for battle-clear runs out and undock is still blocked)
+    // as an ok no-op. A timeout result carries no `error` key, so without an explicit check it hit
+    // the "ok" catch-all and let a PrayerLang script march on to its next statement while still in
+    // active combat (MED, 2026-08).
+    const result = await runPrayerScript("dock;", {
+      agentName: "test-agent",
+      client: makeClient(),
+      compoundActions: {},
+      statusCache: new Map([["test-agent", { fetchedAt: Date.now(), data: { player: { credits: 5 }, ship: { fuel: 10, cargo: [] } } }]]),
+      agentDeniedTools: {},
+      handlePassthrough: async () => ({ status: "timeout", escaped: false, fled: false, battle_status_final: "still_in_battle" }),
+      maxSteps: 10,
+      maxLoopIters: 10,
+      maxWallClockMs: 60_000,
+    });
+    expect(result.status).toBe("error");
+    expect(result.error?.code).toBe("tool_fatal");
+  });
 });

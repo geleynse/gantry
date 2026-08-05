@@ -1792,7 +1792,7 @@ describe("flee", () => {
   it("returns error when battle stance change fails", async () => {
     const client = makeClient({
       execute: async (tool) => {
-        if (tool === "get_battle_status") return { result: { status: "active" } };
+        if (tool === "get_battle_status") return { result: { battle_id: "b123", system_id: "sys-1", is_participant: true } };
         if (tool === "battle") return { error: "stance change failed" };
         return { result: {} };
       },
@@ -1809,7 +1809,7 @@ describe("flee", () => {
     let tick = 0;
     const client = makeClient({
       execute: async (tool) => {
-        if (tool === "get_battle_status") return { result: { status: "active" } };
+        if (tool === "get_battle_status") return { result: { battle_id: "b123", system_id: "sys-1", is_participant: true } };
         if (tool === "battle") return { result: { ok: true } };
         if (tool === "get_status") {
           tick++;
@@ -1844,7 +1844,7 @@ describe("flee", () => {
   it("returns timeout when escape not detected after 5 ticks but undocks successfully", async () => {
     const client = makeClient({
       execute: async (tool) => {
-        if (tool === "get_battle_status") return { result: { status: "active" } };
+        if (tool === "get_battle_status") return { result: { battle_id: "b123", system_id: "sys-1", is_participant: true } };
         if (tool === "battle") return { result: { ok: true } };
         if (tool === "get_status") {
           return { result: { ship: { battle_id: "b123" } } }; // Battle persists
@@ -1870,7 +1870,7 @@ describe("flee", () => {
   it("returns error when undock fails", async () => {
     const client = makeClient({
       execute: async (tool) => {
-        if (tool === "get_battle_status") return { result: { status: "active" } };
+        if (tool === "get_battle_status") return { result: { battle_id: "b123", system_id: "sys-1", is_participant: true } };
         if (tool === "battle") return { result: { ok: true } };
         if (tool === "get_status") {
           return { result: { ship: { battle_id: null } } }; // Escaped
@@ -1892,7 +1892,7 @@ describe("flee", () => {
     const notes: Array<{ agentName: string; type: string; content: string }> = [];
     const client = makeClient({
       execute: async (tool) => {
-        if (tool === "get_battle_status") return { result: { status: "active" } };
+        if (tool === "get_battle_status") return { result: { battle_id: "b123", system_id: "sys-1", is_participant: true } };
         if (tool === "battle") return { result: { ok: true } };
         if (tool === "get_status") {
           return { result: { ship: { battle_id: null } } };
@@ -1923,7 +1923,7 @@ describe("flee", () => {
     const travelCalls: Array<Record<string, unknown>> = [];
     const client = makeClient({
       execute: async (tool, args) => {
-        if (tool === "get_battle_status") return { result: { status: "active" } };
+        if (tool === "get_battle_status") return { result: { battle_id: "b123", system_id: "sys-1", is_participant: true } };
         if (tool === "battle") return { result: { ok: true } };
         if (tool === "get_status") {
           return { result: { ship: { battle_id: null } } };
@@ -1953,7 +1953,7 @@ describe("flee", () => {
     const travelCalls: Array<Record<string, unknown>> = [];
     const client = makeClient({
       execute: async (tool, args) => {
-        if (tool === "get_battle_status") return { result: { status: "active" } };
+        if (tool === "get_battle_status") return { result: { battle_id: "b123", system_id: "sys-1", is_participant: true } };
         if (tool === "battle") return { result: { ok: true } };
         if (tool === "get_status") {
           return { result: { ship: { battle_id: null } } };

@@ -149,6 +149,20 @@ function classifyResult(result: unknown): "ok" | "skip" | "transient" | "fatal" 
   if (stopped === "cargo_full" || stopped === "depleted") return "skip";
   if (status === "no_wrecks" || status === "not_in_battle") return "skip";
   if (stopped === "shutdown_signal") return "fatal";
+  // cannot_escape means the game reports escape is impossible right now (e.g. warp-disrupted) —
+  // a definitive failure, not a benign no-op. Falling through to the "ok" catch-all below would
+  // let the script continue to its next statement while still tackled (CRIT-adjacent, 2026-08).
+  if (status === "cannot_escape") return "fatal";
+  // "timeout" is currently only produced by the flee compound tool: the wait for the battle to
+  // clear ran out its whole budget and the ship is still in combat (or undock came back blocked
+  // by in_combat) — a failed escape, exactly as definitive as cannot_escape above. It carries no
+  // `error` key, so without this check it fell through to the "ok" catch-all below and let a
+  // PrayerLang script march on to its next statement while still in active combat (MED, 2026-08).
+  // Classified "fatal" rather than "transient" for the same reason as cannot_escape: flee already
+  // spent its own bounded retry budget internally (the wait loop), so blindly re-issuing flee from
+  // the transient-retry path here would not address why it timed out and would just burn more of
+  // the script's wall-clock/step budget on the same stuck escape.
+  if (status === "timeout") return "fatal";
   if (!error && status !== "error" && stopped !== "error") return "ok";
 
   const text = JSON.stringify(error ?? obj).toLowerCase();
