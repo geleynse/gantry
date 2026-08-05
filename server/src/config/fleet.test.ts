@@ -287,12 +287,16 @@ describe("Config Loading (loadConfig)", () => {
       survivability: {
         autoCloakEnabled: true,
         agentOverrides: { "agent1": false },
+        thresholds: { default: "high" as const },
       },
     });
     const config = loadConfig(tmpDir);
     expect(config.survivability).toBeDefined();
     expect(config.survivability?.autoCloakEnabled).toBe(true);
     expect(config.survivability?.agentOverrides).toEqual({ "agent1": false });
+    // Unset roles fall back to CloakThresholdsSchema's zod defaults; the one we
+    // set must survive loadConfig rather than being replaced by the default.
+    expect(config.survivability?.thresholds?.default).toBe("high");
     cleanup();
   });
 
