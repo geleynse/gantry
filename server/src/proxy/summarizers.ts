@@ -282,11 +282,17 @@ const SUMMARIZERS: Record<string, Summarizer> = {
   },
 
   // ---------------------------------------------------------------------------
-  // spacemolt_facility action="list" / action="faction_list" (v0.342.0 idle_reason)
+  // spacemolt_facility action="list" / action="faction_list" (v0.342.0 idle_reason,
+  // v0.551.1 damaged status)
   // ---------------------------------------------------------------------------
   // v0.342.0 adds idle_reason per facility: one of no_inputs, no_maintenance,
   // insufficient_labor_credits, no_fuel_bunker, fuel_tank_full, output_storage_full,
   // unprofitable (station-owned), stockpile_full (station-owned).
+  // v0.551.1: faction_list now reports status: "damaged" (instead of "active") for
+  // faction facilities knocked out in battle, plus a boolean `damaged` flag. Only
+  // "active" facilities produce/provide their service — repair via
+  // facility action=repair. maintenance_level (v0.550.0 upkeep rework) is also
+  // whitelisted here so it flows through without discovery-log noise.
   // The v1ToolName that reaches summarizeToolResult is the action string extracted
   // from the spacemolt_facility call — so "list" and "faction_list".
   list: (r) => {
@@ -302,9 +308,11 @@ const SUMMARIZERS: Record<string, Summarizer> = {
         "id", "facility_id", "name", "type", "level", "status", "owner",
         "system", "poi", "station",
         "production", "output", "input", "upgrades",
-        "labor_credits", "maintenance",
+        "labor_credits", "maintenance", "maintenance_level", "rent_per_cycle",
         // v0.342.0 idle diagnosis
         "idle_reason",
+        // v0.551.1 damaged status
+        "damaged",
       ])
     );
     return summarized;
@@ -322,9 +330,11 @@ const SUMMARIZERS: Record<string, Summarizer> = {
         "id", "facility_id", "name", "type", "level", "status", "owner",
         "system", "poi", "station",
         "production", "output", "input", "upgrades",
-        "labor_credits", "maintenance",
+        "labor_credits", "maintenance", "maintenance_level", "rent_per_cycle",
         // v0.342.0 idle diagnosis
         "idle_reason",
+        // v0.551.1 damaged status
+        "damaged",
       ])
     );
     return summarized;

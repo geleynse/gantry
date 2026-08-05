@@ -233,6 +233,58 @@ describe("GET /api/facilities — unknown agent", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: damaged facility status (v0.551.1)
+// ---------------------------------------------------------------------------
+
+describe("GET /api/facilities — damaged facility status (v0.551.1)", () => {
+  const DAMAGED_DATA = {
+    player: {
+      credits: 5000,
+      faction_facilities: [
+        {
+          id: "faction_hub",
+          name: "Faction HQ",
+          type: "hub",
+          owner: "Iron Brotherhood",
+          status: "damaged",
+          damaged: true,
+          maintenance_level: 0.3,
+          rent_per_cycle: 400,
+        },
+        {
+          id: "faction_mine",
+          name: "Faction Mine",
+          type: "mine",
+          owner: "Iron Brotherhood",
+          status: "active",
+          damaged: false,
+        },
+      ],
+    },
+  };
+
+  const cache = makeCache({ "drifter-gale": DAMAGED_DATA });
+  const app = makeApp(cache);
+
+  test("surfaces damaged flag, status, maintenanceLevel, and rentPerCycle — does not drop them", async () => {
+    const res = await supertest(app).get("/api/facilities?agent=drifter-gale&tab=faction");
+    expect(res.status).toBe(200);
+    const facs = res.body.facilities as Record<string, unknown>[];
+    expect(facs).toHaveLength(2);
+
+    const damaged = facs.find((f) => f.id === "faction_hub")!;
+    expect(damaged.status).toBe("damaged");
+    expect(damaged.damaged).toBe(true);
+    expect(damaged.maintenanceLevel).toBe(0.3);
+    expect(damaged.rentPerCycle).toBe(400);
+
+    const active = facs.find((f) => f.id === "faction_mine")!;
+    expect(active.status).toBe("active");
+    expect(active.damaged).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: response shape
 // ---------------------------------------------------------------------------
 
