@@ -9,6 +9,7 @@
 
 import type { RoutineContext, RoutineDefinition, RoutinePhase, RoutineResult } from "./types.js";
 import { withRetry, getCargoUtilization, done, handoff, phase, completePhase, checkCombat, extractDemandItems, extractItemIdAliases, resolveSellable, parseCargoItems, travelAndDock } from "./routine-utils.js";
+import { DEFAULT_RECIPES } from "./craft-and-sell.js";
 
 // ---------------------------------------------------------------------------
 // Params
@@ -19,6 +20,7 @@ export interface FullTradeRunParams {
   belt: string;
   station: string;
   cycles?: number; // default: 3
+  craft_count?: number; // default: 1, per-recipe `count` sent to the craft tool
 }
 
 function parseParams(raw: unknown): FullTradeRunParams {
@@ -50,6 +52,13 @@ function parseParams(raw: unknown): FullTradeRunParams {
       throw new Error("cycles must be a positive number");
     }
     params.cycles = obj.cycles;
+  }
+
+  if (obj.craft_count !== undefined) {
+    if (typeof obj.craft_count !== "number" || !Number.isInteger(obj.craft_count) || obj.craft_count < 1) {
+      throw new Error("craft_count must be a positive integer");
+    }
+    params.craft_count = obj.craft_count;
   }
   return params;
 }
@@ -165,17 +174,43 @@ async function run(ctx: RoutineContext, params: FullTradeRunParams): Promise<Rou
   const demandItems = extractDemandItems(marketResp.result);
 
   // --- Craft ---
+  // Live POST /craft takes `recipe_id` (string) and `count` (integer) — there
+  // is no `recipe` param, and this call previously sent neither a recipe nor a
+  // valid count (`{ count: "ALL" }`), making it a permanent no-op (see
+  // craft-and-sell.ts for the same bug/fix). This routine has no cargo/materials
+  // cache to compute a true "craft everything" count the way multi-sell.ts
+  // resolves ALL against cached cargo quantities (see
+  // compound-tools/multi-sell.ts ~L146-193), so it tries the same canonical
+  // recipe list craft-and-sell.ts uses (imported, not duplicated, so the two
+  // can't drift) at `craft_count` (default 1, the schema's documented default
+  // — tool-registry.ts craft schema: "How many to craft (default 1, max 50)")
+  // per call.
+  const craftCount = params.craft_count ?? 1;
   const craftPhase = phase("craft");
-  const craftResp = await ctx.client.execute("craft", { count: "ALL" });
-  if(craftResp.result) {
-    // The craft action_result carries the crafted items under `outputs`
-    // (see passthrough-handler waitForActionResult + summarizers.ts craft).
-    // Older shape used `items_crafted`; keep it as a fallback.
-    const r = craftResp.result as any;
-    const crafted = (r.outputs ?? r.items_crafted) as any[];
-    if(crafted) itemsCrafted = crafted.map(c => c.item_id || c.id);
+  const craftPhaseResults: Array<{ recipe_id: string; result?: unknown; error?: unknown }> = [];
+  const craftedItemIds = new Set<string>();
+  for (let i = 0; i < DEFAULT_RECIPES.length; i++) {
+    const recipeId = DEFAULT_RECIPES[i];
+    const craftResp = await ctx.client.execute("craft", { recipe_id: recipeId, count: craftCount });
+    if (craftResp.error) {
+      craftPhaseResults.push({ recipe_id: recipeId, error: craftResp.error });
+    } else {
+      craftPhaseResults.push({ recipe_id: recipeId, result: craftResp.result });
+      // The craft action_result carries the crafted items under `outputs`
+      // (see passthrough-handler waitForActionResult + summarizers.ts craft).
+      // Older shape used `items_crafted`; keep it as a fallback.
+      const r = craftResp.result as any;
+      const crafted = (r?.outputs ?? r?.items_crafted) as any[];
+      if (crafted) for (const c of crafted) craftedItemIds.add(c.item_id || c.id);
+    }
+    // Same action-queue lock/throttle the jump/mine loops above wait out —
+    // wait between consecutive craft calls, but not after the last one.
+    if (i < DEFAULT_RECIPES.length - 1) {
+      await ctx.client.waitForTick();
+    }
   }
-  phases.push(completePhase(craftPhase, craftResp.result ?? craftResp.error));
+  itemsCrafted = Array.from(craftedItemIds);
+  phases.push(completePhase(craftPhase, craftPhaseResults));
 
   // --- Multi-sell ---
   const cargoResp = await ctx.client.execute("get_cargo");
