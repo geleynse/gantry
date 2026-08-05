@@ -29,4 +29,12 @@ describe("proxy-constants invariants", () => {
   it("configure_recycler is in MUTATION_COMMANDS", () => {
     expect(MUTATION_COMMANDS.has("configure_recycler")).toBe(true);
   });
+
+  it("load_passenger and unload_passenger are in STATE_CHANGING_TOOLS (passenger loop, v0.354.0+)", () => {
+    // Boarding/dropping passengers changes ship manifest state — must route
+    // through the same cache-refresh/tick-wait path as other state-changing
+    // tools (passthrough-postprocess.ts handleStateChangingTickWait).
+    expect(STATE_CHANGING_TOOLS.has("load_passenger")).toBe(true);
+    expect(STATE_CHANGING_TOOLS.has("unload_passenger")).toBe(true);
+  });
 });

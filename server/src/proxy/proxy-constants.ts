@@ -30,6 +30,10 @@ export const STATE_CHANGING_TOOLS = new Set([
   // v0.327 Recycling Processor — not yet in live game action enum (verified absent 2026-05-30),
   // pre-declared so passthrough routes it the moment the game publishes it.
   "configure_recycler",
+  // Passenger loop (v0.354.0+) — boarding/dropping passengers changes ship
+  // manifest state; must go through the cache-refresh path like other
+  // state-changing tools. See compound-tools/passenger-run.ts.
+  "load_passenger", "unload_passenger",
 ]);
 
 // ---------------------------------------------------------------------------

@@ -62,7 +62,10 @@ export const INTENTIONALLY_SKIPPED = new Set([
   "faction_query_intel",
   "get_recipes",
   "self_destruct",
-  "jettison",
+  // jettison was previously here but is now proxied (fix/proxy-rescue-actions
+  // reversed the earlier cargo-dump-footgun decision) — must NOT be
+  // intentionally-skipped here, or a real removal of jettison from the game
+  // would be silently treated as harmless instead of alerting.
   "buy_ship",
   "shipyard_showroom",
   "faction_build",
@@ -94,6 +97,14 @@ export const INTENTIONALLY_SKIPPED = new Set([
   "faction_remove_enemy",
   "faction_accept_invite",
   "faction_withdraw_invite",
+  "refit_ship",
+  "captains_log_delete",
+  "spacemolt_citizenship",
+  "citizenship",
+  // v0.508.0 — replaced by sell_ship_to_order.
+  "sell_ship",
+  // v0.376.0 — removed.
+  "claim_commission",
 ]);
 
 /** Params the server includes on every tool that we handle at proxy level. */
