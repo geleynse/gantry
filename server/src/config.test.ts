@@ -74,6 +74,7 @@ describe("loadConfig", () => {
     const config = loadConfig(fleetDir);
     expect(config.gameUrl).toBe("https://game.example.com/mcp");
     expect(config.gameApiUrl).toBe("https://game.example.com/api/v1");
+    expect(config.gameApiRoot).toBe("https://game.example.com/api");
     expect(config.gameMcpUrl).toBe("https://game.example.com/mcp");
   });
 

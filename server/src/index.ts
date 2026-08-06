@@ -115,7 +115,7 @@ if (config.validateCredentialsOnStartup !== false && !config.mockMode?.enabled) 
 
 // --- 1c. Fetch game catalog (items/recipes/ships) — non-blocking, 24h file cache ---
 if (!config.mockMode?.enabled) {
-  fetchAndCacheCatalog(config.gameApiUrl, FLEET_DIR).catch((err: unknown) => {
+  fetchAndCacheCatalog(config.gameApiRoot, FLEET_DIR).catch((err: unknown) => {
     log.warn("Catalog fetch failed (non-fatal, will retry next startup)", {
       error: err instanceof Error ? err.message : String(err),
     });

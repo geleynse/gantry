@@ -7,7 +7,7 @@
  * cross-reference via the query_catalog MCP tool.
  *
  * Usage:
- *   await fetchAndCacheCatalog(gameApiUrl, fleetDir);  // startup
+ *   await fetchAndCacheCatalog(gameApiRoot, fleetDir);  // startup
  *   const catalog = getCatalog();                       // synchronous read
  *   const item = getItem("iron_ore");
  */
@@ -71,8 +71,8 @@ function isCacheStale(catalog: CatalogData): boolean {
 // Fetchers — individual game API endpoint calls
 // ---------------------------------------------------------------------------
 
-async function fetchEndpoint<T>(gameApiUrl: string, endpoint: string, key: string): Promise<T[]> {
-  const url = `${gameApiUrl}/${endpoint}`;
+async function fetchEndpoint<T>(gameApiRoot: string, endpoint: string, key: string): Promise<T[]> {
+  const url = `${gameApiRoot}/${endpoint}`;
   const resp = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!resp.ok) {
     log.warn(`${endpoint} API returned ${resp.status}`, { url });
@@ -84,6 +84,13 @@ async function fetchEndpoint<T>(gameApiUrl: string, endpoint: string, key: strin
     const obj = data as Record<string, unknown>;
     if (Array.isArray(obj[key])) return obj[key] as T[];
     if (Array.isArray(obj.data)) return obj.data as T[];
+    // Live game API shape check (2026-08-05): GET /api/items returns
+    // { items: { "<item_id>": {...}, ... } } — a dict keyed by ID, not an
+    // array. Unwrap that shape too, or every item is silently dropped even
+    // though the request succeeded.
+    if (obj[key] && typeof obj[key] === "object" && !Array.isArray(obj[key])) {
+      return Object.values(obj[key] as Record<string, unknown>) as T[];
+    }
   }
   return [];
 }
@@ -131,11 +138,12 @@ function persistToDB(catalog: CatalogData): void {
  * Fetch catalog from the game API and cache to disk + DB.
  * Non-blocking — designed to be called from server startup with .catch().
  *
- * @param gameApiUrl  e.g. "https://game.spacemolt.com/api/v1"
+ * @param gameApiRoot  e.g. "https://game.spacemolt.com/api" (NOT /api/v1 —
+ *   that namespace returns 405 on GET; see GantryConfig.gameApiRoot)
  * @param fleetDir    e.g. process.env.FLEET_DIR or FLEET_DIR constant
  */
 export async function fetchAndCacheCatalog(
-  gameApiUrl: string,
+  gameApiRoot: string,
   fleetDir: string,
 ): Promise<CatalogData | null> {
   // Check file cache first
@@ -162,11 +170,11 @@ export async function fetchAndCacheCatalog(
   }
 
   // Fetch from game API — all three endpoints in parallel
-  log.info("Fetching catalog from game API", { base: gameApiUrl });
+  log.info("Fetching catalog from game API", { base: gameApiRoot });
   const [items, recipes, ships] = await Promise.allSettled([
-    fetchEndpoint<GameItem>(gameApiUrl, "items", "items"),
-    fetchEndpoint<Recipe>(gameApiUrl, "recipes", "recipes"),
-    fetchEndpoint<ShipSpec>(gameApiUrl, "ships", "ships"),
+    fetchEndpoint<GameItem>(gameApiRoot, "items", "items"),
+    fetchEndpoint<Recipe>(gameApiRoot, "recipes", "recipes"),
+    fetchEndpoint<ShipSpec>(gameApiRoot, "ships", "ships"),
   ]);
 
   const catalog: CatalogData = {

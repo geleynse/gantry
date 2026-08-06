@@ -328,3 +328,48 @@ describe("fetchAndCacheCatalog — stale cache", () => {
     expect(Array.isArray(result!.ships)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// fetchAndCacheCatalog — live API response shapes
+//
+// The real game API doesn't return a flat array for every endpoint. GET
+// /api/items returns { items: { "<item_id>": {...}, ... } } — a dict keyed
+// by item ID, not a JSON array (verified live 2026-08-05, 3370 entries).
+// fetchEndpoint must unwrap that shape too, or every item is silently
+// dropped even though the request succeeded with a 200.
+// ---------------------------------------------------------------------------
+
+describe("fetchAndCacheCatalog — dict-keyed API response shape", () => {
+  let tmpDir: string;
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("unwraps a dict-of-records response (items keyed by ID) into an array", async () => {
+    global.fetch = mock(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/items")) {
+        return new Response(JSON.stringify({
+          items: {
+            iron_ore: { id: "iron_ore", name: "Iron Ore", type: "mineral", mass: 1, base_price: 50 },
+            copper_ore: { id: "copper_ore", name: "Copper Ore", type: "mineral", mass: 1, base_price: 80 },
+          },
+        }), { status: 200 });
+      }
+      // recipes/ships: not under test here — return an empty array shape
+      return new Response(JSON.stringify({ recipes: [], ships: [] }), { status: 200 });
+    }) as unknown as typeof global.fetch;
+
+    const result = await fetchAndCacheCatalog("http://fake-game-api/api", tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.items).toHaveLength(2);
+    expect(result!.items.map((i) => i.id).sort()).toEqual(["copper_ore", "iron_ore"]);
+  });
+});

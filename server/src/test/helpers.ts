@@ -17,6 +17,7 @@ export function createMockConfig(overrides: Partial<GantryConfig> = {}): GantryC
     agents: [{ name: "test-agent" }],
     gameUrl: "http://localhost:3000/mcp",
     gameApiUrl: "http://localhost:3000/api/v1",
+    gameApiRoot: "http://localhost:3000/api",
     gameMcpUrl: "http://localhost:3000/mcp",
     agentDeniedTools: {},
     callLimits: {},
