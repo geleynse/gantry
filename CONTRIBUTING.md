@@ -41,8 +41,17 @@ Starts the server in watch mode (hot reload on TypeScript changes). The dashboar
 ### Run Tests
 
 ```bash
-bun test                         # all tests (~4200)
+bun run test:isolated            # the real answer: ~5,500 tests, one process per file
+bun test src/services/foo.test.ts  # fast inner loop on the file you are editing
+bun test                         # whole suite in one process — EXPECT FALSE REDS
 ```
+
+`bun run test:isolated` is what CI gates on and the only run whose result means
+anything. A plain full `bun test` shares one process across all 292 files, so
+module singletons and an unrestored `globalThis.fetch` leak between them: 3 of 5
+clean-tree runs go red, with a different failing set each time. Use it on a
+single file, not on the suite. Details in
+[docs/api-drift-2026-08.md](docs/api-drift-2026-08.md).
 
 All tests use `bun:test`. No Vitest, no Jest. Tests are co-located with source files.
 
@@ -149,7 +158,7 @@ chore: Update bun to 1.2.0
 - Description: what changed, why, what trade-offs were made
 - Tests: all new behavior covered
 - No unrelated changes (no "while I was in here" edits)
-- Build passes: `bun run build && bun test`
+- Build passes: `bun run build && bun run test:isolated` (not plain `bun test` — see [Run Tests](#run-tests))
 
 ## Reporting Issues
 

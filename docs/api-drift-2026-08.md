@@ -161,6 +161,35 @@ while omitting real tests is the same failure class as `continue-on-error`, just
 The runner now derives the answer from bun itself on every run: it builds a fixture tree of
 matching and non-matching names, runs `bun test` over it, and fails if its own discovery disagrees.
 
+**Second correction (2026-08-05), after review.** Two more claims above were wrong, and both were
+wrong in the same direction — a number was asserted from a comment rather than measured.
+
+- **`staggers agent starts` was flaky by construction, not by narrow margin.** The first fix raised
+  its base stagger from 10 ms to 50 ms and kept the wall-clock form, on the stated reasoning that
+  the nominal total was 250 ms (one heavy×heavy pair at 100 ms plus three at 50 ms) against a
+  `>= 200` floor, leaving 50 ms of slack. That arithmetic came from a comment naming `drifter-gale`
+  as a sonnet agent. It is **haiku** (`agent-manager.test.ts:11`), and `testConfig` has no two
+  consecutive heavy models at all, so every one of the four waits is the base delay and the nominal
+  total is **exactly 200 ms**. The assertion sat on the boundary, where timers under-firing by 1-2 ms
+  each fail it — which is precisely the 1-in-15 rate observed. There was never any slack to widen.
+  The test now records the delays the scheduler *requests*, like its two siblings, and asserts the
+  full ordered timeline of launches and waits. Dropping the `await` on the sleep, halving the base
+  delay, and deleting the sleep were each confirmed to turn it red.
+- **The quarantine's `<file>::` prefix was decorative on the exclusion side.** One negative-lookahead
+  PCRE was built from every quarantined *name* and passed to all 292 files, so an entry naming a
+  generic test name would have disabled that test suite-wide while re-running it in one file — the
+  same silent-coverage-loss shape as the discovery bug above. Measured: with an entry naming only
+  `add_agent_test.tsx`, the old repo-wide filter took an unrelated file from 14 tests to 11. The
+  filter is now built per file, and `verify_quarantine_partition()` enforces
+  `gated + quarantined == total` for every quarantined file (today `17 = 12 + 5`) plus liveness of
+  each individual entry, so the property is checked rather than observed.
+
+Also added, all for the same reason — the gate must not be able to report success over less than it
+claims: a guard that fails if any test file exists outside the `src/` walk root, a per-file
+zero-tests check (`bun test` on a file with no tests exits 0, measured on bun 1.3.9), a floor on the
+total test count as well as the file count, and a non-zero exit when a file skips its integration
+coverage because localhost could not be bound.
+
 ---
 
 ## P1 — Behavioural drift worth fixing

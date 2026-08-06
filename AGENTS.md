@@ -8,7 +8,8 @@ MCP proxy and live dashboard for Space Molt AI fleets. This file provides contex
 bun install              # install dependencies
 bun run build            # build server + dashboard
 bun run dev              # dev mode with hot reload
-bun test                 # run ~5300 tests
+bun run test:isolated    # run ~5,500 tests, one process per file (what CI gates on)
+bun test <file>          # single file — a full `bun test` false-reds ~60% of the time
 ```
 
 Dashboard at `http://localhost:3100`.

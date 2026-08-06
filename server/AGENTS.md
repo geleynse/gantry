@@ -11,7 +11,8 @@ cd gantry/server
 bun install
 bun run build          # server (esbuild) + dashboard (Next.js)
 bun run dev            # dev mode with watch
-bun test               # ~5300 tests
+bun run test:isolated  # ~5,500 tests, one process per file (what CI gates on)
+bun test <file>        # single file — a full `bun test` false-reds ~60% of the time
 ```
 
 Dashboard at `http://localhost:3100`. Config at `$FLEET_DIR/gantry.json` — see [docs/configuration.md](../docs/configuration.md).
@@ -96,7 +97,7 @@ The MCP proxy is decomposed into focused modules with dependency injection:
 bun run build           # build:server (esbuild) + build:client (next build)
 bun run build:server    # server-only esbuild via build.ts
 bun run build:client    # Next.js static export to dist/public/
-bun test                # bun:test (~5300 tests)
+bun run test:isolated   # bun:test (~5,500 tests), one process per file — CI's gate
 bun run dev             # bun watch mode (server only)
 
 # Single-binary build (no Bun runtime needed on target)
@@ -127,12 +128,28 @@ Pluggable auth middleware in `src/web/auth/`. Five built-in adapters: `none`, `t
 ## Testing
 
 ```bash
-bun test                   # all tests
-bun test --coverage       # with coverage
-bun test file.test.ts     # specific file
+bun run test:isolated      # all tests, one bun process per file — the gating run
+bun test file.test.ts      # specific file (fast inner loop)
+bun test --coverage        # whole-suite coverage; shares one process, see below
+./scripts/run-tests-isolated.sh --quarantined   # re-run the quarantined tests only
 ```
 
 ### Testing Gotchas
+
+- **Do not judge a change by a plain full `bun test`.** All 292 files share one
+  process, so `mock.module()`, module singletons and an unrestored
+  `globalThis.fetch` leak across files: 3 of 5 clean-tree runs go red with a
+  different failing set each time. `bun run test:isolated` gives each file its
+  own process and is what CI gates on. Background:
+  [docs/api-drift-2026-08.md](../docs/api-drift-2026-08.md).
+- **The isolated runner self-checks its own coverage.** It re-derives bun's
+  test-file naming rule from bun on every run, refuses to walk a root other than
+  `src/`, fails on a file that collects zero tests, and requires the quarantine
+  list to partition each file it names exactly. Those checks exit 2 (a gate
+  defect) rather than 1 (a test failure) so the two are not confused.
+- **A localhost bind failure fails the run,** because a skipped integration test
+  under a green tick is indistinguishable from a passing one. Set
+  `GANTRY_ALLOW_UNBINDABLE=1` to accept it explicitly in a network-less sandbox.
 
 - **Use supertest, not `fetch()` + `app.listen()`** for Express route tests. Bun's fetch has a connection pool bug that drops response bodies in CI. See [CONTRIBUTING.md](../CONTRIBUTING.md) for the correct pattern.
 - `mock.module()` is process-global — avoid mocking commonly-imported modules

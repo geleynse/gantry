@@ -51,8 +51,16 @@ jobs:
       # is nondeterministic (3 of 5 clean-tree runs red, different failures each time)
       # because test files leak global state into each other. See the script header.
       #
-      # The script also verifies its own file discovery against the installed bun
-      # before running anything, so it cannot report success over a subset.
+      # The script also verifies, before running anything, that it cannot report
+      # success over less than it claims: discovery is re-derived from the installed
+      # bun, the walk root is checked for stray test files outside it, and the
+      # quarantine list must partition each file it names exactly. Those checks and
+      # the post-run floors exit 2; an actual test failure exits 1.
+      #
+      # GANTRY_ALLOW_UNBINDABLE is deliberately NOT set here. A GitHub runner can
+      # bind loopback, so a file skipping its integration coverage means the
+      # environment is not what the suite assumes, and that should stop the build
+      # rather than print a notice under a green tick.
       - name: Test (per-file isolation)
         run: ./scripts/run-tests-isolated.sh
         working-directory: server

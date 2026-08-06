@@ -2,17 +2,14 @@ import { describe, it, expect, afterEach } from 'bun:test';
 import { createSOCKS5Tunnel, createSOCKS5Relay } from './socks5-tunnel.js';
 import { SocksClient } from 'socks';
 import { EventEmitter } from 'node:events';
-import { createServer, connect as netConnect, type Server } from 'node:net';
-
-async function canBindLocalhost(): Promise<boolean> {
-  return await new Promise<boolean>((resolve) => {
-    const probe = createServer();
-    probe.once('error', () => resolve(false));
-    probe.listen(0, '127.0.0.1', () => {
-      probe.close(() => resolve(true));
-    });
-  });
-}
+import { connect as netConnect } from 'node:net';
+// Shared helper, not a local copy: it prints GANTRY_SKIPPED_UNBINDABLE when the
+// probe fails, which is what scripts/run-tests-isolated.sh greps for to report
+// SKIPPED(unbindable). The private duplicate this replaces returned the same
+// boolean and drove the same it.skip, but emitted no marker — so on a runner
+// without loopback this file's relay coverage vanished under a green tick,
+// which is the exact hole the marker was introduced to close.
+import { canBindLocalhost } from '../test/http-test-server.js';
 
 const CAN_BIND_LOCALHOST = await canBindLocalhost();
 
