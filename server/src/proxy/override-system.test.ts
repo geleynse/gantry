@@ -504,7 +504,7 @@ describe("createOverrideInjection", () => {
     statusCache.set("alpha", { data: makeStatusData(), fetchedAt: Date.now() });
 
     const ctx = {
-      config: { agents: [], gameUrl: "", gameApiUrl: "", gameMcpUrl: "", agentDeniedTools: {}, callLimits: {}, turnSleepMs: 0, staggerDelay: 0 },
+      config: { agents: [], gameUrl: "", gameApiUrl: "", gameApiRoot: "", gameMcpUrl: "", agentDeniedTools: {}, callLimits: {}, turnSleepMs: 0, staggerDelay: 0 },
       sessionAgentMap: new Map(),
       callTrackers: new Map(),
       eventBuffers: new Map(),

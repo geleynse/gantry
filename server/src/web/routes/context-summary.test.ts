@@ -60,6 +60,7 @@ describe("GET /api/agents/:name/context-summary", () => {
       agents: [{ name: "drifter-gale" }],
       gameUrl: "http://localhost/mcp",
       gameApiUrl: "http://localhost/api/v1",
+      gameApiRoot: "http://localhost/api",
       agentDeniedTools: {},
       callLimits: {},
       turnSleepMs: 90,

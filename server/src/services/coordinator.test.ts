@@ -45,6 +45,7 @@ const testConfig = createMockConfig({
   ],
   gameUrl: "https://game.test/mcp",
   gameApiUrl: "https://game.test/api/v1",
+  gameApiRoot: "https://game.test/api",
   coordinator: {
     enabled: false,
     intervalMinutes: 10,

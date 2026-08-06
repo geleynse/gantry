@@ -48,6 +48,7 @@ function makeConfig(): GantryConfig {
     // Minimal required fields
     gameUrl: "ws://localhost:9999",
     gameApiUrl: "http://localhost:9999",
+    gameApiRoot: "http://localhost:9999/api",
     turnSleepMs: 90_000,
     staggerDelay: 20_000,
     mockMode: { enabled: false },

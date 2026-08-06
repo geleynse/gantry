@@ -52,6 +52,10 @@ export interface GantryConfig {
    * only POST /api/v1/register works there; GET /api/v1/items → 405).
    * Use `gameApiRoot` for any GET call. This field exists for POST-only
    * callers that specifically target the /api/v1 namespace.
+   *
+   * This marker is advisory — both fields are plain strings, so misuse still
+   * compiles. `fetchAndCacheCatalog` therefore rejects a versioned base at
+   * runtime rather than relying on a reader noticing this JSDoc.
    */
   gameApiUrl: string;
   /**

@@ -19,6 +19,7 @@ import { registerItem } from "./game-item-registry.js";
 import { registerRecipe } from "./recipe-registry.js";
 import type { GameItem } from "./game-item-registry.js";
 import type { Recipe } from "./recipe-registry.js";
+import type { GantryConfig } from "../config.js";
 
 const log = createLogger("game-catalog");
 
@@ -67,6 +68,41 @@ function isCacheStale(catalog: CatalogData): boolean {
   return Date.now() - fetchedAt > CACHE_TTL_MS;
 }
 
+/**
+ * Is this cache file worth honouring the TTL for?
+ *
+ * Don't trust poisoned state written by a version that had a bug. Before
+ * 2026-08-05 this fetch pointed at `/api/v1`, which 405s on every GET, and
+ * the all-empty result was written to disk with a *fresh* `fetched_at`. A
+ * deploy landing within 24h of such a startup would read that fresh, empty
+ * cache, skip the fetch entirely, and stay silently broken for up to another
+ * day. The live game serves thousands of items and hundreds of ships, so a
+ * catalog with zero entries in every collection is never a real result.
+ *
+ * Note this requires *all three* collections to be empty before rejecting:
+ * recipes alone being empty is legitimate (GET /api/recipes is 404 since the
+ * endpoint was removed from the game).
+ */
+function isCacheUsable(catalog: CatalogData): boolean {
+  if (!Array.isArray(catalog.items) || !Array.isArray(catalog.recipes) || !Array.isArray(catalog.ships)) {
+    return false;
+  }
+  return catalog.items.length + catalog.recipes.length + catalog.ships.length > 0;
+}
+
+/**
+ * The base URL the catalog GET fetch must use.
+ *
+ * Exists so the one line of wiring in index.ts is assertable: pointing the
+ * catalog fetch at `config.gameApiUrl` (the POST-only `/api/v1` base) is the
+ * exact bug this module was fixed for, and reverting it used to leave the
+ * whole suite green. Mutate the body to `config.gameApiUrl` and
+ * game-catalog.test.ts fails.
+ */
+export function catalogBaseUrl(config: GantryConfig): string {
+  return config.gameApiRoot;
+}
+
 // ---------------------------------------------------------------------------
 // Fetchers — individual game API endpoint calls
 // ---------------------------------------------------------------------------
@@ -87,12 +123,36 @@ async function fetchEndpoint<T>(gameApiRoot: string, endpoint: string, key: stri
     // Live game API shape check (2026-08-05): GET /api/items returns
     // { items: { "<item_id>": {...}, ... } } — a dict keyed by ID, not an
     // array. Unwrap that shape too, or every item is silently dropped even
-    // though the request succeeded.
-    if (obj[key] && typeof obj[key] === "object" && !Array.isArray(obj[key])) {
-      return Object.values(obj[key] as Record<string, unknown>) as T[];
-    }
+    // though the request succeeded. Mirror the array branch's obj.data
+    // fallback so both shapes are accepted under either envelope key.
+    const dict = unwrapDict(obj[key]) ?? unwrapDict(obj.data);
+    if (dict) return dict as T[];
   }
   return [];
+}
+
+/**
+ * Unwrap a dict-of-records (`{ "<id>": {...} }`) into an array.
+ *
+ * The dict key IS the record's ID, so fold it in rather than dropping it:
+ * every live record happens to repeat its own `id` today (verified over all
+ * 3370 items, `id === key` for all of them), but `persistToDB` and `getItem`
+ * both key on `id`, so the catalog would silently empty out again if the
+ * game ever stopped sending the redundant field. The record's own `id` wins
+ * if present.
+ *
+ * Non-record values are dropped, not passed through: `searchCatalog` reads
+ * `e.id` outside any guard, so a `null` or scalar in the dict would take out
+ * the whole `query_catalog` tool with a TypeError.
+ *
+ * Returns null when the value isn't a dict at all, so callers can fall
+ * through to the next candidate shape.
+ */
+function unwrapDict(value: unknown): Record<string, unknown>[] | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== null && typeof v === "object" && !Array.isArray(v))
+    .map(([id, v]) => ({ id, ...(v as Record<string, unknown>) }));
 }
 
 // ---------------------------------------------------------------------------
@@ -146,12 +206,26 @@ export async function fetchAndCacheCatalog(
   gameApiRoot: string,
   fleetDir: string,
 ): Promise<CatalogData | null> {
+  // Mechanical guard against the bug this module was fixed for. The JSDoc
+  // @deprecated marker on GantryConfig.gameApiUrl is advisory — both bases
+  // are plain strings, so handing the /api/v1 one back to this function
+  // still compiles. Refuse it loudly instead of issuing 405ing GETs and
+  // caching the empty result.
+  if (/\/v\d+\/?$/.test(gameApiRoot)) {
+    log.error(
+      "Refusing to fetch catalog from a versioned API base — every /api/v1/* GET " +
+      "returns 405. Pass config.gameApiRoot (\"<host>/api\"), not config.gameApiUrl.",
+      { base: gameApiRoot },
+    );
+    return null;
+  }
+
   // Check file cache first
   const cachePath = catalogPath(fleetDir);
   if (existsSync(cachePath)) {
     try {
       const cached = JSON.parse(readFileSync(cachePath, "utf-8")) as CatalogData;
-      if (!isCacheStale(cached)) {
+      if (!isCacheStale(cached) && isCacheUsable(cached)) {
         log.info("Catalog loaded from file cache", {
           items: cached.items.length,
           recipes: cached.recipes.length,
@@ -163,7 +237,13 @@ export async function fetchAndCacheCatalog(
         persistToDB(cached);
         return cached;
       }
-      log.info("Catalog file cache stale, refreshing from game API");
+      if (!isCacheUsable(cached)) {
+        log.warn("Catalog file cache is empty or malformed, refetching regardless of its age", {
+          fetched_at: cached?.fetched_at,
+        });
+      } else {
+        log.info("Catalog file cache stale, refreshing from game API");
+      }
     } catch (e) {
       log.warn("Failed to read catalog file cache, fetching fresh", { error: String(e) });
     }

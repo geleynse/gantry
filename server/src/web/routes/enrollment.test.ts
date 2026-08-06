@@ -50,6 +50,7 @@ describe("enrollment-routes", () => {
       agents: [{ name: "existing-agent", roleType: "trader" } as any],
       gameUrl: "http://localhost/mcp",
       gameApiUrl: "http://localhost/api/v1",
+      gameApiRoot: "http://localhost/api",
       gameMcpUrl: "http://localhost/mcp",
       agentDeniedTools: {},
       callLimits: {},
