@@ -22,6 +22,7 @@
     "dev": "bun run build.ts --watch",
     "dev:client": "bun run next dev --port 3001",
     "test": "bun test --max-concurrency=1",
+    "test:isolated": "./scripts/run-tests-isolated.sh",
     "test:coverage": "bun test --coverage"
   },
   "dependencies": {

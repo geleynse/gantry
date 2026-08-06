@@ -295,25 +295,44 @@ describe('agent-manager', () => {
 
   describe('startAll', () => {
     it('staggers agent starts using configured staggerDelay', async () => {
-      // Short stagger for test speed — staggerDelay is in seconds
-      setConfigForTesting({ ...testConfig, staggerDelay: 0.01 }); // 10ms base
+      // 50ms base. The earlier 10ms base left only a 5ms margin between the nominal
+      // total (50ms) and the assertion floor (45ms), which is smaller than the
+      // undershoot four setTimeout()s can accumulate — observed 43ms, failing ~1 run
+      // in 15 and ~10 in 20 under load. Timers may fire a little EARLY, never much
+      // late, so the fix is margin, not a looser kind of assertion.
+      setConfigForTesting({ ...testConfig, staggerDelay: 0.05 }); // 50ms base
 
       mockedHasSession.mockResolvedValue(false);
-      mockedNewSession.mockResolvedValue(undefined);
+
+      // Record when each agent is actually launched so we can assert the property
+      // this test is named for — that starts are spread out — rather than inferring
+      // it from one wall-clock total.
+      const startTimes: number[] = [];
+      mockedNewSession.mockImplementation(async () => {
+        startTimes.push(Date.now());
+      });
 
       const t0 = Date.now();
       const results = await startAll();
       const elapsed = Date.now() - t0;
 
       // 5 agents; 4 inter-agent waits.
-      // Between drifter-gale (sonnet) → sable-thorn (sonnet): heavy×heavy = 2x = 20ms
-      // sable-thorn (sonnet) → rust-vane (haiku): mixed = 10ms
-      // rust-vane (haiku) → lumen-shoal (sonnet): mixed = 10ms
-      // lumen-shoal (sonnet) → cinder-wake (codex, no model): mixed = 10ms
-      // Total minimum ≈ 50ms. Allow a generous ceiling for CI jitter.
-      expect(elapsed).toBeGreaterThanOrEqual(45);
+      // drifter-gale (sonnet) → sable-thorn (sonnet): heavy×heavy = 2x = 100ms
+      // sable-thorn (sonnet) → rust-vane (haiku): mixed = 50ms
+      // rust-vane (haiku) → lumen-shoal (sonnet): mixed = 50ms
+      // lumen-shoal (sonnet) → cinder-wake (codex, no model): mixed = 50ms
+      // Nominal total ≈ 250ms; floor at 200ms keeps 50ms of slack.
+      expect(elapsed).toBeGreaterThanOrEqual(200);
       expect(results).toHaveLength(5);
       expect(mockedNewSession).toHaveBeenCalledTimes(5);
+
+      // Each start is separated from the previous one — they are not simultaneous.
+      // Every gap is nominally >= 50ms, so a 30ms floor cannot be reached by timer
+      // jitter alone, and load only ever makes these gaps larger.
+      expect(startTimes).toHaveLength(5);
+      for (let i = 1; i < startTimes.length; i++) {
+        expect(startTimes[i]! - startTimes[i - 1]!).toBeGreaterThanOrEqual(30);
+      }
     });
 
     it('uses double stagger between two consecutive heavy-token (sonnet) agents', async () => {

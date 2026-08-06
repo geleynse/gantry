@@ -1,9 +1,19 @@
-import { describe, it, expect, mock, beforeEach } from "bun:test";
+import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
 import { registerAccount } from "./game-registration.js";
+
+// These tests replace globalThis.fetch by plain property assignment. `mock.restore()`
+// only undoes mock() spies, NOT a raw assignment, so without the afterEach below the
+// last mock installed here leaks into every subsequent test file in the same process
+// (it broke the live-API checks in src/proxy/schema-drift.test.ts).
+const originalFetch = globalThis.fetch;
 
 describe("game-registration", () => {
   beforeEach(() => {
     mock.restore();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
   });
 
   it("successfully registers an account", async () => {
