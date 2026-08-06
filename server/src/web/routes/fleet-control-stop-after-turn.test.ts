@@ -15,6 +15,7 @@ const testConfig: GantryConfig = {
   ] as GantryConfig['agents'],
   gameUrl: 'ws://localhost',
   gameApiUrl: 'http://localhost',
+  gameApiRoot: 'http://localhost/api',
   gameMcpUrl: 'http://localhost',
   agentDeniedTools: {},
   callLimits: {},

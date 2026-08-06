@@ -46,7 +46,24 @@ export type OverseerConfig = z.infer<typeof OverseerConfigSchema>;
 export interface GantryConfig {
   agents: AgentConfig[];
   gameUrl: string;
+  /**
+   * @deprecated for GET requests — this is "<host>/api/v1", and every
+   * `/api/v1/*` GET returns 405 on the live game server (verified 2026-08-05:
+   * only POST /api/v1/register works there; GET /api/v1/items → 405).
+   * Use `gameApiRoot` for any GET call. This field exists for POST-only
+   * callers that specifically target the /api/v1 namespace.
+   *
+   * This marker is advisory — both fields are plain strings, so misuse still
+   * compiles. `fetchAndCacheCatalog` therefore rejects a versioned base at
+   * runtime rather than relying on a reader noticing this JSDoc.
+   */
   gameApiUrl: string;
+  /**
+   * Base URL for GET requests against the game's REST API: "<host>/api"
+   * (no /v1 segment — that namespace 405s on GET). Used by the catalog
+   * fetch (items/recipes/ships) and any future GET-based game API reads.
+   */
+  gameApiRoot: string;
   gameMcpUrl: string;
   agentDeniedTools: Record<string, Record<string, string>>;
   callLimits: Record<string, number>;

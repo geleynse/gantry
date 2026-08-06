@@ -31,6 +31,7 @@ const BASE_CONFIG = {
   ],
   gameUrl: "http://localhost/mcp",
   gameApiUrl: "http://localhost/api/v1",
+  gameApiRoot: "http://localhost/api",
   agentDeniedTools: {},
   callLimits: {},
   turnSleepMs: 90000,

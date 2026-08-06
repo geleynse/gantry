@@ -22,7 +22,7 @@ import { createHealthMonitor } from "./services/health-monitor.js";
 import { setLifecycleHooks } from "./services/agent-manager.js";
 import { migrateCredentialsIfNeeded, validateAllCredentials } from "./services/credentials-crypto.js";
 import { recordCredentialValidationResult } from "./services/credential-health.js";
-import { fetchAndCacheCatalog } from "./services/game-catalog.js";
+import { fetchAndCacheCatalog, catalogBaseUrl } from "./services/game-catalog.js";
 import { runDailySnapshotFetch } from "./services/external-snapshot-fetcher.js";
 
 // Configure log level early
@@ -115,7 +115,7 @@ if (config.validateCredentialsOnStartup !== false && !config.mockMode?.enabled) 
 
 // --- 1c. Fetch game catalog (items/recipes/ships) — non-blocking, 24h file cache ---
 if (!config.mockMode?.enabled) {
-  fetchAndCacheCatalog(config.gameApiUrl, FLEET_DIR).catch((err: unknown) => {
+  fetchAndCacheCatalog(catalogBaseUrl(config), FLEET_DIR).catch((err: unknown) => {
     log.warn("Catalog fetch failed (non-fatal, will retry next startup)", {
       error: err instanceof Error ? err.message : String(err),
     });

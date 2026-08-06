@@ -32,6 +32,7 @@ const testConfig: GantryConfig = {
   agents: [{ name: "alpha-agent" }, { name: "beta-agent" }],
   gameUrl: "https://game.spacemolt.com/mcp",
   gameApiUrl: "https://game.spacemolt.com/api/v1",
+  gameApiRoot: "https://game.spacemolt.com/api",
   gameMcpUrl: "https://game.spacemolt.com/mcp",
   agentDeniedTools: {},
   callLimits: {},

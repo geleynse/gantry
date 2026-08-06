@@ -13,6 +13,7 @@ function makeConfig(agents: { name: string; roleType?: string; role?: string }[]
     agents: agents as GantryConfig["agents"],
     gameUrl: "ws://localhost",
     gameApiUrl: "http://localhost",
+    gameApiRoot: "http://localhost/api",
     survivability: { autoCloakEnabled: true },
   });
 }

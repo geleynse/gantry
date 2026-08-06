@@ -311,6 +311,21 @@ describe("Config Loading (loadConfig)", () => {
     cleanup();
   });
 
+  // Regression test for the silent-empty-catalog bug: every /api/v1/* GET
+  // returns 405 on the live game server (only /api/v1/register, a POST, is
+  // valid there). GET-issuing callers (the catalog fetch) must resolve to
+  // gameApiRoot ("<host>/api"), which the game actually serves 200s from.
+  test("loadConfig derives gameApiRoot as <host>/api, distinct from the POST-only gameApiUrl", () => {
+    writeConfig({
+      mcpGameUrl: "https://game.example.com/mcp/",
+      agents: [{ name: "agent1" }],
+    });
+    const config = loadConfig(tmpDir);
+    expect(config.gameApiRoot).toBe("https://game.example.com/api");
+    expect(config.gameApiUrl).toBe("https://game.example.com/api/v1");
+    cleanup();
+  });
+
   test("saveConfig rejects schema-invalid config and leaves the file untouched", () => {
     const validConfig = {
       mcpGameUrl: "https://game.example.com/mcp",

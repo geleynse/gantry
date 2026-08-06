@@ -8,6 +8,7 @@ const testConfig: GantryConfig = {
   agents: [{ name: "test-agent", socksPort: 1081 }],
   gameUrl: "https://game.spacemolt.com/mcp",
   gameApiUrl: "https://game.spacemolt.com/api/v1",
+  gameApiRoot: "https://game.spacemolt.com/api",
   gameMcpUrl: "https://game.spacemolt.com/mcp",
   agentDeniedTools: {},
   callLimits: {},

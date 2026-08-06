@@ -94,11 +94,16 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
 
   // Normalize a trailing slash so 'https://host/mcp/' still derives correctly.
   const gameUrl = fleetConfig.mcpGameUrl.replace(/\/+$/, "");
+  // gameApiUrl ("<host>/api/v1") is POST-only — every /api/v1/* GET returns
+  // 405 on the live game server. Kept for POST-based callers (e.g. register).
   const gameApiUrl = gameUrl.replace(/\/mcp$/, "/api/v1");
+  // gameApiRoot ("<host>/api") is what GET-issuing callers must use — the
+  // game actually serves data from this namespace (e.g. GET /api/items).
+  const gameApiRoot = gameUrl.replace(/\/mcp$/, "/api");
   if (gameApiUrl === gameUrl) {
     log.warn(
       `mcpGameUrl "${fleetConfig.mcpGameUrl}" does not end with "/mcp"; ` +
-      `gameApiUrl could not be derived (REST calls will hit the MCP URL and likely fail).`,
+      `gameApiUrl/gameApiRoot could not be derived (REST calls will hit the MCP URL and likely fail).`,
     );
   }
 
@@ -153,6 +158,7 @@ export function loadConfig(fleetDir: string = FLEET_DIR): GantryConfig {
     agents,
     gameUrl,
     gameApiUrl,
+    gameApiRoot,
     gameMcpUrl: gameUrl,
     agentDeniedTools,
     callLimits,
