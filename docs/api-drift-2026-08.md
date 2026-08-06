@@ -122,19 +122,44 @@ failed a build**. Only `bun install` and `bun run build` gate CI.
 This makes the drift-test enforcement above effectively local-only: the test can now fail loudly and
 CI will still go green.
 
-Two distinct problems are tangled together here and should be separated:
+Blanket `continue-on-error` hides every genuine regression. Note this repo has ~5,400 tests
+currently gating nothing.
 
-1. **Real cross-file pollution.** On a full `bun test src/` run, `agent-manager > staggers agent
-   starts` and `__tests__/agent-lifecycle.test.ts > requestShutdown emits a __system_event record`
-   fail; both pass in isolation. Shared singleton/DB state, not real defects.
-2. **Self-inflicted rate limiting.** The three `API sync — live game server schema` tests hit the
-   live game. Under a 292-file concurrent run they get throttled and — correctly, by the new
-   behaviour — fail. In isolation they pass (15/15) against a reachable server.
+**Correction (2026-08-05).** The original diagnosis in this section was wrong in three specific
+ways, and the corrected version is what the fix was built on. Recording both so the mistake is not
+re-derived from this document.
 
-Blanket `continue-on-error` hides both, plus every genuine regression. Better: quarantine the known
-polluting files (or fix the shared state), give the live-sync tests their own serialized step, and
-let the rest of the suite actually gate the build. Note this repo has ~5,400 tests currently gating
-nothing.
+- **"Known cross-file test pollution — all tests pass individually" is false**, both here and in the
+  `ci.yml:31` comment it quotes. `agent-manager > staggers agent starts` fails roughly 1 run in 15
+  in a *fresh, fully isolated* process. It was never pollution: the test set a 10 ms base stagger
+  and asserted `expect(elapsed).toBeGreaterThanOrEqual(45)` against a nominal total of 50 ms, so a
+  ~10% timer undershoot failed it. That is a wall-clock lower bound, and no amount of isolation
+  fixes it.
+- **`__tests__/agent-lifecycle.test.ts > requestShutdown emits a __system_event record` does not
+  fail in a full run.** It never failed across 8 full runs. It should not have been listed.
+- **There is no concurrent run.** `server/bunfig.toml` sets `maxConcurrency = 1`, so the live-sync
+  failures cannot have been "self-inflicted rate limiting under a 292-file concurrent run". The
+  actual cause is `globalThis.fetch` leaking out of `game-registration.test.ts` and
+  `leaderboard-cache.test.ts`, which assign it without restoring the original.
+
+**What was measured, and why the fix is process isolation rather than deleting one flag.** The
+suite is nondeterministic enough that **3 of 5 clean full runs go red, with a different failing set
+each time**. Simply removing `continue-on-error` would therefore have produced roughly 60%
+false-red CI, which is worse than no gate: a gate people learn to ignore teaches that red means
+nothing. So the runner executes each test file in its own bun process
+(`server/scripts/run-tests-isolated.sh`), which removes the cross-file family outright, and the two
+genuinely timing-bound tests were rewritten to assert the delay the scheduler *requests* rather
+than elapsed wall-clock.
+
+**Why the runner verifies its own discovery.** A floor on the file count is not sufficient. The
+first version of the runner discovered test files with `find src -name '*.test.ts' -o -name
+'*.test.tsx'`, which silently missed `src/components/__tests__/add_agent_test.tsx` — a real file
+with 5 real tests that `bun test` runs and the gate did not. Bun treats
+`<name><. or _><test or spec>.<js|jsx|ts|tsx|mjs|cjs|mts|cts>` as a test file, case-insensitively;
+the original glob matched two of those sixteen forms. A gate that reports "ran 291 files, 0 failed"
+while omitting real tests is the same failure class as `continue-on-error`, just harder to notice.
+The runner now derives the answer from bun itself on every run: it builds a fixture tree of
+matching and non-matching names, runs `bun test` over it, and fails if its own discovery disagrees.
 
 ---
 

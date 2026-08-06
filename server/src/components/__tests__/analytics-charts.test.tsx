@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import { AgentComparisonTable, ExpensiveTurnsTable, TokenEfficiencyPanel } from '../analytics-charts';
 
@@ -28,11 +28,21 @@ mock.module('@/lib/utils', () => ({
   },
 }));
 
+// Captured before any test swaps it. `global.fetch = ...` is a plain property
+// assignment, so nothing restores it automatically — not mock.restore(), which
+// only reverts spyOn()-created mocks. Per-file process isolation hides the leak
+// today; the afterEach below is what keeps it from returning.
+const originalFetch = globalThis.fetch;
+
 // Provide a baseline global.fetch mock (tests override per-case)
 beforeEach(() => {
   global.fetch = mock(async () => {
     return new Response(JSON.stringify([]), { status: 200 });
   }) as unknown as typeof global.fetch;
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
 });
 
 // ---------------------------------------------------------------------------

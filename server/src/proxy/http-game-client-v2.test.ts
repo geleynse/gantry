@@ -929,33 +929,57 @@ describe("HttpGameClientV2", () => {
     expect(resp.error?.code).toBe("connection_failed");
   });
 
-  it("awaitSessionCreateSlot enforces minimum spacing between concurrent session creations", async () => {
-    // Re-enable spacing for this specific test. Use tight bounds so the test
-    // is fast but the spacing effect is measurable.
+  it("awaitSessionCreateSlot makes the second session creation wait out the spacing window", async () => {
+    // Asserts the delay the code REQUESTS, not how long the process actually
+    // slept. The old form measured wall-clock ("second login took >= 45ms"),
+    // which is nondeterministic under CI load and, worse, would still pass if
+    // the spacing were deleted and the machine merely stalled for 45ms.
+    // Here setTimeout is stubbed to record its argument and fire immediately,
+    // so the test is exact and takes ~0ms. The arithmetic behind the value is
+    // covered separately by the pure sessionCreateWaitMs tests above.
     SessionCreateSpacing.enabled = true;
     const savedMin = SessionCreateSpacing.minSpacingMs;
     const savedJitter = SessionCreateSpacing.jitterMs;
     SessionCreateSpacing.minSpacingMs = 50;
-    SessionCreateSpacing.jitterMs = 0;
+    SessionCreateSpacing.jitterMs = 0; // no random fuzz → deterministic
     SessionCreateSpacing.lastCreateAtMs = 0;
+
+    const realSetTimeout = globalThis.setTimeout;
+    const waits: number[] = [];
+    globalThis.setTimeout = ((cb: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
+      waits.push(ms ?? 0);
+      return realSetTimeout(cb, 0, ...rest);
+    }) as unknown as typeof globalThis.setTimeout;
+
+    // The login path also arms one fetch-abort timer per HTTP request (90_000ms
+    // each). A spacing sleep can never exceed minSpacing + jitter by
+    // construction, so that ceiling separates the two without hardcoding either
+    // the abort constant or the number of requests login happens to make.
+    const spacingCeiling = () => SessionCreateSpacing.minSpacingMs + SessionCreateSpacing.jitterMs;
+    const spacingWaits = (from: number) => waits.slice(from).filter(ms => ms <= spacingCeiling());
 
     try {
       pushLoginSequence();
       pushLoginSequence();
       const client2 = new HttpGameClientV2("https://game.test/mcp", undefined, "test-agent-2", "standard");
 
-      const t0 = Date.now();
       await client.login("bot1", "pw");
-      const after1 = Date.now();
+      const firstLoginWaits = spacingWaits(0);
+      const mark = waits.length;
       await client2.login("bot2", "pw");
-      const after2 = Date.now();
+      const secondLoginWaits = spacingWaits(mark);
       await client2.close();
 
-      // First login should not be artificially delayed; second login must
-      // wait at least the min-spacing window after the first.
-      expect(after1 - t0).toBeLessThan(50);
-      expect(after2 - after1).toBeGreaterThanOrEqual(45); // allow ~5ms slop
+      // lastCreateAtMs starts at 0, so the first creation is already outside the
+      // window and must not schedule any spacing sleep at all.
+      expect(firstLoginWaits).toEqual([]);
+      // The second must schedule exactly one, for very nearly the full 50ms
+      // window (the stub collapses real time, so almost none has elapsed).
+      expect(secondLoginWaits).toHaveLength(1);
+      expect(secondLoginWaits[0]!).toBeGreaterThan(40);
+      expect(secondLoginWaits[0]!).toBeLessThanOrEqual(50);
     } finally {
+      globalThis.setTimeout = realSetTimeout;
       SessionCreateSpacing.minSpacingMs = savedMin;
       SessionCreateSpacing.jitterMs = savedJitter;
     }

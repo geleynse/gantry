@@ -28,6 +28,32 @@ const testConfig: GantryConfig = {
 // poisoning process-manager.test.ts (mock.module persists across files).
 import * as proc from './process-manager.js';
 import * as signalsDb from './signals-db.js';
+
+/**
+ * Run `fn` with globalThis.setTimeout replaced by a stub that RECORDS the
+ * requested delay and then fires the callback immediately.
+ *
+ * Why: the stagger tests assert which delay the scheduler *chose* (base vs
+ * heavy-pair). Measuring that as elapsed wall-clock made them nondeterministic
+ * — a 20ms timer asserted to land between 18ms and 39ms fails whenever a loaded
+ * CI box overshoots, and passes vacuously if the stagger is deleted but the
+ * machine happens to be slow. Recording the argument tests the decision itself,
+ * so the assertion is exact, instant, and cannot be satisfied by luck.
+ */
+async function recordSleepDelays(fn: () => Promise<void>): Promise<number[]> {
+  const realSetTimeout = globalThis.setTimeout;
+  const delays: number[] = [];
+  globalThis.setTimeout = ((cb: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
+    delays.push(ms ?? 0);
+    return realSetTimeout(cb, 0, ...rest);
+  }) as unknown as typeof globalThis.setTimeout;
+  try {
+    await fn();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  return delays;
+}
 import { clearCredentialHealthForTesting, recordCredentialAuthFailure } from './credential-health.js';
 import { startAgent, stopAgent, forceStopAgent, softStopAgent, softRestartAgent, startAll, validateSpawnSpec } from './agent-manager.js';
 import { createDatabase, closeDb } from './database.js';
@@ -349,12 +375,15 @@ describe('agent-manager', () => {
       mockedHasSession.mockResolvedValue(false);
       mockedNewSession.mockResolvedValue(undefined);
 
-      const t0 = Date.now();
-      await startAll();
-      const elapsed = Date.now() - t0;
+      const delays = await recordSleepDelays(async () => {
+        await startAll();
+      });
 
-      // Only one wait (between agent 0 and 1); it must be the heavy-pair delay (2×20ms = 40ms).
-      expect(elapsed).toBeGreaterThanOrEqual(38);
+      // Exactly one inter-agent wait (between agent 0 and 1), and it must be the
+      // HEAVY-PAIR delay: 2 × 20ms base = 40ms. Asserting the exact list also
+      // catches an extra or missing sleep, which a ">= 38ms elapsed" bound could
+      // never distinguish from timer jitter.
+      expect(delays).toEqual([40]);
       expect(mockedNewSession).toHaveBeenCalledTimes(2);
     });
 
@@ -371,13 +400,16 @@ describe('agent-manager', () => {
       mockedHasSession.mockResolvedValue(false);
       mockedNewSession.mockResolvedValue(undefined);
 
-      const t0 = Date.now();
-      await startAll();
-      const elapsed = Date.now() - t0;
+      const delays = await recordSleepDelays(async () => {
+        await startAll();
+      });
 
-      // Mixed pair → base delay (20ms). Must NOT exceed heavy-pair delay (40ms) by much.
-      expect(elapsed).toBeGreaterThanOrEqual(18);
-      expect(elapsed).toBeLessThan(40);
+      // Mixed pair → BASE delay (20ms), not the heavy-pair 40ms. The old form
+      // ("elapsed >= 18 and < 40") could not tell 20ms-plus-overshoot from a
+      // genuine 40ms, so a regression to the heavy-pair delay on a fast machine
+      // was indistinguishable from a slow 20ms timer.
+      expect(delays).toEqual([20]);
+      expect(mockedNewSession).toHaveBeenCalledTimes(2);
     });
   });
 

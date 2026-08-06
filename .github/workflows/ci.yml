@@ -1,5 +1,24 @@
 name: CI
 
+# Pinning policy for this workflow
+# --------------------------------
+# Everything that can change CI's verdict without a change in this repo is
+# pinned to an immutable identifier. That is the whole premise of gating the
+# build on tests: a green tick has to mean "this commit is good", not "this
+# commit plus whatever the toolchain happened to be this morning".
+#
+#   runs-on          pinned to ubuntu-24.04, not ubuntu-latest. `latest` is
+#                    re-pointed to a new image roughly annually and rolls
+#                    kernel/CPU/timer behaviour with it, which is exactly the
+#                    nondeterminism this change exists to remove. Bump it
+#                    deliberately, so a failure is attributable.
+#   actions/*        pinned to a full commit SHA (tags are mutable — `v4` is a
+#                    moving pointer and can be re-pointed at new code).
+#   bun-version      pinned; a bun release must not turn CI red on its own.
+#
+# When bumping any of these, do it in its own commit with the version in the
+# message, so a bisect can find it.
+
 on:
   push:
     branches: [main]
@@ -11,15 +30,13 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          # Pinned deliberately. Now that tests gate the build, `latest` would let a
-          # bun release turn CI red with no change in this repo.
           bun-version: 1.3.9
 
       - name: Install dependencies
@@ -33,6 +50,9 @@ jobs:
       # GATING. Runs each test file in its own bun process; a single `bun test src/`
       # is nondeterministic (3 of 5 clean-tree runs red, different failures each time)
       # because test files leak global state into each other. See the script header.
+      #
+      # The script also verifies its own file discovery against the installed bun
+      # before running anything, so it cannot report success over a subset.
       - name: Test (per-file isolation)
         run: ./scripts/run-tests-isolated.sh
         working-directory: server
@@ -42,9 +62,12 @@ jobs:
       # silently rotting: a quarantined test that starts failing ALWAYS still shows up
       # here. It cannot gate because it is measured flaky (2/15) in a fully isolated
       # process. Justification and the required fix are in run-tests-isolated.sh.
+      #
+      # --quarantined reads the SAME QUARANTINE array the gating run excludes from,
+      # so the two cannot drift. Do not restate test names here.
       # Do not add steps to this exemption — fix or quarantine with evidence instead.
       - name: Quarantined flaky tests (informational)
-        run: bun test src/services/log-streamer.test.ts -t 'log-streamer multi-subscriber fan-out'
+        run: ./scripts/run-tests-isolated.sh --quarantined
         working-directory: server
         continue-on-error: true
 
@@ -53,12 +76,12 @@ jobs:
     # server's schema, not the contributor's change. An outage there is real
     # information, but it must not block an unrelated PR from merging.
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.9
 

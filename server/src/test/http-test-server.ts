@@ -15,14 +15,34 @@ export interface StartTestServerOptions {
   maxAttempts?: number;
 }
 
+/**
+ * Marker printed when localhost cannot be bound. The isolated-test runner
+ * (scripts/run-tests-isolated.sh) greps passing files for this exact token and
+ * reports them as SKIPPED(unbindable).
+ *
+ * Why it must be printed: every caller responds to `false` by early-returning
+ * from its tests. That is reported as an ordinary PASS, and the runner
+ * suppresses stdout for files that pass — so in a sandbox without loopback
+ * networking, CI showed a green tick over integration tests that never ran. A
+ * skip that is indistinguishable from a pass is the same failure as a gate that
+ * silently omits files.
+ */
+export const UNBINDABLE_MARKER = "GANTRY_SKIPPED_UNBINDABLE";
+
 export async function canBindLocalhost(host = DEFAULT_HOST): Promise<boolean> {
-  return await new Promise<boolean>((resolve) => {
+  const ok = await new Promise<boolean>((resolve) => {
     const probe = createServer();
     probe.once("error", () => resolve(false));
     probe.listen(0, host, () => {
       probe.close(() => resolve(true));
     });
   });
+  if (!ok) {
+    console.warn(
+      `${UNBINDABLE_MARKER}: cannot bind ${host} — integration coverage in this file did not run`,
+    );
+  }
+  return ok;
 }
 
 async function listenOnce(
