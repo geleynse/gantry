@@ -4,7 +4,7 @@
 
 import { describe, test, expect, mock } from "bun:test";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { FacilityRow, type FacilityRecord } from "../page";
+import { FacilityRow, type FacilityRecord } from "../facility-row";
 
 // Mock apiFetch to simulate API errors
 const mockApiFetch = mock();
