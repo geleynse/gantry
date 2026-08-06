@@ -635,7 +635,12 @@ describe("HttpGameClientV2", () => {
   it("bulk craft jobs ARE still throttled (dry_run not supported for bulk)", async () => {
     pushLoginSequence();
     await client.login("bot", "pw");
-    const elapsed = await measureThrottledExecuteMs({ action: "craft", jobs: [{ id: "a" }, { id: "b" }] });
+    // Bulk `jobs` entries require `recipe_id` per the live /craft request
+    // schema (game.spacemolt.com/api/openapi.json: jobs[].required = ["recipe_id"]);
+    // `id` is not a recognized field on a bulk job entry — only on the
+    // single-recipe top-level payload (where it's the v2-generic alias for
+    // recipe_id).
+    const elapsed = await measureThrottledExecuteMs({ action: "craft", jobs: [{ recipe_id: "a" }, { recipe_id: "b" }] });
     expect(elapsed).toBeGreaterThanOrEqual(REMAINING_MS - 50);
   });
 
@@ -648,7 +653,7 @@ describe("HttpGameClientV2", () => {
       { args: { action: "craft", id: "steel_plate", count: 5 }, expected: true },
       { args: { action: "craft", job_id: "job-1", dry_run: true }, expected: true },
       { args: { action: "craft", job_ids: ["job-1", "job-2"] }, expected: true },
-      { args: { action: "craft", jobs: [{ id: "a" }] }, expected: true },
+      { args: { action: "craft", jobs: [{ recipe_id: "a" }] }, expected: true },
     ];
     for (const { args, expected } of shapes) {
       expect(isStateChangingCall("craft", args)).toBe(expected);

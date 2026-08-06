@@ -90,6 +90,36 @@ export const STATE_CHANGING_TOOLS = new Set([
  * suite. Without this alias, a real single-recipe craft is misclassified as
  * a bare queue read at whichever call site sees the post-translation (or
  * already-generic) shape.
+ *
+ * The two call sites agree for every arg shape a real caller can produce —
+ * NOT for every conceivable shape. `dispatchV1ToV2` unconditionally
+ * overwrites `action` with the dispatch table's fixed value
+ * (dispatch-v1-to-v2.ts: `const { action: _agentAction, ...argsNoAction } =
+ * finalArgs; return { ..., args: { action: dispatch.action, ...renamed } }`),
+ * so a caller-supplied `action: "cancel"` with no `job_id`/`job_ids` is
+ * PRE=true (tick-wait path, sees the original `{action:"cancel"}`) but
+ * POST=false (throttle path, sees `{action:"craft"}` — the cancel intent
+ * itself is discarded by dispatch; a pre-existing bug in dispatchV1ToV2, not
+ * in this predicate). No live caller produces that shape today: v1's craft
+ * schema strips `action` entirely (TOOL_SCHEMAS.craft, tool-registry.ts), and
+ * every known caller that wants to cancel sends `job_id`/`job_ids`, which
+ * DOES survive translation unchanged and agrees at both sites. See
+ * proxy-constants.test.ts's "known divergence" case for the concrete probe.
+ *
+ * DELIBERATE CHOICE — empty collections/strings still count as "present".
+ * `job_id: ""`, `job_ids: []`, and `jobs: []` are all classified
+ * state-changing by the checks below (truthiness for `jobs`, `!= null` for
+ * `job_id`/`job_ids`), even though none of them can actually mutate
+ * anything. This is intentionally NOT tightened to require non-empty
+ * collections: the failure direction is safe (an extra ~8s throttle wait /
+ * tick wait on a call that was going to no-op anyway — never a skipped wait
+ * on a call that really does mutate), and the live `/craft` request schema
+ * has no `minItems`/`minLength` on these fields, so a caller sending an
+ * empty array is schema-valid and not something this predicate can rule
+ * out as "impossible". Tightening would trade a one-line latency nit for
+ * more edge cases to keep in sync with the spec. See
+ * proxy-constants.test.ts's "empty collections" cases for the pinned
+ * behavior.
  */
 function isCraftStateChanging(args: Record<string, unknown> | undefined): boolean {
   if (!args) return false; // bare `craft` call — queue listing
@@ -99,7 +129,7 @@ function isCraftStateChanging(args: Record<string, unknown> | undefined): boolea
   // `job_id: ""` is still treated as a cancel-intent call, per the spec
   // typing job_id as a plain string.
   if (args.action === "cancel" || args.job_id != null || args.job_ids != null) return true;
-  if (args.jobs) return true; // bulk jobs — dry_run is NOT supported for bulk craft; always a real queue
+  if (args.jobs) return true; // bulk jobs — dry_run is NOT supported for bulk craft; always a real queue (incl. `jobs: []`, see DELIBERATE CHOICE above)
   if (args.dry_run === true) return false; // cost/time quote — no queuing or spending
   if (args.action === "queue") return false; // explicit queue listing — dead branch, see doc comment above
   if (!args.recipe_id && !args.id && !args.jobs) return false; // no recipe named — bare queue listing

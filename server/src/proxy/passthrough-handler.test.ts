@@ -28,6 +28,34 @@ function createMockClient(responses: Record<string, { result?: unknown; error?: 
   };
 }
 
+/**
+ * v2-native client mock: `isV2()` returns true, so `executeForClient` routes
+ * calls through the real `dispatchV1ToV2` (imported, not mocked) instead of
+ * the v1 passthrough default. Responses are keyed by the DISPATCHED wire
+ * command (e.g. "spacemolt", not "craft") since that's what `client.execute`
+ * actually receives after translation — see dispatch-v1-to-v2.ts.
+ *
+ * Added because `createMockClient` above has no `isV2`, so every existing
+ * craft test exercises only the v1-alias `recipe_id` payload shape through
+ * `isCraftStateChanging`. The native-v2 caller sends `id` instead (and the
+ * payload also carries the dispatch-key `action: "craft"`, per
+ * gantry-v2.ts's `v2Args = {...args}` — `action` is read, not stripped, at
+ * gantry-v2.ts:728-731). Without a test that drives this shape through the
+ * REAL postprocess predicate (not just proxy-constants.test.ts's direct
+ * predicate calls), a future caller/context regression on the v2-native path
+ * would go undetected — see mutation M1 in the final review.
+ */
+function createV2MockClient(responses: Record<string, { result?: unknown; error?: Record<string, unknown> | null }> = {}) {
+  return {
+    execute: mock(async (cmd: string, _args?: Record<string, unknown>) => {
+      return responses[cmd] ?? { result: { command: cmd } };
+    }),
+    waitForTick: mock(async () => {}),
+    lastArrivalTick: null as number | null,
+    isV2: () => true,
+  };
+}
+
 function createMockDeps(overrides?: Partial<PassthroughDeps>): PassthroughDeps {
   return {
     statusCache: new Map(),
@@ -680,8 +708,35 @@ describe("handlePassthrough", () => {
   });
 
   it("craft dry_run: no tick wait, not wrapped with status:completed (v0.433.0/v0.441.10 instant quote)", async () => {
+    // Fixture shape verified against the live CraftQuoteResponse schema
+    // (https://game.spacemolt.com/api/openapi.json, additionalProperties:false):
+    // action/kind/dry_run/recipe/mode/quantity/runs/venue/venue_type/
+    // facility_id/cost(EscrowSummary)/credits_total/have_inputs/have_credits/
+    // effective_time_per_run/est_completion_tick/message are the real fields —
+    // "command", "materials", "total_cost", "eta_ticks" (the previous fixture)
+    // do not exist on this response.
     const client = createMockClient({
-      craft: { result: { command: "craft", dry_run: true, materials: [{ item_id: "iron_ore", quantity: 10 }], total_cost: 500, eta_ticks: 3 } },
+      craft: {
+        result: {
+          action: "craft",
+          kind: "quote",
+          dry_run: true,
+          recipe: "steel_plate",
+          mode: "craft",
+          quantity: 5,
+          runs: 5,
+          venue: "sol_station",
+          venue_type: "station",
+          facility_id: "facility-1",
+          cost: { inputs: [{ item_id: "iron_ore", name: "Iron Ore", quantity: 10 }], labor: 50, fee: 10 },
+          credits_total: 500,
+          have_inputs: true,
+          have_credits: true,
+          effective_time_per_run: 1.5,
+          est_completion_tick: 103,
+          message: "Quote only — not queued.",
+        },
+      },
     });
     const deps = createMockDeps();
 
@@ -692,6 +747,88 @@ describe("handlePassthrough", () => {
     // dry_run is a read — no state-changing status wrapper, no async outputs wait/hint.
     expect(parsed).not.toHaveProperty("status");
     expect((parsed as Record<string, unknown>).hint).toBeUndefined();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Native-v2 postprocess path — mutation M1 coverage
+  //
+  // Every craft test above uses createMockClient (no isV2), so payload is the
+  // v1-alias `recipe_id` shape end to end. A genuine v2-native caller
+  // (spacemolt(action="craft", id=...)) sends `id` instead of `recipe_id",
+  // AND that same payload also carries `action: "craft"` (gantry-v2.ts reads
+  // args.action but does not strip it before building v2Payload — see
+  // gantry-v2.ts:728-731,1383-1395). These tests drive that exact shape
+  // through the REAL executeForClient -> dispatchV1ToV2 translation (via
+  // createV2MockClient, isV2() => true) and the real postprocess predicate,
+  // closing the gap the final review flagged (mutation M1: dropping the
+  // `!args.id` alias at proxy-constants.ts:105 survived every existing test
+  // because none of them exercised an id-only payload through handlePassthrough).
+  // ---------------------------------------------------------------------------
+
+  it("native-v2 craft (id shape, no dry_run): dispatches via spacemolt, waits for tick, wraps status:completed", async () => {
+    const client = createV2MockClient({
+      spacemolt: {
+        result: {
+          action: "craft",
+          kind: "job",
+          job_id: "job-42",
+          recipe: "steel_plate",
+          mode: "craft",
+          venue: "sol_station",
+          venue_type: "station",
+          facility_id: "facility-1",
+          runs: 5,
+          effective_time_per_run: 1.5,
+          est_completion_tick: 110,
+          escrowed: { inputs: [{ item_id: "iron_ore", name: "Iron Ore", quantity: 10 }], labor: 50, fee: 10 },
+          message: "Job queued.",
+          outputs: [],
+        },
+      },
+    });
+    const deps = createMockDeps();
+
+    const result = await handlePassthrough(deps, client, "test-agent", "craft", "craft", { action: "craft", id: "steel_plate", count: 5 });
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    // Wire call went through the real v2 dispatch translation.
+    expect(client.execute).toHaveBeenCalledWith("spacemolt", { action: "craft", id: "steel_plate", count: 5 });
+    expect(client.waitForTick).toHaveBeenCalledTimes(1);
+    expect(parsed.status).toBe("completed");
+  });
+
+  it("native-v2 craft dry_run (id shape): dispatches via spacemolt, no tick wait, no status wrapper", async () => {
+    const client = createV2MockClient({
+      spacemolt: {
+        result: {
+          action: "craft",
+          kind: "quote",
+          dry_run: true,
+          recipe: "steel_plate",
+          mode: "craft",
+          quantity: 5,
+          runs: 5,
+          venue: "sol_station",
+          venue_type: "station",
+          facility_id: "facility-1",
+          cost: { inputs: [{ item_id: "iron_ore", name: "Iron Ore", quantity: 10 }], labor: 50, fee: 10 },
+          credits_total: 500,
+          have_inputs: true,
+          have_credits: true,
+          effective_time_per_run: 1.5,
+          est_completion_tick: 103,
+          message: "Quote only — not queued.",
+        },
+      },
+    });
+    const deps = createMockDeps();
+
+    const result = await handlePassthrough(deps, client, "test-agent", "craft", "craft", { action: "craft", id: "steel_plate", dry_run: true });
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(client.execute).toHaveBeenCalledWith("spacemolt", { action: "craft", id: "steel_plate", dry_run: true });
+    expect(client.waitForTick).not.toHaveBeenCalled();
+    expect(parsed).not.toHaveProperty("status");
   });
 
   it("craft bare queue read (action: 'queue', no recipe_id): no tick wait", async () => {

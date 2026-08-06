@@ -754,9 +754,12 @@ export class HttpGameClientV2 implements GameTransport {
     // read forms (dry_run quote, bare queue listing) that v0.433.0/v0.441.10
     // stopped consuming a tick for. Reuse the same args-aware predicate the
     // tick-wait path uses (isCraftStateChanging via isStateChangingCall) so
-    // the two paths can never disagree on the same call — see
+    // the two paths agree for every arg shape a real caller can produce — see
     // isCraftStateChanging's doc comment in proxy-constants.ts for the full
-    // per-field rationale (dry_run/cancel/bulk/bare-queue-read).
+    // per-field rationale (dry_run/cancel/bulk/bare-queue-read) and for the
+    // one documented shape where they diverge (a bare `action:"cancel"` with
+    // no job_id, which no live caller sends and which dispatchV1ToV2 already
+    // mangles before either predicate sees it).
     const throttleApplies = action
       && THROTTLED_COMMANDS.has(throttleKey)
       && (action !== "craft" || isStateChangingCall("craft", args));

@@ -79,6 +79,16 @@ describe("isStateChangingCall('craft', args) — dry_run / cancel / bulk edge ca
     expect(isStateChangingCall("craft", { job_ids: [] })).toBe(true);
   });
 
+  // DELIBERATE CHOICE (see isCraftStateChanging's doc comment): an empty
+  // `jobs` array is truthy in JS, so it is classified state-changing even
+  // though it queues nothing. Kept as-is because the failure direction is
+  // safe (extra wait, never a skipped one) and the live schema has no
+  // minItems bound ruling it out — not tightened, and pinned here so a
+  // future change to that decision is deliberate, not accidental.
+  it("jobs: [] (empty bulk array, still present) is treated as a real queue — state-changing (fails safe)", () => {
+    expect(isStateChangingCall("craft", { jobs: [] })).toBe(true);
+  });
+
   // Ordinary read paths remain reads.
   it("dry_run:true with a single recipe_id is a read (quote)", () => {
     expect(isStateChangingCall("craft", { recipe_id: "steel_plate", dry_run: true })).toBe(false);
@@ -133,8 +143,7 @@ describe("isStateChangingCall('craft') agrees across pre- and post-dispatch-tran
   const cases: Array<{ name: string; pre: Record<string, unknown>; post: Record<string, unknown>; expected: boolean }> = [
     { name: "real single-recipe craft", pre: { recipe_id: "steel_plate", count: 5 }, post: { action: "craft", id: "steel_plate", count: 5 }, expected: true },
     { name: "dry_run quote", pre: { recipe_id: "steel_plate", dry_run: true }, post: { action: "craft", id: "steel_plate", dry_run: true }, expected: false },
-    { name: "cancel via action:'cancel' (pre only — v2 dispatch key can't carry it post-translation, job_id does)", pre: { action: "cancel", job_id: "job-1" }, post: { action: "craft", job_id: "job-1" }, expected: true },
-    { name: "cancel via job_id", pre: { job_id: "job-1" }, post: { action: "craft", job_id: "job-1" }, expected: true },
+    { name: "cancel via job_id (job_id survives dispatchV1ToV2's translation unchanged)", pre: { job_id: "job-1" }, post: { action: "craft", job_id: "job-1" }, expected: true },
     { name: "cancel via job_ids", pre: { job_ids: ["job-1", "job-2"] }, post: { action: "craft", job_ids: ["job-1", "job-2"] }, expected: true },
     { name: "bulk jobs", pre: { jobs: [{ recipe_id: "a" }] }, post: { action: "craft", jobs: [{ recipe_id: "a" }] }, expected: true },
     { name: "bare queue read", pre: {}, post: { action: "craft" }, expected: false },
@@ -145,4 +154,22 @@ describe("isStateChangingCall('craft') agrees across pre- and post-dispatch-tran
       expect(isStateChangingCall("craft", c.post)).toBe(c.expected);
     });
   }
+
+  // Known, documented divergence (see isCraftStateChanging's doc comment in
+  // proxy-constants.ts). A bare `action:"cancel"` with NO job_id/job_ids is
+  // the one shape where the two call sites do NOT agree: dispatchV1ToV2
+  // unconditionally overwrites `action` with the dispatch table's fixed
+  // value ("craft"), discarding the caller's "cancel" before the throttle
+  // path ever sees it — a pre-existing dispatchV1ToV2 bug, not something
+  // either predicate can fix. No live caller produces this shape: v1's craft
+  // schema strips `action` entirely, and every known caller that wants to
+  // cancel sends `job_id`/`job_ids` (both of which DO survive translation
+  // and agree, per the cases above). This test exists so the divergence is
+  // asserted explicitly instead of hidden inside a fudged "agreement" case.
+  it("KNOWN DIVERGENCE: bare action:'cancel' (no job_id) disagrees pre- vs post-translation", () => {
+    const pre = { action: "cancel" };
+    const post = { action: "craft" }; // what dispatchV1ToV2 actually produces from `pre` above
+    expect(isStateChangingCall("craft", pre)).toBe(true); // tick-wait path: still sees "cancel"
+    expect(isStateChangingCall("craft", post)).toBe(false); // throttle path: cancel intent already lost
+  });
 });
