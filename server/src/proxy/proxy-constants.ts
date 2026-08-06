@@ -37,6 +37,126 @@ export const STATE_CHANGING_TOOLS = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
+// isStateChangingCall
+// ---------------------------------------------------------------------------
+
+/**
+ * Determine whether a specific `craft` CALL is state-changing, given its args.
+ *
+ * Per the live game spec (game.spacemolt.com/api/openapi.json, /craft):
+ * - `job_id`/`job_ids` (or `action: "cancel"`) cancel a queued job and REFUND
+ *   its escrowed inputs/labor/fees — this mutates state and must still wait,
+ *   even if the caller also (incorrectly) sets `dry_run: true`. Checked FIRST
+ *   so a cancel can never be misread as a quote.
+ * - `jobs: [...]` (bulk craft) is checked next, ahead of `dry_run`, because
+ *   the spec states twice that dry_run is "Not supported with bulk jobs" — a
+ *   caller sending both gets a real bulk queue (up to 50 jobs), not a quote.
+ * - `dry_run: true` (single-recipe only, per above) returns a cost/time quote
+ *   "without queuing or spending anything" — a read.
+ * - Calling craft with `action: "queue"` (or no recipe_id/jobs at all) lists
+ *   currently queued jobs — also a read ("call craft with no recipe
+ *   (action=queue) to list your queued jobs"). NOTE: `action: "queue"` is
+ *   dead on both real call surfaces — v1's schema strips `action` entirely
+ *   (see TOOL_SCHEMAS.craft in tool-registry.ts, which is v1-only and has no
+ *   dry_run/action/job_id/jobs field either, so this whole function is a
+ *   no-op for v1 callers), and on v2 `action` is the dispatch key itself
+ *   (gantry-v2.ts:728-731,1382-1395), so a real v2 craft call always arrives
+ *   with `action: "craft"`, never `"queue"`. Retained only in case a direct
+ *   passthrough caller sends it; the line below is what actually decides the
+ *   bare-queue-listing case on v2.
+ * - Anything else that names a recipe (single `recipe_id` or bulk `jobs`)
+ *   queues a real craft job — state-changing.
+ *
+ * Game v0.433.0 / v0.441.10 made the read paths above instant (no tick
+ * consumed), but STATE_CHANGING_TOOLS is a flat tool-name set with no access
+ * to call arguments, so a plain `.has("craft")` can't tell a quote/listing
+ * apart from a real craft. This function is the args-aware check the few
+ * `.has()` call sites should use instead for "craft" specifically.
+ *
+ * `id` is accepted as an alias for `recipe_id` below. This predicate is now
+ * called from two points for the SAME logical craft call, with two different
+ * arg shapes: the tick-wait path (passthrough-postprocess.ts) sees the
+ * agent-facing payload as typed, while the throttle path
+ * (http-game-client-v2.ts execute()) sees the payload AFTER
+ * dispatchV1ToV2's translateV1ArgsToV2 has already run, which renames
+ * `recipe_id` → `id` per V1_TO_V2_PARAM_MAP (the inverse of schema.ts's
+ * `V2_TO_V1_PARAM_MAP.craft = { id: "recipe_id" }`) — verified live:
+ * `dispatchV1ToV2("craft", { recipe_id: "x", count: 5 })` returns
+ * `{ tool: "spacemolt", args: { action: "craft", id: "x", count: 5 } }`.
+ * Genuine v2-native agents (calling `spacemolt(action="craft", ...)`
+ * directly rather than through a v1-alias name) already send `id`, per the
+ * same generic-param convention verified for jump/travel/attack/loot_wreck/
+ * install_mod in passthrough-handler.test.ts's "executeForClient — v2 path"
+ * suite. Without this alias, a real single-recipe craft is misclassified as
+ * a bare queue read at whichever call site sees the post-translation (or
+ * already-generic) shape.
+ *
+ * The two call sites agree for every arg shape a real caller can produce —
+ * NOT for every conceivable shape. `dispatchV1ToV2` unconditionally
+ * overwrites `action` with the dispatch table's fixed value
+ * (dispatch-v1-to-v2.ts: `const { action: _agentAction, ...argsNoAction } =
+ * finalArgs; return { ..., args: { action: dispatch.action, ...renamed } }`),
+ * so a caller-supplied `action: "cancel"` with no `job_id`/`job_ids` is
+ * PRE=true (tick-wait path, sees the original `{action:"cancel"}`) but
+ * POST=false (throttle path, sees `{action:"craft"}` — the cancel intent
+ * itself is discarded by dispatch; a pre-existing bug in dispatchV1ToV2, not
+ * in this predicate). No live caller produces that shape today: v1's craft
+ * schema strips `action` entirely (TOOL_SCHEMAS.craft, tool-registry.ts), and
+ * every known caller that wants to cancel sends `job_id`/`job_ids`, which
+ * DOES survive translation unchanged and agrees at both sites. See
+ * proxy-constants.test.ts's "known divergence" case for the concrete probe.
+ *
+ * DELIBERATE CHOICE — empty collections/strings still count as "present".
+ * `job_id: ""`, `job_ids: []`, and `jobs: []` are all classified
+ * state-changing by the checks below (truthiness for `jobs`, `!= null` for
+ * `job_id`/`job_ids`), even though none of them can actually mutate
+ * anything. This is intentionally NOT tightened to require non-empty
+ * collections: the failure direction is safe (an extra ~8s throttle wait /
+ * tick wait on a call that was going to no-op anyway — never a skipped wait
+ * on a call that really does mutate), and the live `/craft` request schema
+ * has no `minItems`/`minLength` on these fields, so a caller sending an
+ * empty array is schema-valid and not something this predicate can rule
+ * out as "impossible". Tightening would trade a one-line latency nit for
+ * more edge cases to keep in sync with the spec. See
+ * proxy-constants.test.ts's "empty collections" cases for the pinned
+ * behavior.
+ */
+function isCraftStateChanging(args: Record<string, unknown> | undefined): boolean {
+  if (!args) return false; // bare `craft` call — queue listing
+  // Cancellation refunds escrow — mutates. Checked before `dry_run` and
+  // `jobs` so `{action:"cancel", dry_run:true}` can't be misclassified as a
+  // read. `job_id`/`job_ids` use `!= null` (not truthiness) so an explicit
+  // `job_id: ""` is still treated as a cancel-intent call, per the spec
+  // typing job_id as a plain string.
+  if (args.action === "cancel" || args.job_id != null || args.job_ids != null) return true;
+  if (args.jobs) return true; // bulk jobs — dry_run is NOT supported for bulk craft; always a real queue (incl. `jobs: []`, see DELIBERATE CHOICE above)
+  if (args.dry_run === true) return false; // cost/time quote — no queuing or spending
+  if (args.action === "queue") return false; // explicit queue listing — dead branch, see doc comment above
+  if (!args.recipe_id && !args.id && !args.jobs) return false; // no recipe named — bare queue listing
+  return true;
+}
+
+/**
+ * Whether a tool CALL (name + args) is state-changing. For every tool except
+ * `craft` this is exactly `stateChangingTools.has(toolName)`. `craft` is
+ * special-cased via {@link isCraftStateChanging} — see that function for why.
+ *
+ * Takes the tool set as a parameter (defaulting to the module-level
+ * STATE_CHANGING_TOOLS) rather than reading the global directly, so callers
+ * that inject a custom/test set still get correct craft behavior against
+ * *their* set.
+ */
+export function isStateChangingCall(
+  toolName: string,
+  args: Record<string, unknown> | undefined,
+  stateChangingTools: Set<string> = STATE_CHANGING_TOOLS,
+): boolean {
+  if (!stateChangingTools.has(toolName)) return false;
+  if (toolName === "craft") return isCraftStateChanging(args);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // MUTATION_COMMANDS
 // ---------------------------------------------------------------------------
 

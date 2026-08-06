@@ -246,6 +246,43 @@ describe("addErrorHint — v0.467.0 skipped_unfunded", () => {
   });
 });
 
+describe("addErrorHint — v0.467.1 base→station wording rename", () => {
+  // v0.467.1 changed error/status text to consistently say "station" instead of
+  // "base" (error CODES like no_base/dock_verification_failed are unchanged).
+  // The old text-pattern entries for "not at a base" / "not a base" can now
+  // never match live server text, so they're dead weight — the code-based
+  // patterns (no_base, dock_verification_failed) already carry the same hint
+  // and remain reachable regardless of wording.
+
+  it("does not text-match the stale pre-v0.467.1 'not at a base' wording when no error code is present", () => {
+    const msg = "[unmapped_code] not at a base";
+    const result = addErrorHint(msg);
+    // No code-based pattern applies here, and the dead text pattern must not
+    // resurrect a hint for wording the live server no longer emits.
+    expect(result).toBe(msg);
+  });
+
+  it("does not text-match the stale pre-v0.467.1 'not a base' wording when no error code is present", () => {
+    const msg = "[unmapped_code] this poi is not a base";
+    const result = addErrorHint(msg);
+    expect(result).toBe(msg);
+  });
+
+  it("still gets the dockable-station hint via the no_base error code (unchanged by the rename)", () => {
+    const msg = "[no_base] Cannot dock here";
+    const result = addErrorHint(msg);
+    expect(result).toContain("Hint:");
+    expect(result).toContain("station");
+  });
+
+  it("still gets the dockable-station hint via the dock_verification_failed code (unchanged by the rename)", () => {
+    const msg = "dock_verification_failed: action failed";
+    const result = addErrorHint(msg);
+    expect(result).toContain("Hint:");
+    expect(result).toContain("dockable station");
+  });
+});
+
 describe("addErrorHint — v0.382.0 stale_cursor", () => {
   it("tells the agent to re-baseline view_market without the since cursor", () => {
     const result = addErrorHint("[stale_cursor] since= cursor is too old for this station");

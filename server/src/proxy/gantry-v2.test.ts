@@ -5,8 +5,8 @@
  * without requiring a live game server or database.
  */
 
-import { describe, it, expect } from "bun:test";
-import { createGantryServerV2, withPrayerScriptSchema, normalizeCompoundResult, type V2SharedState } from "./gantry-v2.js";
+import { describe, it, expect, mock } from "bun:test";
+import { createGantryServerV2, withPrayerScriptSchema, normalizeCompoundResult, executeRoutineSubTool, type V2SharedState } from "./gantry-v2.js";
 import { serverSchemaToZod, type ServerTool } from "./schema.js";
 import type { GantryConfig } from "../config.js";
 import { SessionManager } from "./session-manager.js";
@@ -23,6 +23,8 @@ import { TransitThrottle } from "./transit-throttle.js";
 import { TransitStuckDetector } from "./transit-stuck-detector.js";
 import { NavLoopDetector } from "./nav-loop-detector.js";
 import { OverrideRegistry, BUILT_IN_RULES } from "./override-system.js";
+import { STATE_CHANGING_TOOLS } from "./proxy-constants.js";
+import type { PassthroughDeps } from "./passthrough-handler.js";
 
 // ---------------------------------------------------------------------------
 // Test config and shared state
@@ -424,5 +426,99 @@ describe("normalizeCompoundResult — routine client compound envelope", () => {
     expect(normalizeCompoundResult("Sold 5 for 100cr")).toEqual({ result: "Sold 5 for 100cr" });
     expect(normalizeCompoundResult(undefined)).toEqual({ result: undefined });
     expect(normalizeCompoundResult([1, 2])).toEqual({ result: [1, 2] });
+  });
+});
+
+describe("executeRoutineSubTool — routine sub-call routing (craft dry_run vs. real craft)", () => {
+  // Regression coverage for the `isStateChangingCall(tool, args)` branch
+  // inside executeRoutineSubTool (extracted from the inline `routineClient`
+  // closure execute_routine used to build). Before this test existed,
+  // reverting that check to `STATE_CHANGING_TOOLS.has(tool)` (mutation M9 in
+  // the final adversarial review) survived gantry-v2.test.ts,
+  // passthrough-handler.test.ts, proxy-constants.test.ts, AND all 21 routine
+  // suites — nothing exercised this specific routing decision.
+  //
+  // Signal: handlePassthrough ALWAYS calls `deps.withInjections` before
+  // returning (both success and non-error paths, passthrough-postprocess.ts
+  // handleSuccessPath/handleErrorPath). The raw `client.execute` fallback in
+  // executeRoutineSubTool never calls it. So withInjections's call count
+  // cleanly distinguishes "routed through handlePassthrough" from "bypassed
+  // it entirely" — a `.has(tool)` mutation makes ALL craft calls (including
+  // reads) route through handlePassthrough, which flips the "read bypasses
+  // it" assertion below.
+
+  function makeDeps(): { deps: PassthroughDeps; withInjections: ReturnType<typeof mock> } {
+    const withInjections = mock(async (_agent: string, r: { content: Array<{ type: "text"; text: string }> }) => r);
+    const deps = {
+      statusCache: new Map(),
+      marketCache: { get: () => ({ data: null, stale: true, age_seconds: 0 }) } as PassthroughDeps["marketCache"],
+      gameHealthRef: { current: { tick: 100, version: "0.144.0", fetchedAt: Date.now(), estimatedNextTick: null } },
+      stateChangingTools: STATE_CHANGING_TOOLS,
+      waitForNavCacheUpdate: mock(async () => true),
+      waitForDockCacheUpdate: mock(async () => true),
+      decontaminateLog: (r: unknown) => r,
+      stripPendingFields: (_r: unknown) => {},
+      withInjections,
+    } as PassthroughDeps;
+    return { deps, withInjections };
+  }
+
+  function makeClient(response: { result?: unknown; error?: Record<string, unknown> | null }) {
+    return {
+      execute: mock(async (_tool: string, _args?: Record<string, unknown>) => response),
+      waitForTick: mock(async () => {}),
+      lastArrivalTick: null as number | null,
+      isV2: () => false,
+    };
+  }
+
+  it("craft dry_run (read): bypasses handlePassthrough — withInjections not called, no tick wait", async () => {
+    const client = makeClient({
+      result: {
+        action: "craft", kind: "quote", dry_run: true, recipe: "steel_plate", mode: "craft",
+        quantity: 1, runs: 1, venue: "sol_station", venue_type: "station", facility_id: "f1",
+        cost: { inputs: [], labor: 1, fee: 1 }, credits_total: 10, have_inputs: true, have_credits: true,
+        effective_time_per_run: 1, est_completion_tick: 10, message: "Quote only.",
+      },
+    });
+    const { deps, withInjections } = makeDeps();
+
+    const result = await executeRoutineSubTool(deps, client, "agent-1", "craft", { recipe_id: "steel_plate", dry_run: true }, undefined, {}, "trace-1");
+
+    expect(client.execute).toHaveBeenCalledTimes(1);
+    expect(withInjections).not.toHaveBeenCalled();
+    expect(client.waitForTick).not.toHaveBeenCalled();
+    expect(result.error).toBeUndefined();
+    expect(result.result).toBeDefined();
+  });
+
+  it("real craft (mutation, no dry_run): routes through handlePassthrough — withInjections called, tick wait runs", async () => {
+    const client = makeClient({
+      result: {
+        action: "craft", kind: "job", job_id: "job-1", recipe: "steel_plate", mode: "craft",
+        venue: "sol_station", venue_type: "station", facility_id: "f1", runs: 1,
+        effective_time_per_run: 1, est_completion_tick: 10,
+        escrowed: { inputs: [], labor: 1, fee: 1 }, message: "Job queued.", outputs: [],
+      },
+    });
+    const { deps, withInjections } = makeDeps();
+
+    const result = await executeRoutineSubTool(deps, client, "agent-1", "craft", { recipe_id: "steel_plate", count: 1 }, undefined, {}, "trace-1");
+
+    expect(withInjections).toHaveBeenCalledTimes(1);
+    expect(client.waitForTick).toHaveBeenCalledTimes(1);
+    expect(result.error).toBeUndefined();
+  });
+
+  it("compound tool name: dispatches through compoundActions, not client.execute directly", async () => {
+    const client = makeClient({ result: { command: "travel_to" } });
+    const { deps } = makeDeps();
+    const travelTo = mock(async () => ({ status: "completed", steps: [] }));
+
+    const result = await executeRoutineSubTool(deps, client, "agent-1", "travel_to", { destination: "sol" }, undefined, { travel_to: travelTo }, "trace-1");
+
+    expect(travelTo).toHaveBeenCalledTimes(1);
+    expect(client.execute).not.toHaveBeenCalled();
+    expect(result.result).toEqual({ status: "completed", steps: [] });
   });
 });

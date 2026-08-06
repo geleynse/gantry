@@ -26,6 +26,7 @@ import {
   type PassthroughExecContext,
 } from "./passthrough-handler.js";
 import { createLogger } from "../lib/logger.js";
+import { isStateChangingCall } from "./proxy-constants.js";
 import { summarizeToolResult } from "./summarizers.js";
 import { addErrorHint, type HintContext } from "./error-hints.js";
 import { enrichWithGlobalContext } from "./market-enrichment.js";
@@ -162,7 +163,7 @@ export async function handleStateChangingTickWait(
   const { statusCache, gameHealthRef, stateChangingTools, waitForNavCacheUpdate, waitForDockCacheUpdate, stripPendingFields, withInjections } = deps;
   const { navBeforeSystem, navStartMs, arrivalTickBeforeNav } = navBefore;
 
-  if (!resp.error && stateChangingTools.has(v1ToolName)) {
+  if (!resp.error && isStateChangingCall(v1ToolName, payload, stateChangingTools)) {
     // Normalize result to an object — game server sometimes returns empty string or non-object
     // for state-changing tools like dock. Without this, the tick-wait and verification blocks
     // are skipped entirely, causing silent failures (e.g. dock "succeeds" but agent isn't docked).
@@ -1180,7 +1181,9 @@ export async function handleSuccessPath(
   // On timeout, fall back to the async hint so the agent knows to check cargo.
   // Note: craft may have already been handled in the pending path above; this block
   // handles the case where craft returned immediately (no pending flag) but outputs are empty.
-  if (v1ToolName === "craft" && typeof summarized === "object" && summarized !== null) {
+  // Skip entirely for dry_run quotes / bare queue reads (v0.433.0/v0.441.10) — those
+  // never queue a job, so there is no action_result to wait for.
+  if (v1ToolName === "craft" && isStateChangingCall(v1ToolName, payload, stateChangingTools) && typeof summarized === "object" && summarized !== null) {
     const isError = "error" in summarized || (summarized as any).status === "error" || (summarized as any).status === "failed";
     const outputs = (summarized as Record<string, unknown>).outputs;
 
@@ -1395,7 +1398,7 @@ export async function handleSuccessPath(
 
   // For state-changing tools, wrap response to indicate completion
   // ONLY if the response doesn't already indicate an error or failure
-  if (stateChangingTools.has(v1ToolName)) {
+  if (isStateChangingCall(v1ToolName, payload, stateChangingTools)) {
     const s = summarized as any;
     const isError = typeof s === "object" && s !== null && ("error" in s || s.status === "error" || s.status === "failed");
     if (!isError) {

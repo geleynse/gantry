@@ -39,7 +39,7 @@ import {
   handleWriteReport, handleSearchMemory, handleRateMemory,
 } from "./doc-tools.js";
 import { handleGetGlobalMarket, handleFindLocalRoute } from "./public-tools.js";
-import { handleGetEvents, handleGetSessionInfo, buildCompoundActions } from "./tool-registry.js";
+import { handleGetEvents, handleGetSessionInfo, buildCompoundActions, type CompoundActionHandler } from "./tool-registry.js";
 import { handlePassthrough, type PassthroughClient, type PassthroughDeps, textResult } from "./passthrough-handler.js";
 import { getTracker as getRateLimitTracker } from "../services/rate-limit-tracker.js";
 import { dispatchRoutine, isRoutineModeEnabled } from "../routines/routine-dispatch.js";
@@ -48,7 +48,7 @@ import { hasRoutine, getRoutineTools } from "../routines/routine-runner.js";
 import { completeRoutineJob, createRoutineJob, failRoutineJob, getLatestRoutineJobForAgent, getRoutineJob, toRoutineJobSnapshot, type RoutineJob } from "../services/routine-jobs.js";
 import type { SharedState } from "./server.js";
 import type { AgentCallTracker } from "../shared/types.js";
-import { STATE_CHANGING_TOOLS, CONTAMINATION_WORDS, stripPendingFields, throttledPersistGameState, reformatResponse } from "./proxy-constants.js";
+import { STATE_CHANGING_TOOLS, CONTAMINATION_WORDS, stripPendingFields, throttledPersistGameState, reformatResponse, isStateChangingCall } from "./proxy-constants.js";
 import { TransitThrottle } from "./transit-throttle.js";
 import { TransitStuckDetector } from "./transit-stuck-detector.js";
 import { NavLoopDetector } from "./nav-loop-detector.js";
@@ -143,6 +143,79 @@ export function normalizeCompoundResult(result: unknown): { result?: unknown; er
     }
   }
   return { result };
+}
+
+/**
+ * Execute a single tool call on behalf of a routine sub-step (the client a
+ * routine receives at `ctx.client`, wired up in the execute_routine handler
+ * below).
+ *
+ * Compound tools (travel_to, batch_mine, ...) route through the proxy's
+ * compound-action handlers. Everything else routes through
+ * `isStateChangingCall`: state-changing calls go through handlePassthrough
+ * so they get tick-waits, dock verification, error hints, and summarization;
+ * non-state-changing calls (reads) call the client directly, bypassing all
+ * of that. `craft` is the one tool where "state-changing" depends on args
+ * (dry_run quote / bare queue-read vs. a real queued job — see
+ * isCraftStateChanging in proxy-constants.ts), so a plain
+ * `STATE_CHANGING_TOOLS.has(tool)` is NOT equivalent here: it would send
+ * every craft call — including dry_run quotes and queue reads — through
+ * handlePassthrough, which is not wrong per se (handlePassthrough's own tick
+ * wait already special-cases craft reads), but it's also not what decides
+ * routing today and has never been exercised by a test, so it stays
+ * `isStateChangingCall`, not `.has()`.
+ *
+ * Extracted as a standalone, directly-callable function (rather than an
+ * inline closure captured by execute_routine's handler) specifically so this
+ * routing decision has direct test coverage without needing to drive a full
+ * execute_routine dispatch — see gantry-v2.test.ts "executeRoutineSubTool".
+ * Before this extraction, reverting the `isStateChangingCall(tool, args)`
+ * check below to `STATE_CHANGING_TOOLS.has(tool)` (mutation M9 in the final
+ * review) survived every existing suite, including all 21 routine suites,
+ * because nothing called this code path with a craft-read shape and checked
+ * which route it took.
+ */
+export async function executeRoutineSubTool(
+  passthroughDeps: PassthroughDeps,
+  client: GameClientLike & PassthroughClient,
+  agentName: string,
+  tool: string,
+  args: Record<string, unknown> | undefined,
+  opts: { timeoutMs?: number; noRetry?: boolean } | undefined,
+  compoundActions: Record<string, CompoundActionHandler>,
+  traceId: string | undefined,
+): Promise<{ result?: unknown; error?: unknown }> {
+  if (tool in compoundActions) {
+    const result = await compoundActions[tool](
+      makeTrackedClient(client, agentName, passthroughDeps.rateLimitTracker),
+      agentName,
+      args ?? {},
+    );
+    return normalizeCompoundResult(result);
+  }
+  // Route state-changing game tools through handlePassthrough so they get
+  // tick-waits, dock verification, and other post-execution logic.
+  // skipLogging: routine sub-calls are logged by logSubTool in the caller
+  // with the routine-namespaced name (routine:name:tool), avoiding duplicates.
+  if (isStateChangingCall(tool, args)) {
+    const mcpResult = await handlePassthrough(
+      passthroughDeps, client, agentName, tool, tool,
+      args && Object.keys(args).length > 0 ? args : undefined,
+      undefined, traceId, { skipLogging: true },
+    );
+    // Extract the result from the MCP text response
+    try {
+      const parsed = JSON.parse(mcpResult.content[0].text);
+      if (parsed.error) return { error: parsed.error };
+      return { result: parsed.result ?? parsed };
+    } catch {
+      return { result: mcpResult.content[0].text };
+    }
+  }
+  const resp = await client.execute(tool, args, opts);
+  const code = resp.error ? String((resp.error as Record<string, unknown>).code ?? "") : "";
+  passthroughDeps.rateLimitTracker?.recordRequest(agentName, tool, code === "429" || code === "rate_limited");
+  return resp;
 }
 
 // ---------------------------------------------------------------------------
@@ -940,39 +1013,8 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
           // (travel_to, batch_mine, etc.) are routed through the proxy's
           // compound action handlers instead of the raw game server.
           const routineClient = {
-            execute: async (tool: string, args?: Record<string, unknown>, opts?: { timeoutMs?: number; noRetry?: boolean }) => {
-              if (tool in compoundActions) {
-                const result = await compoundActions[tool](
-                  makeTrackedClient(client, agentName, passthroughDeps.rateLimitTracker),
-                  agentName,
-                  args ?? {},
-                );
-                return normalizeCompoundResult(result);
-              }
-              // Route state-changing game tools through handlePassthrough so they get
-              // tick-waits, dock verification, and other post-execution logic.
-              // skipLogging: routine sub-calls are logged by logSubTool below
-              // with the routine-namespaced name (routine:name:tool), avoiding duplicates.
-              if (STATE_CHANGING_TOOLS.has(tool)) {
-                const mcpResult = await handlePassthrough(
-                  passthroughDeps, client, agentName, tool, tool,
-                  args && Object.keys(args).length > 0 ? args : undefined,
-                  undefined, traceId, { skipLogging: true },
-                );
-                // Extract the result from the MCP text response
-                try {
-                  const parsed = JSON.parse(mcpResult.content[0].text);
-                  if (parsed.error) return { error: parsed.error };
-                  return { result: parsed.result ?? parsed };
-                } catch {
-                  return { result: mcpResult.content[0].text };
-                }
-              }
-              const resp = await client.execute(tool, args, opts);
-              const code = resp.error ? String((resp.error as Record<string, unknown>).code ?? "") : "";
-              passthroughDeps.rateLimitTracker?.recordRequest(agentName, tool, code === "429" || code === "rate_limited");
-              return resp;
-            },
+            execute: (tool: string, args?: Record<string, unknown>, opts?: { timeoutMs?: number; noRetry?: boolean }) =>
+              executeRoutineSubTool(passthroughDeps, client, agentName, tool, args, opts, compoundActions, traceId),
             waitForTick: client.waitForTick.bind(client),
             lastArrivalTick: client.lastArrivalTick,
             isV2: () => client.isV2(),

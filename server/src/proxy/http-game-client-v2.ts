@@ -37,6 +37,7 @@ import {
   COMMAND_TIMEOUT_MS,
 } from "./game-transport.js";
 import { dispatchV1ToV2 } from "./dispatch-v1-to-v2.js";
+import { isStateChangingCall } from "./proxy-constants.js";
 
 const log = createLogger("mcp-game-client-v2");
 const CLIENT_VERSION = `Gantry/${packageJson.version}`;
@@ -79,7 +80,10 @@ interface McpJsonRpcResponse {
   error?: { code: number; message: string; data?: unknown };
 }
 
-const ACTION_THROTTLE_MS = 8_000;
+// Exported (not just for production use) so tests can compute a real
+// remaining-wait window instead of hardcoding a copy of this value that
+// would silently drift out of sync.
+export const ACTION_THROTTLE_MS = 8_000;
 
 /**
  * Throttled v2 tool/action pairs. Key format: `${toolName}/${action}`.
@@ -746,7 +750,20 @@ export class HttpGameClientV2 implements GameTransport {
 
     const action = typeof args.action === "string" ? args.action : "";
     const throttleKey = `${toolName}/${action}`;
-    if (action && THROTTLED_COMMANDS.has(throttleKey)) {
+    // "spacemolt/craft" covers both real craft-queue mutations and the instant
+    // read forms (dry_run quote, bare queue listing) that v0.433.0/v0.441.10
+    // stopped consuming a tick for. Reuse the same args-aware predicate the
+    // tick-wait path uses (isCraftStateChanging via isStateChangingCall) so
+    // the two paths agree for every arg shape a real caller can produce — see
+    // isCraftStateChanging's doc comment in proxy-constants.ts for the full
+    // per-field rationale (dry_run/cancel/bulk/bare-queue-read) and for the
+    // one documented shape where they diverge (a bare `action:"cancel"` with
+    // no job_id, which no live caller sends and which dispatchV1ToV2 already
+    // mangles before either predicate sees it).
+    const throttleApplies = action
+      && THROTTLED_COMMANDS.has(throttleKey)
+      && (action !== "craft" || isStateChangingCall("craft", args));
+    if (throttleApplies) {
       const elapsed = Date.now() - this.lastActionTime;
       if (elapsed < ACTION_THROTTLE_MS) {
         const wait = ACTION_THROTTLE_MS - elapsed;
