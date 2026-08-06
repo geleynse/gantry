@@ -48,7 +48,7 @@ import { hasRoutine, getRoutineTools } from "../routines/routine-runner.js";
 import { completeRoutineJob, createRoutineJob, failRoutineJob, getLatestRoutineJobForAgent, getRoutineJob, toRoutineJobSnapshot, type RoutineJob } from "../services/routine-jobs.js";
 import type { SharedState } from "./server.js";
 import type { AgentCallTracker } from "../shared/types.js";
-import { STATE_CHANGING_TOOLS, CONTAMINATION_WORDS, stripPendingFields, throttledPersistGameState, reformatResponse } from "./proxy-constants.js";
+import { STATE_CHANGING_TOOLS, CONTAMINATION_WORDS, stripPendingFields, throttledPersistGameState, reformatResponse, isStateChangingCall } from "./proxy-constants.js";
 import { TransitThrottle } from "./transit-throttle.js";
 import { TransitStuckDetector } from "./transit-stuck-detector.js";
 import { NavLoopDetector } from "./nav-loop-detector.js";
@@ -953,7 +953,7 @@ export function createGantryServerV2(config: GantryConfig, shared: V2SharedState
               // tick-waits, dock verification, and other post-execution logic.
               // skipLogging: routine sub-calls are logged by logSubTool below
               // with the routine-namespaced name (routine:name:tool), avoiding duplicates.
-              if (STATE_CHANGING_TOOLS.has(tool)) {
+              if (isStateChangingCall(tool, args)) {
                 const mcpResult = await handlePassthrough(
                   passthroughDeps, client, agentName, tool, tool,
                   args && Object.keys(args).length > 0 ? args : undefined,

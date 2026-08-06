@@ -37,6 +37,59 @@ export const STATE_CHANGING_TOOLS = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
+// isStateChangingCall
+// ---------------------------------------------------------------------------
+
+/**
+ * Determine whether a specific `craft` CALL is state-changing, given its args.
+ *
+ * Per the live game spec (game.spacemolt.com/api/openapi.json, /craft):
+ * - `dry_run: true` returns a cost/time quote "without queuing or spending
+ *   anything" — a read, regardless of whether recipe_id is set.
+ * - Calling craft with `action: "queue"` (or no recipe_id/jobs at all) lists
+ *   currently queued jobs — also a read ("call craft with no recipe
+ *   (action=queue) to list your queued jobs").
+ * - `job_id`/`job_ids` (or `action: "cancel"`) cancel a queued job and REFUND
+ *   its escrowed inputs/labor/fees — this mutates state and must still wait.
+ * - Anything else that names a recipe (single `recipe_id` or bulk `jobs`)
+ *   queues a real craft job — state-changing.
+ *
+ * Game v0.433.0 / v0.441.10 made the read paths above instant (no tick
+ * consumed), but STATE_CHANGING_TOOLS is a flat tool-name set with no access
+ * to call arguments, so a plain `.has("craft")` can't tell a quote/listing
+ * apart from a real craft. This function is the args-aware check the few
+ * `.has()` call sites should use instead for "craft" specifically.
+ */
+function isCraftStateChanging(args: Record<string, unknown> | undefined): boolean {
+  if (!args) return false; // bare `craft` call — queue listing
+  if (args.dry_run === true) return false; // cost/time quote — no queuing or spending
+  if (args.action === "cancel" || args.job_id || args.job_ids) return true; // cancellation refunds escrow — mutates
+  if (args.action === "queue") return false; // explicit queue listing
+  if (!args.recipe_id && !args.jobs) return false; // no recipe named — bare queue listing
+  return true;
+}
+
+/**
+ * Whether a tool CALL (name + args) is state-changing. For every tool except
+ * `craft` this is exactly `stateChangingTools.has(toolName)`. `craft` is
+ * special-cased via {@link isCraftStateChanging} — see that function for why.
+ *
+ * Takes the tool set as a parameter (defaulting to the module-level
+ * STATE_CHANGING_TOOLS) rather than reading the global directly, so callers
+ * that inject a custom/test set still get correct craft behavior against
+ * *their* set.
+ */
+export function isStateChangingCall(
+  toolName: string,
+  args: Record<string, unknown> | undefined,
+  stateChangingTools: Set<string> = STATE_CHANGING_TOOLS,
+): boolean {
+  if (!stateChangingTools.has(toolName)) return false;
+  if (toolName === "craft") return isCraftStateChanging(args);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // MUTATION_COMMANDS
 // ---------------------------------------------------------------------------
 

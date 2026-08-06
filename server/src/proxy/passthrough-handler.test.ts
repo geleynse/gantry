@@ -679,6 +679,60 @@ describe("handlePassthrough", () => {
     expect(inner.outputs_confirmed).toBeUndefined();
   });
 
+  it("craft dry_run: no tick wait, not wrapped with status:completed (v0.433.0/v0.441.10 instant quote)", async () => {
+    const client = createMockClient({
+      craft: { result: { command: "craft", dry_run: true, materials: [{ item_id: "iron_ore", quantity: 10 }], total_cost: 500, eta_ticks: 3 } },
+    });
+    const deps = createMockDeps();
+
+    const result = await handlePassthrough(deps, client, "test-agent", "craft", "craft", { recipe_id: "steel_plate", dry_run: true });
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(client.waitForTick).not.toHaveBeenCalled();
+    // dry_run is a read — no state-changing status wrapper, no async outputs wait/hint.
+    expect(parsed).not.toHaveProperty("status");
+    expect((parsed as Record<string, unknown>).hint).toBeUndefined();
+  });
+
+  it("craft bare queue read (action: 'queue', no recipe_id): no tick wait", async () => {
+    const client = createMockClient({
+      craft: { result: { command: "craft", jobs: [{ job_id: "job-1", recipe_id: "steel_plate" }] } },
+    });
+    const deps = createMockDeps();
+
+    const result = await handlePassthrough(deps, client, "test-agent", "craft", "craft", { action: "queue" });
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(client.waitForTick).not.toHaveBeenCalled();
+    expect(parsed).not.toHaveProperty("status");
+  });
+
+  it("craft with no args at all (bare queue listing): no tick wait", async () => {
+    const client = createMockClient({
+      craft: { result: { command: "craft", jobs: [] } },
+    });
+    const deps = createMockDeps();
+
+    const result = await handlePassthrough(deps, client, "test-agent", "craft", "craft");
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(client.waitForTick).not.toHaveBeenCalled();
+    expect(parsed).not.toHaveProperty("status");
+  });
+
+  it("craft job cancellation (job_id set): still state-changing (mutates escrow)", async () => {
+    const client = createMockClient({
+      craft: { result: { command: "craft", message: "job cancelled", refunded: true } },
+    });
+    const deps = createMockDeps();
+
+    const result = await handlePassthrough(deps, client, "test-agent", "craft", "craft", { job_id: "job-1" });
+    const parsed = parseResult(result) as Record<string, unknown>;
+
+    expect(client.waitForTick).toHaveBeenCalledTimes(1);
+    expect(parsed.status).toBe("completed");
+  });
+
   it("get_system: calls cacheSystemPois (no error on valid poi data)", async () => {
     const client = createMockClient({
       get_system: {
