@@ -72,6 +72,24 @@ export const STATE_CHANGING_TOOLS = new Set([
  * to call arguments, so a plain `.has("craft")` can't tell a quote/listing
  * apart from a real craft. This function is the args-aware check the few
  * `.has()` call sites should use instead for "craft" specifically.
+ *
+ * `id` is accepted as an alias for `recipe_id` below. This predicate is now
+ * called from two points for the SAME logical craft call, with two different
+ * arg shapes: the tick-wait path (passthrough-postprocess.ts) sees the
+ * agent-facing payload as typed, while the throttle path
+ * (http-game-client-v2.ts execute()) sees the payload AFTER
+ * dispatchV1ToV2's translateV1ArgsToV2 has already run, which renames
+ * `recipe_id` → `id` per V1_TO_V2_PARAM_MAP (the inverse of schema.ts's
+ * `V2_TO_V1_PARAM_MAP.craft = { id: "recipe_id" }`) — verified live:
+ * `dispatchV1ToV2("craft", { recipe_id: "x", count: 5 })` returns
+ * `{ tool: "spacemolt", args: { action: "craft", id: "x", count: 5 } }`.
+ * Genuine v2-native agents (calling `spacemolt(action="craft", ...)`
+ * directly rather than through a v1-alias name) already send `id`, per the
+ * same generic-param convention verified for jump/travel/attack/loot_wreck/
+ * install_mod in passthrough-handler.test.ts's "executeForClient — v2 path"
+ * suite. Without this alias, a real single-recipe craft is misclassified as
+ * a bare queue read at whichever call site sees the post-translation (or
+ * already-generic) shape.
  */
 function isCraftStateChanging(args: Record<string, unknown> | undefined): boolean {
   if (!args) return false; // bare `craft` call — queue listing
@@ -84,7 +102,7 @@ function isCraftStateChanging(args: Record<string, unknown> | undefined): boolea
   if (args.jobs) return true; // bulk jobs — dry_run is NOT supported for bulk craft; always a real queue
   if (args.dry_run === true) return false; // cost/time quote — no queuing or spending
   if (args.action === "queue") return false; // explicit queue listing — dead branch, see doc comment above
-  if (!args.recipe_id && !args.jobs) return false; // no recipe named — bare queue listing
+  if (!args.recipe_id && !args.id && !args.jobs) return false; // no recipe named — bare queue listing
   return true;
 }
 

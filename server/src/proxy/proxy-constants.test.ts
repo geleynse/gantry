@@ -101,4 +101,48 @@ describe("isStateChangingCall('craft', args) — dry_run / cancel / bulk edge ca
   it("naming a recipe_id (no dry_run) is state-changing", () => {
     expect(isStateChangingCall("craft", { recipe_id: "steel_plate" })).toBe(true);
   });
+
+  // P1 fix (throttle/tick-wait reuse): dispatchV1ToV2's translateV1ArgsToV2
+  // renames `recipe_id` → `id` (V1_TO_V2_PARAM_MAP.craft, the inverse of
+  // schema.ts's V2_TO_V1_PARAM_MAP.craft = { id: "recipe_id" }) before a
+  // craft call reaches http-game-client-v2.execute() — verified live via
+  // dispatchV1ToV2("craft", { recipe_id: "x", count: 5 }) returning
+  // { tool: "spacemolt", args: { action: "craft", id: "x", count: 5 } }.
+  // Genuine v2-native agents also send `id` directly (same generic-param
+  // convention as jump/travel/attack/loot_wreck/install_mod). Without the
+  // `id` alias, a real single-recipe craft is misclassified as a bare queue
+  // read at whichever call site sees this post-translation (or
+  // already-generic) shape — which is exactly where the throttle gate lives.
+  it("naming a recipe via `id` (no dry_run) is state-changing — post-dispatch-translation shape", () => {
+    expect(isStateChangingCall("craft", { action: "craft", id: "steel_plate" })).toBe(true);
+  });
+
+  it("dry_run:true with `id` (not recipe_id) is still a read", () => {
+    expect(isStateChangingCall("craft", { action: "craft", id: "steel_plate", dry_run: true })).toBe(false);
+  });
+});
+
+describe("isStateChangingCall('craft') agrees across pre- and post-dispatch-translation arg shapes", () => {
+  // The tick-wait path (passthrough-postprocess.ts) sees the agent-facing
+  // payload as typed ("pre" below); the throttle path
+  // (http-game-client-v2.ts execute()) sees it AFTER dispatchV1ToV2 has
+  // already renamed recipe_id → id ("post" below). Both call the SAME
+  // isStateChangingCall/isCraftStateChanging predicate — no second, possibly
+  // divergent craft check — so for every semantically-equivalent pair the
+  // decision must agree.
+  const cases: Array<{ name: string; pre: Record<string, unknown>; post: Record<string, unknown>; expected: boolean }> = [
+    { name: "real single-recipe craft", pre: { recipe_id: "steel_plate", count: 5 }, post: { action: "craft", id: "steel_plate", count: 5 }, expected: true },
+    { name: "dry_run quote", pre: { recipe_id: "steel_plate", dry_run: true }, post: { action: "craft", id: "steel_plate", dry_run: true }, expected: false },
+    { name: "cancel via action:'cancel' (pre only — v2 dispatch key can't carry it post-translation, job_id does)", pre: { action: "cancel", job_id: "job-1" }, post: { action: "craft", job_id: "job-1" }, expected: true },
+    { name: "cancel via job_id", pre: { job_id: "job-1" }, post: { action: "craft", job_id: "job-1" }, expected: true },
+    { name: "cancel via job_ids", pre: { job_ids: ["job-1", "job-2"] }, post: { action: "craft", job_ids: ["job-1", "job-2"] }, expected: true },
+    { name: "bulk jobs", pre: { jobs: [{ recipe_id: "a" }] }, post: { action: "craft", jobs: [{ recipe_id: "a" }] }, expected: true },
+    { name: "bare queue read", pre: {}, post: { action: "craft" }, expected: false },
+  ];
+  for (const c of cases) {
+    it(`${c.name}: pre- and post-translation shapes agree (both -> ${c.expected})`, () => {
+      expect(isStateChangingCall("craft", c.pre)).toBe(c.expected);
+      expect(isStateChangingCall("craft", c.post)).toBe(c.expected);
+    });
+  }
 });

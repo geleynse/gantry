@@ -7,7 +7,8 @@
 //   3. login() falls back to mcpSessionId when greeting has no Session ID line
 //   4. execute() injects session_id for spacemolt/spacemolt_battle but not spacemolt_catalog
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
-import { HttpGameClientV2, parseGetStatusText, SessionCreateSpacing, noteSessionRateLimited, sessionCreateWaitMs, unwrapGameEnvelope } from "./http-game-client-v2.js";
+import { HttpGameClientV2, parseGetStatusText, SessionCreateSpacing, noteSessionRateLimited, sessionCreateWaitMs, unwrapGameEnvelope, ACTION_THROTTLE_MS } from "./http-game-client-v2.js";
+import { isStateChangingCall } from "./proxy-constants.js";
 
 let fetchMock: ReturnType<typeof mock>;
 let fetchResponses: Array<{ status: number; body: string; headers?: Record<string, string> }>;
@@ -563,6 +564,102 @@ describe("HttpGameClientV2", () => {
     await client.execute("spacemolt", { action: "get_player", session_id: "explicit-id" });
     const body = JSON.parse((fetchMock.mock.calls[4][1] as RequestInit).body as string);
     expect(body.params.arguments.session_id).toBe("explicit-id");
+  });
+
+  // -------------------------------------------------------------------------
+  // execute() craft throttle (args-aware — P1 fix)
+  //
+  // ACTION_THROTTLE_MS (8s) exists to space out actions the game server
+  // queues per-character. Game v0.433.0/v0.441.10 made craft's read forms
+  // (dry_run quote, bare queue listing) instant/tickless, so throttling them
+  // serves no purpose and just adds up to 8s of dead latency. The gate at
+  // execute() now defers to isStateChangingCall("craft", args) — the SAME
+  // predicate the tick-wait path uses — for the "spacemolt/craft" key only.
+  //
+  // Rather than waiting out the full 8s window per test, each case primes
+  // `lastActionTime` so only a small REMAINING_MS window is left before the
+  // throttle would clear. A throttled call blocks for ~REMAINING_MS; a
+  // non-throttled call returns near-instantly. ACTION_THROTTLE_MS is
+  // imported (not hardcoded) so this stays correct if the constant changes.
+  // -------------------------------------------------------------------------
+
+  const REMAINING_MS = 200;
+
+  /** Prime lastActionTime so only REMAINING_MS is left in the throttle window,
+   *  then execute() and return the wall-clock ms the call took. */
+  async function measureThrottledExecuteMs(payload: Record<string, unknown>): Promise<number> {
+    (client as unknown as { lastActionTime: number }).lastActionTime = Date.now() - (ACTION_THROTTLE_MS - REMAINING_MS);
+    pushMcpToolResult(JSON.stringify({ ok: 1 }));
+    const start = Date.now();
+    await client.execute("spacemolt", payload);
+    return Date.now() - start;
+  }
+
+  it("craft dry_run is NOT throttled (instant quote, v0.433.0/v0.441.10)", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    const elapsed = await measureThrottledExecuteMs({ action: "craft", id: "steel_plate", dry_run: true });
+    expect(elapsed).toBeLessThan(REMAINING_MS / 2);
+  });
+
+  it("craft bare queue read (no id/jobs) is NOT throttled", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    const elapsed = await measureThrottledExecuteMs({ action: "craft" });
+    expect(elapsed).toBeLessThan(REMAINING_MS / 2);
+  });
+
+  it("a real craft (id set, no dry_run) IS still throttled", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    const elapsed = await measureThrottledExecuteMs({ action: "craft", id: "steel_plate", count: 5 });
+    expect(elapsed).toBeGreaterThanOrEqual(REMAINING_MS - 50);
+  });
+
+  it("craft cancellation via job_id IS still throttled, even with dry_run:true", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    // job_id survives dispatchV1ToV2's translation unchanged (only the recipe
+    // field is renamed recipe_id→id) — this is the real wire shape of a cancel.
+    const elapsed = await measureThrottledExecuteMs({ action: "craft", job_id: "job-1", dry_run: true });
+    expect(elapsed).toBeGreaterThanOrEqual(REMAINING_MS - 50);
+  });
+
+  it("craft cancellation via job_ids IS still throttled", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    const elapsed = await measureThrottledExecuteMs({ action: "craft", job_ids: ["job-1", "job-2"] });
+    expect(elapsed).toBeGreaterThanOrEqual(REMAINING_MS - 50);
+  });
+
+  it("bulk craft jobs ARE still throttled (dry_run not supported for bulk)", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    const elapsed = await measureThrottledExecuteMs({ action: "craft", jobs: [{ id: "a" }, { id: "b" }] });
+    expect(elapsed).toBeGreaterThanOrEqual(REMAINING_MS - 50);
+  });
+
+  it("throttle decision matches isStateChangingCall('craft', args) for every shape above", async () => {
+    // No sleeps here — this asserts the gate literally reuses the shared
+    // predicate rather than a second, potentially-divergent craft check.
+    const shapes: Array<{ args: Record<string, unknown>; expected: boolean }> = [
+      { args: { action: "craft", id: "steel_plate", dry_run: true }, expected: false },
+      { args: { action: "craft" }, expected: false },
+      { args: { action: "craft", id: "steel_plate", count: 5 }, expected: true },
+      { args: { action: "craft", job_id: "job-1", dry_run: true }, expected: true },
+      { args: { action: "craft", job_ids: ["job-1", "job-2"] }, expected: true },
+      { args: { action: "craft", jobs: [{ id: "a" }] }, expected: true },
+    ];
+    for (const { args, expected } of shapes) {
+      expect(isStateChangingCall("craft", args)).toBe(expected);
+    }
+  });
+
+  it("throttling still applies to non-craft throttled commands (e.g. mine) — regression guard", async () => {
+    pushLoginSequence();
+    await client.login("bot", "pw");
+    const elapsed = await measureThrottledExecuteMs({ action: "mine" });
+    expect(elapsed).toBeGreaterThanOrEqual(REMAINING_MS - 50);
   });
 
   // -------------------------------------------------------------------------
