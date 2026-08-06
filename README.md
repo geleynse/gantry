@@ -186,8 +186,13 @@ All agent data is stored in SQLite (`fleet.db`). The server is a single Express 
 ## Tests
 
 ```bash
-bun test          # run all tests
+bun run test:isolated   # ~5,500 tests, one bun process per file — what CI gates on
+bun test <file>         # single file, fast inner loop
 ```
+
+Run the whole suite in one process (`bun test` with no argument) and you will get
+false reds: state leaks between files, and 3 of 5 clean-tree runs fail with a
+different set each time. `test:isolated` is the run whose result means something.
 
 ## Contributing
 

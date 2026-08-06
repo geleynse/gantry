@@ -47,6 +47,9 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
+// Captured before any test swaps it; see the afterEach in 'useAlertCount window event'.
+const originalFetch = globalThis.fetch;
+
 describe('Sidebar', () => {
   // ---------------------------------------------------------------------------
   // Navigation links
@@ -283,8 +286,11 @@ describe('Sidebar', () => {
     });
 
     afterEach(() => {
-      // Restore fetch to something that won't throw in other tests
-      globalThis.fetch = mock(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+      // Put the REAL fetch back. Installing yet another mock here still leaves a
+      // mock installed after the file finishes — it swaps one leak for a quieter
+      // one. Per-file isolation means no other file sees it today, but this is
+      // the behaviour that made the single-process suite nondeterministic.
+      globalThis.fetch = originalFetch;
     });
 
     it('calls fetch again when alerts:changed event fires', async () => {

@@ -87,6 +87,11 @@ function makeAssistantText(text: string, overrides: Record<string, unknown> = {}
 // Tests
 // ---------------------------------------------------------------------------
 
+// Captured before any test swaps it. `global.fetch = ...` is a plain property
+// assignment, and mock.restore() does NOT revert those — it only reverts mocks
+// created via spyOn(). Without this the swapped fetch outlives the file.
+const originalFetch = globalThis.fetch;
+
 describe('ToolCallFeed', () => {
   beforeEach(() => {
     mockToolCalls = [];
@@ -106,8 +111,11 @@ describe('ToolCallFeed', () => {
   });
 
   afterEach(() => {
-    // Restore fetch so it doesn't leak into other test files
+    // Restore fetch so it doesn't leak into other test files. Both lines are
+    // needed: mock.restore() for spyOn-created mocks, and the explicit
+    // reassignment for the raw `global.fetch = ...` above, which it cannot undo.
     mock.restore();
+    globalThis.fetch = originalFetch;
   });
 
   // -------------------------------------------------------------------------

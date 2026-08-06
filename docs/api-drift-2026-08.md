@@ -122,19 +122,73 @@ failed a build**. Only `bun install` and `bun run build` gate CI.
 This makes the drift-test enforcement above effectively local-only: the test can now fail loudly and
 CI will still go green.
 
-Two distinct problems are tangled together here and should be separated:
+Blanket `continue-on-error` hides every genuine regression. Note this repo has ~5,400 tests
+currently gating nothing.
 
-1. **Real cross-file pollution.** On a full `bun test src/` run, `agent-manager > staggers agent
-   starts` and `__tests__/agent-lifecycle.test.ts > requestShutdown emits a __system_event record`
-   fail; both pass in isolation. Shared singleton/DB state, not real defects.
-2. **Self-inflicted rate limiting.** The three `API sync — live game server schema` tests hit the
-   live game. Under a 292-file concurrent run they get throttled and — correctly, by the new
-   behaviour — fail. In isolation they pass (15/15) against a reachable server.
+**Correction (2026-08-05).** The original diagnosis in this section was wrong in three specific
+ways, and the corrected version is what the fix was built on. Recording both so the mistake is not
+re-derived from this document.
 
-Blanket `continue-on-error` hides both, plus every genuine regression. Better: quarantine the known
-polluting files (or fix the shared state), give the live-sync tests their own serialized step, and
-let the rest of the suite actually gate the build. Note this repo has ~5,400 tests currently gating
-nothing.
+- **"Known cross-file test pollution — all tests pass individually" is false**, both here and in the
+  `ci.yml:31` comment it quotes. `agent-manager > staggers agent starts` fails roughly 1 run in 15
+  in a *fresh, fully isolated* process. It was never pollution: the test set a 10 ms base stagger
+  and asserted `expect(elapsed).toBeGreaterThanOrEqual(45)` against a nominal total of 50 ms, so a
+  ~10% timer undershoot failed it. That is a wall-clock lower bound, and no amount of isolation
+  fixes it.
+- **`__tests__/agent-lifecycle.test.ts > requestShutdown emits a __system_event record` does not
+  fail in a full run.** It never failed across 8 full runs. It should not have been listed.
+- **There is no concurrent run.** `server/bunfig.toml` sets `maxConcurrency = 1`, so the live-sync
+  failures cannot have been "self-inflicted rate limiting under a 292-file concurrent run". The
+  actual cause is `globalThis.fetch` leaking out of `game-registration.test.ts` and
+  `leaderboard-cache.test.ts`, which assign it without restoring the original.
+
+**What was measured, and why the fix is process isolation rather than deleting one flag.** The
+suite is nondeterministic enough that **3 of 5 clean full runs go red, with a different failing set
+each time**. Simply removing `continue-on-error` would therefore have produced roughly 60%
+false-red CI, which is worse than no gate: a gate people learn to ignore teaches that red means
+nothing. So the runner executes each test file in its own bun process
+(`server/scripts/run-tests-isolated.sh`), which removes the cross-file family outright, and the two
+genuinely timing-bound tests were rewritten to assert the delay the scheduler *requests* rather
+than elapsed wall-clock.
+
+**Why the runner verifies its own discovery.** A floor on the file count is not sufficient. The
+first version of the runner discovered test files with `find src -name '*.test.ts' -o -name
+'*.test.tsx'`, which silently missed `src/components/__tests__/add_agent_test.tsx` — a real file
+with 5 real tests that `bun test` runs and the gate did not. Bun treats
+`<name><. or _><test or spec>.<js|jsx|ts|tsx|mjs|cjs|mts|cts>` as a test file, case-insensitively;
+the original glob matched two of those sixteen forms. A gate that reports "ran 291 files, 0 failed"
+while omitting real tests is the same failure class as `continue-on-error`, just harder to notice.
+The runner now derives the answer from bun itself on every run: it builds a fixture tree of
+matching and non-matching names, runs `bun test` over it, and fails if its own discovery disagrees.
+
+**Second correction (2026-08-05), after review.** Two more claims above were wrong, and both were
+wrong in the same direction — a number was asserted from a comment rather than measured.
+
+- **`staggers agent starts` was flaky by construction, not by narrow margin.** The first fix raised
+  its base stagger from 10 ms to 50 ms and kept the wall-clock form, on the stated reasoning that
+  the nominal total was 250 ms (one heavy×heavy pair at 100 ms plus three at 50 ms) against a
+  `>= 200` floor, leaving 50 ms of slack. That arithmetic came from a comment naming `drifter-gale`
+  as a sonnet agent. It is **haiku** (`agent-manager.test.ts:11`), and `testConfig` has no two
+  consecutive heavy models at all, so every one of the four waits is the base delay and the nominal
+  total is **exactly 200 ms**. The assertion sat on the boundary, where timers under-firing by 1-2 ms
+  each fail it — which is precisely the 1-in-15 rate observed. There was never any slack to widen.
+  The test now records the delays the scheduler *requests*, like its two siblings, and asserts the
+  full ordered timeline of launches and waits. Dropping the `await` on the sleep, halving the base
+  delay, and deleting the sleep were each confirmed to turn it red.
+- **The quarantine's `<file>::` prefix was decorative on the exclusion side.** One negative-lookahead
+  PCRE was built from every quarantined *name* and passed to all 292 files, so an entry naming a
+  generic test name would have disabled that test suite-wide while re-running it in one file — the
+  same silent-coverage-loss shape as the discovery bug above. Measured: with an entry naming only
+  `add_agent_test.tsx`, the old repo-wide filter took an unrelated file from 14 tests to 11. The
+  filter is now built per file, and `verify_quarantine_partition()` enforces
+  `gated + quarantined == total` for every quarantined file (today `17 = 12 + 5`) plus liveness of
+  each individual entry, so the property is checked rather than observed.
+
+Also added, all for the same reason — the gate must not be able to report success over less than it
+claims: a guard that fails if any test file exists outside the `src/` walk root, a per-file
+zero-tests check (`bun test` on a file with no tests exits 0, measured on bun 1.3.9), a floor on the
+total test count as well as the file count, and a non-zero exit when a file skips its integration
+coverage because localhost could not be bound.
 
 ---
 

@@ -28,6 +28,74 @@ const testConfig: GantryConfig = {
 // poisoning process-manager.test.ts (mock.module persists across files).
 import * as proc from './process-manager.js';
 import * as signalsDb from './signals-db.js';
+
+/**
+ * Run `fn` with globalThis.setTimeout replaced by a stub that RECORDS the
+ * requested delay and then fires the callback immediately.
+ *
+ * Why: the stagger tests assert which delay the scheduler *chose* (base vs
+ * heavy-pair). Measuring that as elapsed wall-clock made them nondeterministic
+ * — a 20ms timer asserted to land between 18ms and 39ms fails whenever a loaded
+ * CI box overshoots, and passes vacuously if the stagger is deleted but the
+ * machine happens to be slow. Recording the argument tests the decision itself,
+ * so the assertion is exact, instant, and cannot be satisfied by luck.
+ */
+async function recordSleepDelays(fn: () => Promise<void>): Promise<number[]> {
+  const realSetTimeout = globalThis.setTimeout;
+  const delays: number[] = [];
+  globalThis.setTimeout = ((cb: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
+    delays.push(ms ?? 0);
+    return realSetTimeout(cb, 0, ...rest);
+  }) as unknown as typeof globalThis.setTimeout;
+  try {
+    await fn();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  return delays;
+}
+
+/**
+ * Same stub, but the caller can interleave its own events into the recording,
+ * producing one ordered timeline of waits AND launches.
+ *
+ * Why both: a bare list of delays proves the scheduler chose the right numbers
+ * but not that the waits fall BETWEEN the launches — an implementation that
+ * awaited all four sleeps and then spawned all five agents at once would
+ * produce an identical list while destroying the property the test is named
+ * for. The wall-clock version of this test proved the interleaving with
+ * `startTimes[i] - startTimes[i-1] >= 30`, which is real coverage; this keeps
+ * it without keeping the clock.
+ *
+ * `resumed` is recorded when the timer actually fires, which is what makes the
+ * sleep's `await` observable: dropping the await leaves the setTimeout calls in
+ * the same places but pushes every `resumed` to the end of the run, because the
+ * callbacks land on later macrotasks than the launches. Delay values alone
+ * cannot tell those two worlds apart.
+ */
+async function recordSleepTimeline(
+  fn: (mark: (event: string) => void) => Promise<void>,
+): Promise<string[]> {
+  const realSetTimeout = globalThis.setTimeout;
+  const timeline: string[] = [];
+  globalThis.setTimeout = ((cb: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
+    timeline.push(`wait:${ms ?? 0}`);
+    return realSetTimeout(
+      (...args: unknown[]) => {
+        timeline.push('resumed');
+        cb(...args);
+      },
+      0,
+      ...rest,
+    );
+  }) as unknown as typeof globalThis.setTimeout;
+  try {
+    await fn((event) => timeline.push(event));
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  return timeline;
+}
 import { clearCredentialHealthForTesting, recordCredentialAuthFailure } from './credential-health.js';
 import { startAgent, stopAgent, forceStopAgent, softStopAgent, softRestartAgent, startAll, validateSpawnSpec } from './agent-manager.js';
 import { createDatabase, closeDb } from './database.js';
@@ -295,23 +363,56 @@ describe('agent-manager', () => {
 
   describe('startAll', () => {
     it('staggers agent starts using configured staggerDelay', async () => {
-      // Short stagger for test speed — staggerDelay is in seconds
-      setConfigForTesting({ ...testConfig, staggerDelay: 0.01 }); // 10ms base
+      // This was the last wall-clock test in the file: `elapsed >= 200` plus
+      // per-launch gaps `>= 30ms`. Raising the base from 10ms to 50ms bought it
+      // enough margin to stop flaking (~1 run in 15 before), but margin only
+      // makes a timing assertion less likely to be wrong — it stays a
+      // measurement of the machine rather than of the scheduler, and it still
+      // passes vacuously on a slow box if the stagger is deleted. The stub the
+      // two sibling tests already use removes the time dependence outright, so
+      // use it here too and assert the exact interleaving instead.
+      setConfigForTesting({ ...testConfig, staggerDelay: 0.05 }); // 50ms base
 
       mockedHasSession.mockResolvedValue(false);
-      mockedNewSession.mockResolvedValue(undefined);
 
-      const t0 = Date.now();
-      const results = await startAll();
-      const elapsed = Date.now() - t0;
+      let results: Awaited<ReturnType<typeof startAll>> | undefined;
+      const timeline = await recordSleepTimeline(async (mark) => {
+        mockedNewSession.mockImplementation(async () => {
+          mark('start');
+        });
+        results = await startAll();
+      });
 
-      // 5 agents; 4 inter-agent waits.
-      // Between drifter-gale (sonnet) → sable-thorn (sonnet): heavy×heavy = 2x = 20ms
-      // sable-thorn (sonnet) → rust-vane (haiku): mixed = 10ms
-      // rust-vane (haiku) → lumen-shoal (sonnet): mixed = 10ms
-      // lumen-shoal (sonnet) → cinder-wake (codex, no model): mixed = 10ms
-      // Total minimum ≈ 50ms. Allow a generous ceiling for CI jitter.
-      expect(elapsed).toBeGreaterThanOrEqual(45);
+      // 5 agents; 4 inter-agent waits, each one BETWEEN two launches. testConfig
+      // has NO two consecutive heavy models, so every wait is the base delay:
+      //   drifter-gale (haiku)  → sable-thorn (sonnet):  mixed = 50ms
+      //   sable-thorn (sonnet)  → rust-vane (haiku):     mixed = 50ms
+      //   rust-vane (haiku)     → lumen-shoal (sonnet):  mixed = 50ms
+      //   lumen-shoal (sonnet)  → cinder-wake (codex):   mixed = 50ms
+      //
+      // Which is how the wall-clock form was flaky by construction, not by bad
+      // luck: its comment called drifter-gale sonnet and therefore claimed a
+      // 100ms heavy pair and a 250ms nominal with 50ms of slack under a
+      // `>= 200` floor. The real nominal is 4 x 50 = 200ms EXACTLY, so the
+      // assertion sat on the boundary and any timer under-fire failed it. More
+      // margin was never going to fix that, because the margin did not exist.
+      // The heavy-pair path is covered by the dedicated test below, which is
+      // where it belongs.
+      expect(timeline).toEqual([
+        'start',
+        'wait:50',
+        'resumed',
+        'start',
+        'wait:50',
+        'resumed',
+        'start',
+        'wait:50',
+        'resumed',
+        'start',
+        'wait:50',
+        'resumed',
+        'start',
+      ]);
       expect(results).toHaveLength(5);
       expect(mockedNewSession).toHaveBeenCalledTimes(5);
     });
@@ -330,12 +431,15 @@ describe('agent-manager', () => {
       mockedHasSession.mockResolvedValue(false);
       mockedNewSession.mockResolvedValue(undefined);
 
-      const t0 = Date.now();
-      await startAll();
-      const elapsed = Date.now() - t0;
+      const delays = await recordSleepDelays(async () => {
+        await startAll();
+      });
 
-      // Only one wait (between agent 0 and 1); it must be the heavy-pair delay (2×20ms = 40ms).
-      expect(elapsed).toBeGreaterThanOrEqual(38);
+      // Exactly one inter-agent wait (between agent 0 and 1), and it must be the
+      // HEAVY-PAIR delay: 2 × 20ms base = 40ms. Asserting the exact list also
+      // catches an extra or missing sleep, which a ">= 38ms elapsed" bound could
+      // never distinguish from timer jitter.
+      expect(delays).toEqual([40]);
       expect(mockedNewSession).toHaveBeenCalledTimes(2);
     });
 
@@ -352,13 +456,16 @@ describe('agent-manager', () => {
       mockedHasSession.mockResolvedValue(false);
       mockedNewSession.mockResolvedValue(undefined);
 
-      const t0 = Date.now();
-      await startAll();
-      const elapsed = Date.now() - t0;
+      const delays = await recordSleepDelays(async () => {
+        await startAll();
+      });
 
-      // Mixed pair → base delay (20ms). Must NOT exceed heavy-pair delay (40ms) by much.
-      expect(elapsed).toBeGreaterThanOrEqual(18);
-      expect(elapsed).toBeLessThan(40);
+      // Mixed pair → BASE delay (20ms), not the heavy-pair 40ms. The old form
+      // ("elapsed >= 18 and < 40") could not tell 20ms-plus-overshoot from a
+      // genuine 40ms, so a regression to the heavy-pair delay on a fast machine
+      // was indistinguishable from a slow 20ms timer.
+      expect(delays).toEqual([20]);
+      expect(mockedNewSession).toHaveBeenCalledTimes(2);
     });
   });
 

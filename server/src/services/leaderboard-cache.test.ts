@@ -32,12 +32,20 @@ function makeSuccessResponse(data: Record<string, unknown> = SAMPLE_UPSTREAM) {
   });
 }
 
+// These tests replace global.fetch by plain property assignment (~14 times below).
+// `mock.restore()` in the global test setup only undoes mock() spies, NOT a raw
+// assignment, so without restoring it here the last mock installed leaks into every
+// subsequent test file in the same process (it broke the live-API checks in
+// src/proxy/schema-drift.test.ts).
+const originalFetch = global.fetch;
+
 beforeEach(() => {
   clearCacheForTesting();
 });
 
 afterEach(() => {
   clearCacheForTesting();
+  global.fetch = originalFetch;
 });
 
 describe("getLeaderboard", () => {

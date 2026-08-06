@@ -2,63 +2,90 @@ import { describe, it, expect, afterEach } from 'bun:test';
 import { createSOCKS5Tunnel, createSOCKS5Relay } from './socks5-tunnel.js';
 import { SocksClient } from 'socks';
 import { EventEmitter } from 'node:events';
-import { createServer, connect as netConnect, type Server } from 'node:net';
-
-async function canBindLocalhost(): Promise<boolean> {
-  return await new Promise<boolean>((resolve) => {
-    const probe = createServer();
-    probe.once('error', () => resolve(false));
-    probe.listen(0, '127.0.0.1', () => {
-      probe.close(() => resolve(true));
-    });
-  });
-}
+import { connect as netConnect } from 'node:net';
+// Shared helper, not a local copy: it prints GANTRY_SKIPPED_UNBINDABLE when the
+// probe fails, which is what scripts/run-tests-isolated.sh greps for to report
+// SKIPPED(unbindable). The private duplicate this replaces returned the same
+// boolean and drove the same it.skip, but emitted no marker — so on a runner
+// without loopback this file's relay coverage vanished under a green tick,
+// which is the exact hole the marker was introduced to close.
+import { canBindLocalhost } from '../test/http-test-server.js';
 
 const CAN_BIND_LOCALHOST = await canBindLocalhost();
 
+/**
+ * Run `fn` with SocksClient.createConnection stubbed to reject with `message`.
+ *
+ * These tests exercise createSOCKS5Tunnel's ERROR CLASSIFICATION, which is pure
+ * string logic. Driving it by making real connections (to :9999, to :1080, to
+ * .invalid hostnames) assumed those ports were free and that DNS would fail a
+ * particular way — uncontrolled I/O that produces false reds on a machine where
+ * something is listening, and slow tests everywhere else. Stubbing the seam
+ * makes each branch deterministic and lets us assert the SPECIFIC classified
+ * message rather than merely that the word "SOCKS5" appears (which every branch
+ * satisfies, so the old assertions could not tell the branches apart).
+ */
+async function withSocksError(message: string, fn: () => Promise<void>): Promise<void> {
+  const original = SocksClient.createConnection;
+  (SocksClient as any).createConnection = () => Promise.reject(new Error(message));
+  try {
+    await fn();
+  } finally {
+    (SocksClient as any).createConnection = original;
+  }
+}
+
+/** Assert createSOCKS5Tunnel rejects, and return the message. */
+async function tunnelError(
+  proxyHost = '127.0.0.1',
+  proxyPort = 1080,
+  targetHost = 'example.com',
+  targetPort = 443,
+): Promise<string> {
+  try {
+    await createSOCKS5Tunnel(proxyHost, proxyPort, targetHost, targetPort);
+  } catch (err: any) {
+    return err.message as string;
+  }
+  throw new Error('expected createSOCKS5Tunnel to reject, but it resolved');
+}
+
 describe('SOCKS5 Tunnel', () => {
-  describe('createSOCKS5Tunnel', () => {
-    it('throws error when proxy is unreachable', async () => {
-      try {
-        // Try to connect to non-existent proxy
-        await createSOCKS5Tunnel('127.0.0.1', 9999, 'example.com', 443);
-        expect(true).toBe(false); // Should not reach here
-      } catch (err: any) {
-        // Should throw a SOCKS5 error
-        expect(err.message).toContain('SOCKS5');
-      }
+  describe('createSOCKS5Tunnel error classification', () => {
+    it('classifies a refused connection as an unreachable proxy, naming host:port', async () => {
+      await withSocksError('connect ECONNREFUSED 127.0.0.1:9999', async () => {
+        const msg = await tunnelError('127.0.0.1', 9999);
+        expect(msg).toContain('SOCKS5 proxy unreachable: 127.0.0.1:9999');
+        expect(msg).toContain('ECONNREFUSED');
+      });
     });
 
-    it('throws error for invalid target host', async () => {
-      try {
-        // No SOCKS5 proxy running on localhost:1080, so this should fail
-        await createSOCKS5Tunnel('localhost', 1080, 'invalid---host--that-does-not-exist.local', 443);
-        expect(true).toBe(false); // Should not reach here
-      } catch (err: any) {
-        // Error should be from SOCKS5 proxy connection failure
-        expect(err.message).toContain('SOCKS5');
-      }
+    it('classifies an authentication failure', async () => {
+      await withSocksError('Socks5 authentication failed', async () => {
+        const msg = await tunnelError();
+        expect(msg).toContain('SOCKS5 proxy authentication failed');
+      });
     });
 
-    it('includes proxy info in error messages', async () => {
-      try {
-        await createSOCKS5Tunnel('proxy.invalid.test', 1080, 'example.com', 443);
-        expect(true).toBe(false); // Should not reach here
-      } catch (err: any) {
-        // Should include proxy host in error
-        expect(err.message).toContain('proxy.invalid.test');
-      }
+    it('classifies a DNS failure and names the proxy host', async () => {
+      await withSocksError('getaddrinfo ENOTFOUND proxy.invalid.test', async () => {
+        const msg = await tunnelError('proxy.invalid.test');
+        expect(msg).toContain('SOCKS5 proxy DNS resolution failed for proxy.invalid.test');
+      });
     });
 
-    it('handles DNS resolution errors gracefully', async () => {
-      try {
-        // Use a definitely invalid proxy host
-        await createSOCKS5Tunnel('this-host-definitely-does-not-exist-12345.invalid', 1080, 'example.com', 443);
-        expect(true).toBe(false); // Should not reach here
-      } catch (err: any) {
-        // Should throw a SOCKS5 error
-        expect(err.message).toContain('SOCKS5');
-      }
+    it('classifies a bad destination and names the target host:port', async () => {
+      await withSocksError('Socks5 proxy rejected destination', async () => {
+        const msg = await tunnelError('127.0.0.1', 1080, 'nope.example', 443);
+        expect(msg).toContain('SOCKS5 tunnel: invalid target host nope.example:443');
+      });
+    });
+
+    it('falls back to a generic SOCKS5 error for an unrecognized failure', async () => {
+      await withSocksError('something entirely unexpected', async () => {
+        const msg = await tunnelError();
+        expect(msg).toContain('SOCKS5 tunnel failed: something entirely unexpected');
+      });
     });
 
     it('returns socket from successful SOCKS5 connection', async () => {
