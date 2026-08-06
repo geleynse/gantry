@@ -47,7 +47,7 @@ const ERROR_HINTS: ErrorHint[] = [
   { pattern: "unavailable", hint: "Mission unavailable. The error explains why — check level, faction, or item requirements." },
   { pattern: "not found", hint: "Item or target not found. Check spelling and use get_system for options." },
   { pattern: "dock_verification_failed", hint: "This POI is not a dockable station. Use get_system to find stations, then travel_to a station POI." },
-  { pattern: "no_base", hint: "No base at your current POI — call get_state to confirm location, then get_system to find a station, then travel_to that station." },
+  { pattern: "no_base", hint: "No station at your current POI — call get_state to confirm location, then get_system to find a station, then travel_to that station." },
   { pattern: "already insured", hint: "Ship already has active insurance. No action needed — skip and continue." },
   { pattern: "no_current_system", hint: "You are in hyperspace transit. Wait for arrival before acting." },
   { pattern: "no_life_support", hint: "Life support is structurally maxed at this location — you cannot expand it here. Build elsewhere or find a location where life support capacity is not at its ceiling." },

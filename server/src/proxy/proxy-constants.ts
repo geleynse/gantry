@@ -44,13 +44,26 @@ export const STATE_CHANGING_TOOLS = new Set([
  * Determine whether a specific `craft` CALL is state-changing, given its args.
  *
  * Per the live game spec (game.spacemolt.com/api/openapi.json, /craft):
- * - `dry_run: true` returns a cost/time quote "without queuing or spending
- *   anything" — a read, regardless of whether recipe_id is set.
+ * - `job_id`/`job_ids` (or `action: "cancel"`) cancel a queued job and REFUND
+ *   its escrowed inputs/labor/fees — this mutates state and must still wait,
+ *   even if the caller also (incorrectly) sets `dry_run: true`. Checked FIRST
+ *   so a cancel can never be misread as a quote.
+ * - `jobs: [...]` (bulk craft) is checked next, ahead of `dry_run`, because
+ *   the spec states twice that dry_run is "Not supported with bulk jobs" — a
+ *   caller sending both gets a real bulk queue (up to 50 jobs), not a quote.
+ * - `dry_run: true` (single-recipe only, per above) returns a cost/time quote
+ *   "without queuing or spending anything" — a read.
  * - Calling craft with `action: "queue"` (or no recipe_id/jobs at all) lists
  *   currently queued jobs — also a read ("call craft with no recipe
- *   (action=queue) to list your queued jobs").
- * - `job_id`/`job_ids` (or `action: "cancel"`) cancel a queued job and REFUND
- *   its escrowed inputs/labor/fees — this mutates state and must still wait.
+ *   (action=queue) to list your queued jobs"). NOTE: `action: "queue"` is
+ *   dead on both real call surfaces — v1's schema strips `action` entirely
+ *   (see TOOL_SCHEMAS.craft in tool-registry.ts, which is v1-only and has no
+ *   dry_run/action/job_id/jobs field either, so this whole function is a
+ *   no-op for v1 callers), and on v2 `action` is the dispatch key itself
+ *   (gantry-v2.ts:728-731,1382-1395), so a real v2 craft call always arrives
+ *   with `action: "craft"`, never `"queue"`. Retained only in case a direct
+ *   passthrough caller sends it; the line below is what actually decides the
+ *   bare-queue-listing case on v2.
  * - Anything else that names a recipe (single `recipe_id` or bulk `jobs`)
  *   queues a real craft job — state-changing.
  *
@@ -62,9 +75,15 @@ export const STATE_CHANGING_TOOLS = new Set([
  */
 function isCraftStateChanging(args: Record<string, unknown> | undefined): boolean {
   if (!args) return false; // bare `craft` call — queue listing
+  // Cancellation refunds escrow — mutates. Checked before `dry_run` and
+  // `jobs` so `{action:"cancel", dry_run:true}` can't be misclassified as a
+  // read. `job_id`/`job_ids` use `!= null` (not truthiness) so an explicit
+  // `job_id: ""` is still treated as a cancel-intent call, per the spec
+  // typing job_id as a plain string.
+  if (args.action === "cancel" || args.job_id != null || args.job_ids != null) return true;
+  if (args.jobs) return true; // bulk jobs — dry_run is NOT supported for bulk craft; always a real queue
   if (args.dry_run === true) return false; // cost/time quote — no queuing or spending
-  if (args.action === "cancel" || args.job_id || args.job_ids) return true; // cancellation refunds escrow — mutates
-  if (args.action === "queue") return false; // explicit queue listing
+  if (args.action === "queue") return false; // explicit queue listing — dead branch, see doc comment above
   if (!args.recipe_id && !args.jobs) return false; // no recipe named — bare queue listing
   return true;
 }
